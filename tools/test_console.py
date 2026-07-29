@@ -385,6 +385,7 @@ def publish_handoff(rid: str, plan_id: str, applicants: list[dict],
             {
                 "interviewer_id": row["interviewer_id"],
                 "name": row.get("name") or row["interviewer_id"],
+                "title": row.get("title") or "",
                 "priority": row.get("priority"),
                 "max_daily": row.get("max_daily"),
             }
@@ -581,6 +582,7 @@ COLUMN_LABELS = {
     "team": "팀", "team_name": "팀", "org": "조직", "email": "이메일",
     "degree": "학력", "degree_type": "학력", "major_final": "전공",
     "job_role": "직무", "priority": "역할", "max_daily": "하루 최대",
+    "title": "직급",
     "day": "요일", "hour": "시간", "slot_count": "가능 시간 수",
     "interviewer_name": "면접 담당자", "file_name": "파일 이름",
     "applicant_count": "인원", "row_count": "줄 수", "created_at": "만든 시각",
@@ -618,6 +620,20 @@ def ko_frame(rows, keep=None, drop_ids: bool = True) -> pd.DataFrame:
 
 def role_label(priority) -> str:
     return "팀장" if priority == 1 else "실무"
+
+
+def iv_label(row: dict, fallback: str = "") -> str:
+    """담당자를 '성명 직급' 으로 적는다 — 이름만으로는 누군지 헷갈린다."""
+    name = str(row.get("name") or "").strip() or fallback \
+        or str(row.get("interviewer_id") or "")
+    title = str(row.get("title") or "").strip()
+    return f"{name} {title}".strip()
+
+
+def iv_names(rows) -> dict:
+    """사번 → '성명 직급' 표 — 화면 어디서나 같은 이름으로 보이게 한다."""
+    return {row["interviewer_id"]: iv_label(row, row["interviewer_id"])
+            for row in (rows or [])}
 
 
 KIND_LABELS = {"master": "전체 지원자 명단", "team_distribution": "팀별 명단"}
@@ -666,19 +682,17 @@ MENU_HINTS = [
 # 현업 부서(면접관)가 하는 일
 DEPT_MENUS = [
     "우리 팀 면접 담당자 정하기",
-    "면접 볼 사람 고르기",
-    "담당자와 면접자 짝 맞추기",
+    "면접 볼 사람 고르고 담당자 짝 맞추기",
 ]
 DEPT_HINTS = [
     "우리 팀에서 면접에 들어갈 사람을 등록하고, 이번 회차에 들어갈 사람만 고릅니다.",
-    "인사 담당자가 보낸 명단에서 면접 볼 사람을 고르고 담당자를 정해 보냅니다.",
-    "누가 누구를 볼지 세부 조정하고, 짝이 없는 사람을 확인합니다.",
+    "받은 명단에서 면접 볼 사람을 고르고 담당자까지 붙여 한 번에 보냅니다.",
 ]
 
 # 두 화면이 번갈아 진행되므로, 어느 차례인지 왼쪽에 적어 준다
 FLOW_NOTE = (
     "인사 ①② → 부서 ① 담당자 정하기 → 인사 ③ 명단 보내기 → "
-    "부서 ②③ 면접자 고르기 → 인사 ④ 시간표"
+    "부서 ② 면접자 고르고 짝 맞추기 → 인사 ④ 시간표"
 )
 
 st.session_state.setdefault("round_input", time.strftime("R%Y%m%d-01"))
@@ -1326,15 +1340,34 @@ def slot_labels(start: str, count: int, minutes: int, rest: int) -> list[str]:
     return out
 
 
-def order_for_interview(rows: list[dict], balance: bool) -> list[dict]:
-    """가나다순을 기본으로 하되, 학력이 한쪽으로 몰리지 않게 번갈아 배치한다."""
+DEGREE_ORDER = {"박사": 0, "석사": 1, "대학원": 1, "학사": 2}
+
+
+def degree_key(row: dict) -> str:
+    """학력을 가장 자세한 표기로 — 박사·석사가 '대학원' 하나로 뭉치지 않게."""
+    return str(row.get("degree_full") or row.get("degree") or "").strip()
+
+
+def degree_rank(row: dict) -> tuple:
+    """하루 안에서 어느 학력을 먼저 볼지 — 박사 · 석사 · 학사 순."""
+    text = degree_key(row)
+    return (DEGREE_ORDER.get(text, 9), text)
+
+
+def order_for_interview(rows: list[dict], balance: bool,
+                        per_day: int = 0) -> list[dict]:
+    """가나다순을 기본으로 하되, 학력이 한쪽 날짜로 몰리지 않게 번갈아 배치한다.
+
+    날짜끼리는 고르게 섞고, 같은 날 안에서는 같은 학력끼리 이어 붙인다 —
+    면접관이 하루 종일 박사·석사·학사를 오가지 않고 묶어서 보게 된다.
+    """
     ordered = sorted(rows, key=lambda r: (r.get("name") or ""))
     if not balance:
         return ordered
 
     buckets: dict[str, list[dict]] = {}
     for row in ordered:
-        buckets.setdefault(row["degree"], []).append(row)
+        buckets.setdefault(degree_key(row), []).append(row)
     if len(buckets) < 2:
         return ordered
 
@@ -1348,6 +1381,14 @@ def order_for_interview(rows: list[dict], balance: bool) -> list[dict]:
         )
         out.append(buckets[key][taken[key]])
         taken[key] += 1
+
+    if per_day > 0:
+        # 하루치씩 끊어서 그 안에서만 학력끼리 붙인다 (날짜별 구성비는 그대로)
+        blocked: list[dict] = []
+        for start in range(0, len(out), per_day):
+            blocked += sorted(out[start:start + per_day],
+                              key=lambda r: (degree_rank(r), r.get("name") or ""))
+        return blocked
     return out
 
 
@@ -1357,7 +1398,8 @@ def build_day_table(
 ) -> tuple[pd.DataFrame, int]:
     """팀을 가로, 시간을 세로로 놓고 일자마다 한 줄 띄운 면접 순서표를 만든다."""
     teams = sorted(rosters)
-    ordered = {team: order_for_interview(rosters[team], balance) for team in teams}
+    ordered = {team: order_for_interview(rosters[team], balance, per_day)
+               for team in teams}
     longest = max((len(v) for v in ordered.values()), default=0)
     days = max(1, -(-longest // per_day))  # 올림
     labels = slot_labels(start, per_day, minutes, rest)
@@ -1396,8 +1438,9 @@ def render_roster_organizer(history: list[dict], plan_id: str,
     """팀별 명단(가로=팀 · 세로=가나다순) + 일자별 면접 순서표."""
     st.subheader("② 팀별 면접 순서 잡기")
     st.caption(
-        "팀마다 지원자를 가나다순으로 세우고, [면접 순서 잡기]를 누르면 학사·대학원이 "
-        "고르게 섞이도록 차례를 정해 하루 8명씩(30분 면접 + 5분 휴식) 나눕니다."
+        "팀마다 지원자를 가나다순으로 세우고, [면접 순서 잡기]를 누르면 날짜마다 학력이 "
+        "고르게 섞이도록 차례를 정해 하루 8명씩(30분 면접 + 5분 휴식) 나눕니다. "
+        "하루 안에서는 박사 → 석사 → 학사 순으로 같은 학력끼리 붙여 놓습니다."
     )
 
     sources = {}
@@ -1518,7 +1561,8 @@ def render_roster_organizer(history: list[dict], plan_id: str,
     rest = c3.number_input("사이 쉬는 시간(분)", 0, 60, BREAK_MINUTES, 5, key="r_rest")
     per_day = c4.number_input("하루 몇 명까지", 1, 20, SLOTS_PER_DAY, key="r_perday")
     o1, o2 = st.columns(2)
-    balance = o1.checkbox("학사·대학원 고르게 섞기", value=True, key="r_balance")
+    balance = o1.checkbox("날짜마다 학력 고르게 · 하루 안에서는 학력끼리 묶기",
+                          value=True, key="r_balance")
     show_degree = o2.checkbox("학력도 같이 보기", value=True, key="r_showdeg")
 
     if st.button("🗂️ 면접 순서 잡기", type="primary", key="r_organize"):
@@ -1542,6 +1586,7 @@ def render_roster_organizer(history: list[dict], plan_id: str,
     st.success(
         f"{days}일에 걸쳐 · 하루 {int(per_day)}명씩 · 한 명당 {int(minutes)}분 면접 + "
         f"{int(rest)}분 휴식으로 순서를 잡았습니다."
+        + (" 하루 안에서는 박사 → 석사 → 학사 순으로 묶여 있습니다." if balance else "")
     )
     team_cols = [c for c in table.columns if c != "구분"]
     degree_by_name = {
@@ -1868,6 +1913,12 @@ GIVEN_1 = ["민", "서", "지", "현", "예", "도", "하", "수", "재", "은",
 GIVEN_2 = ["준", "연", "우", "은", "호", "진", "아", "빈", "영", "훈",
            "희", "원", "람", "경", "결", "린", "재", "혁", "슬", "현"]
 PER_TEAM_DEFAULT = 6
+# 만들어 주는 명단의 직급 — 앞에서부터 리더·중간·막내 순으로 붙인다
+TITLES = ["수석", "책임", "책임", "선임", "선임", "사원"]
+
+
+def title_for(seq: int) -> str:
+    return TITLES[min(seq, len(TITLES)) - 1]
 
 
 def make_team_interviewers(team: str, team_no: int, count: int) -> list[dict]:
@@ -1886,6 +1937,7 @@ def make_team_interviewers(team: str, team_no: int, count: int) -> list[dict]:
         people.append({
             "사번": emp_id,
             "성명": name,
+            "직급": title_for(seq),
             "소속팀": team,
             "이메일": f"{emp_id.lower()}@example.com",
             "일일최대": 4 if is_leader else 6,
@@ -1896,7 +1948,8 @@ def make_team_interviewers(team: str, team_no: int, count: int) -> list[dict]:
 
 def roster_to_xlsx(people: list[dict]) -> bytes:
     frame = pd.DataFrame(
-        people, columns=["사번", "성명", "소속팀", "이메일", "일일최대", "우선순위"]
+        people,
+        columns=["사번", "성명", "직급", "소속팀", "이메일", "일일최대", "우선순위"],
     )
     return to_excel({"면접관명단": frame})
 
@@ -1925,7 +1978,7 @@ def render_interviewer_generator() -> None:
         return
     preview = pd.DataFrame([
         {
-            "소속팀": p["소속팀"], "성명": p["성명"],
+            "소속팀": p["소속팀"], "성명": p["성명"], "직급": p["직급"],
             "역할": role_label(p["우선순위"]), "이메일": p["이메일"],
             "하루 최대": p["일일최대"],
         }
@@ -1999,7 +2052,7 @@ def render_interviewers() -> None:
                 file_name=INTERVIEWER_SAMPLE.name, mime=XLSX_MIME, key="i_sample",
             )
         upload = st.file_uploader(
-            "담당자 명단 엑셀 (사번 · 성명 · 소속팀 · 이메일 · 하루 최대 · 역할)",
+            "담당자 명단 엑셀 (사번 · 성명 · 직급 · 소속팀 · 이메일 · 하루 최대 · 역할)",
             type=["xlsx"], key="i_upload",
         )
         if upload is not None and st.button("📥 올리기", type="primary", key="i_import"):
@@ -2062,6 +2115,7 @@ def render_interviewers() -> None:
         rows.append({
             "면접 참여": checked,
             "성명": row.get("name") or "",
+            "직급": row.get("title") or "",
             "소속팀": row.get("team") or "",
             "역할": role_label(row.get("priority")),
             "이메일": row.get("email") or "",
@@ -2075,7 +2129,7 @@ def render_interviewers() -> None:
     edited = st.data_editor(
         pd.DataFrame(rows),
         width="stretch", hide_index=True, height=520,
-        disabled=["성명", "소속팀", "역할", "이메일", "하루 최대",
+        disabled=["성명", "직급", "소속팀", "역할", "이메일", "하루 최대",
                   "적어 낸 가능 시간", "사번"],
         key="i_editor",
     )
@@ -2107,6 +2161,7 @@ def render_interviewers() -> None:
                     {
                         "소속팀": row.get("team") or "-",
                         "성명": row.get("name") or row["interviewer_id"],
+                        "직급": row.get("title") or "",
                         "역할": role_label(row.get("priority")),
                         "이메일": row.get("email") or "",
                         "하루 최대": row.get("max_daily"),
@@ -2171,147 +2226,6 @@ def render_send(selected: list[dict]) -> None:
     card_grid(cards, cols=min(4, len(cards)) or 1)
 
 
-def render_matching() -> None:
-    """담당자를 고르고 넘어온 명단에서 면접자를 붙인다 (부서 제출과 같은 저장소)."""
-    st.header("부서 3 · 담당자와 면접자 짝 맞추기")
-    if not need_round():
-        return
-    st.caption(
-        "담당자를 한 명 고른 뒤 명단에서 면접자를 골라 붙여 줍니다. '면접 볼 사람 "
-        "고르기'에서 보낸 내용도 여기 그대로 보입니다. 짝이 없는 사람은 인사 담당자 "
-        "시간표에서 '면접 못 보는 사람'으로 표시됩니다."
-    )
-    doc = load_handoff(round_id)
-    teams_doc = doc.get("teams") or {}
-    if not teams_doc:
-        st.info("아직 받은 명단이 없습니다. 인사 담당자가 명단을 보내면 여기서 짝을 "
-                "지을 수 있습니다.")
-        return
-
-    team_colors(teams_doc)
-    team = st.session_state.get("dept_team")
-    if team not in teams_doc:
-        team = st.selectbox("팀", sorted(teams_doc), key="c_match_team")
-    block = teams_doc[team]
-    team_ap = block.get("applicants") or []
-    team_iv = block.get("interviewers") or []
-    pairs: dict[str, str] = dict((block.get("submitted") or {}).get("pairs") or {})
-    if not team_iv:
-        st.warning(f"{team} 에 정해진 면접 담당자가 없습니다 ('우리 팀 면접 담당자 정하기'에서 정해 주세요).")
-        return
-    if not team_ap:
-        st.warning(f"{team} 에 배정된 면접자가 없습니다.")
-        return
-
-    load = Counter(pairs.values())
-    iv_row = {row["interviewer_id"]: row for row in team_iv}
-
-    def iv_label(iid: str) -> str:
-        row = iv_row[iid]
-        return (f"{row.get('name') or iid} · {role_label(row.get('priority'))} · "
-                f"맡은 사람 {load.get(iid, 0)}/{row.get('max_daily') or '-'}")
-
-    who = st.selectbox("면접 담당자", list(iv_row), format_func=iv_label, key="c_match_iv")
-    ap_name = {row["applicant_id"]: row.get("name") or row["applicant_id"]
-               for row in team_ap}
-    ap_label = {
-        row["applicant_id"]: f"{ap_name[row['applicant_id']]} · "
-                             f"{degree_label(row.get('degree_type'))} · "
-                             f"{row.get('major_final') or ''}"
-        for row in team_ap
-    }
-    mine = [row for row in team_ap if pairs.get(row["applicant_id"]) == who]
-    free = [row for row in team_ap if row["applicant_id"] not in pairs]
-    picks = st.multiselect(
-        f"아직 담당자가 없는 면접자 {len(free)}명 중에서 고르기",
-        [row["applicant_id"] for row in free],
-        format_func=lambda aid: ap_label.get(aid, aid),
-        key=f"c_match_pick_{team}_{who}",
-    )
-
-    def commit(new_pairs: dict) -> None:
-        submit_team(round_id, team, new_pairs, actor)
-        st.rerun()
-
-    b1, b2, b3, b4 = st.columns(4)
-    if b1.button(f"➕ {len(picks)}명 맡기기", type="primary", key="c_match_add"):
-        commit({**pairs, **{aid: who for aid in picks}})
-    if b2.button(f"↩ 이 담당자 짝 풀기 ({len(mine)})", key="c_match_drop"):
-        commit({a: i for a, i in pairs.items() if i != who})
-    if b3.button("🎯 남은 사람 알아서 나누기", key="c_match_auto"):
-        caps = [(row["interviewer_id"], int(row.get("max_daily") or SLOTS_PER_DAY))
-                for row in team_iv]
-        cursor = 0
-        filled = dict(pairs)
-        for row in team_ap:
-            aid = row["applicant_id"]
-            if aid in filled:
-                continue
-            for _ in range(len(caps)):
-                iid, cap = caps[cursor % len(caps)]
-                cursor += 1
-                if load[iid] < cap:
-                    filled[aid] = iid
-                    load[iid] += 1
-                    break
-        commit(filled)
-    if b4.button("🧹 이 팀 짝 모두 지우기", key="c_match_reset"):
-        commit({})
-
-    st.markdown("**담당자가 맡은 사람**")
-    card_grid([
-        card(
-            f"{role_label(row.get('priority'))} · "
-            f"{len([a for a, i in pairs.items() if i == iid])}/{row.get('max_daily') or '-'}",
-            row.get("name") or iid,
-            ", ".join(sorted(ap_name[a] for a, i in pairs.items()
-                             if i == iid and a in ap_name)) or "맡은 사람 없음",
-            tone="done" if any(i == iid for i in pairs.values()) else "empty",
-            team=team,
-        )
-        for iid, row in iv_row.items()
-    ], cols=3)
-
-    ap_degree = {row["applicant_id"]: degree_full(row.get("degree_type"))
-                 for row in team_ap}
-    left = [(row["applicant_id"], ap_name[row["applicant_id"]]) for row in team_ap
-            if row["applicant_id"] not in pairs]
-    if left:
-        st.markdown("**아직 담당자가 없는 면접자**")
-        card_grid([
-            card(team, name, "짝 없음", tone="out", degree=ap_degree.get(aid))
-            for aid, name in sorted(left, key=lambda x: x[1])
-        ], cols=5)
-
-    fresh = load_handoff(round_id)
-    all_pairs = handoff_pairs(fresh)
-    total_ap = sum(len(b.get("applicants") or []) for b in (fresh.get("teams") or {}).values())
-    st.caption(
-        f"짝이 정해진 사람 {len(all_pairs)} / {total_ap}명 · 아직 없는 사람 "
-        f"{total_ap - len(all_pairs)}명 — 짝이 없는 사람은 인사 담당자 시간표에서 '면접 못 보는 "
-        "사람'으로 다시 보여 드립니다."
-    )
-
-    rows = []
-    for tname, tblock in sorted((fresh.get("teams") or {}).items()):
-        iv_name = {iv["interviewer_id"]: iv.get("name") or iv["interviewer_id"]
-                   for iv in (tblock.get("interviewers") or [])}
-        tpairs = (tblock.get("submitted") or {}).get("pairs") or {}
-        for row in (tblock.get("applicants") or []):
-            rows.append({
-                "팀": tname,
-                "면접자": row.get("name"),
-                "지원자 번호": row["applicant_id"],
-                "학력": degree_label(row.get("degree_type")),
-                "면접 담당자": iv_name.get(tpairs.get(row["applicant_id"]), ""),
-            })
-    frame = pd.DataFrame(rows)
-    with st.expander("표로 보기 · 내려받기"):
-        st.dataframe(frame, width="stretch", hide_index=True, height=360)
-        st.download_button(
-            "⬇ 짝짓기 결과 XLSX", to_excel({"매칭": frame}),
-            file_name=f"면접매칭_{round_id}.xlsx", mime=XLSX_MIME, key="c_match_xlsx",
-        )
 
 
 def render_collection() -> None:
@@ -2336,6 +2250,7 @@ def render_collection() -> None:
             {
                 "소속팀": row.get("team") or "미상",
                 "성명": row.get("name") or row["interviewer_id"],
+                "직급": row.get("title") or "",
                 "역할": role_label(row.get("priority")),
                 "이메일": row.get("email") or "",
                 "하루 최대": row.get("max_daily"),
@@ -2360,13 +2275,12 @@ def render_collection() -> None:
     if not selected:
         st.warning("현업 부서 화면에서 이번 회차 면접 담당자를 먼저 정해 주세요.")
     else:
-        no_email = [row.get("name") or row["interviewer_id"]
-                    for row in selected if not row.get("email")]
+        no_email = [iv_label(row) for row in selected if not row.get("email")]
         if no_email:
             st.warning(f"이메일이 없어 연락하지 못하는 사람: {', '.join(no_email)}")
         invitees = [
             {
-                "name": row.get("name") or row["interviewer_id"],
+                "name": iv_label(row),
                 "email": row["email"],
                 "team": row.get("team") or "미상",
                 "org": row.get("team") or None,
@@ -2536,7 +2450,7 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
     ]
     labels = slot_labels(start, per_day, minutes, rest)
     out = []
-    for index, row in enumerate(order_for_interview(rows, balance)):
+    for index, row in enumerate(order_for_interview(rows, balance, per_day)):
         out.append({
             **row,
             "day": index // per_day + 1,
@@ -2794,12 +2708,11 @@ def render_schedule_body(sc_id: str) -> None:
         st.bar_chart(dd, height=300, stack=False)
 
     iv_roster, _ = fetch_json(f"{SCHEDULER}/api/v1/interviewers")
-    iv_names = {row["interviewer_id"]: row.get("name") or row["interviewer_id"]
-                for row in (iv_roster or [])}
+    iv_by_id = iv_names(iv_roster)
     if "interviewer_id" in df:
         st.markdown("**담당자마다 몇 명을 보는지 (한쪽으로 몰리지 않았는지)**")
         by_person = (
-            df["interviewer_id"].map(lambda i: iv_names.get(i, i))
+            df["interviewer_id"].map(lambda i: iv_by_id.get(i, i))
             .value_counts().sort_index().rename("건수").to_frame()
         )
         st.bar_chart(by_person, height=280)
@@ -2828,7 +2741,7 @@ def render_schedule_body(sc_id: str) -> None:
     listed = shown.copy()
     if "interviewer_id" in listed:
         listed["interviewer_name"] = listed["interviewer_id"].map(
-            lambda i: iv_names.get(i, i)
+            lambda i: iv_by_id.get(i, i)
         )
     listed = ko_frame(listed, keep=[
         "team", "day", "hour", "applicant_name", "degree", "interviewer_name",
@@ -2855,7 +2768,7 @@ def render_schedule_body(sc_id: str) -> None:
             tdf = pd.DataFrame(rows)
             if "interviewer_id" in tdf:
                 tdf["interviewer_name"] = tdf["interviewer_id"].map(
-                    lambda i: iv_names.get(i, i)
+                    lambda i: iv_by_id.get(i, i)
                 )
             sc = [c for c in ["day", "hour"] if c in tdf.columns]
             if sc:
@@ -2945,8 +2858,8 @@ def render_excluded(selected: list[dict], plan_id: str) -> None:
     st.markdown("**맡은 사람이 없는 담당자**")
     if out_iv:
         card_grid([
-            card(row["team"], row.get("name") or row["interviewer_id"],
-                 role_label(row.get("priority")), tone="out", team=row["team"])
+            card(row["team"], iv_label(row), role_label(row.get("priority")),
+                 tone="out", team=row["team"])
             for row in sorted(out_iv, key=lambda r: (r["team"], r.get("name") or ""))
         ], cols=5)
     else:
@@ -3100,12 +3013,11 @@ def dept_todo(team: str, block: dict, doc: dict, selected: list[dict]) -> list[t
         left = len(applicants) - len(pairs)
         if left > 0:
             out.append((False, "🧩", f"담당자가 정해지지 않은 면접자 {left}명이 남았습니다",
-                        DEPT_MENUS[2]))
+                        DEPT_MENUS[1]))
     if not applicants:
         out.append((False, "⏳", "인사 담당자가 아직 면접자 명단을 보내지 않았습니다", ""))
 
-    no_time = [row.get("name") or row["interviewer_id"]
-               for row in mine if not row.get("availability")]
+    no_time = [iv_label(row) for row in mine if not row.get("availability")]
     if no_time:
         out.append((True, "🗓️",
                     f"면접 가능한 시간을 아직 안 적은 담당자 {len(no_time)}명 "
@@ -3171,10 +3083,11 @@ def dept_alert_bar() -> str:
 
 def render_team_view() -> None:
     """부서(면접관) 뷰어 — 받은 명단에서 면접자와 담당자를 골라 제출한다."""
-    st.header("부서 2 · 면접 볼 사람 고르기")
+    st.header("부서 2 · 면접 볼 사람 고르고 담당자 짝 맞추기")
     st.caption(
         "인사 담당자가 보낸 우리 팀 면접자 명단입니다. 면접 볼 사람을 고르고 "
-        "누가 면접을 볼지 정해서 보내 주시면, 팀 시간표와 개인 일정이 바로 만들어집니다."
+        "누가 면접을 볼지 정해서 보내 주시면, 팀 시간표와 개인 일정이 바로 만들어집니다. "
+        "짝이 없는 사람도 이 화면 아래에서 바로 확인할 수 있습니다."
     )
     if not need_round():
         return
@@ -3199,11 +3112,17 @@ def render_team_view() -> None:
         for row in blk.get("applicants") or []:
             shared.setdefault(row["applicant_id"], set()).add(other)
     duplicated = {aid for aid, ts in shared.items() if len(ts) > 1}
-    interviewers = block.get("interviewers") or []
     submitted = block.get("submitted") or {}
     saved: dict[str, str] = dict(submitted.get("pairs") or {})
-    iv_name = {row["interviewer_id"]: row.get("name") or row["interviewer_id"]
-               for row in interviewers}
+
+    # 담당자는 '부서 1 · 우리 팀 면접 담당자 정하기' 에서 이번 회차로 고른 사람만
+    # 쓴다. 명단을 받은 뒤에 담당자를 바꿨어도 여기서는 지금 고른 사람이 기준이다.
+    chosen, _ = fetch_json(f"{SCHEDULER}/api/v1/interviewers/rounds/{round_id}")
+    interviewers = [row for row in (chosen or [])
+                    if (row.get("team") or "미상") == team]
+    if not interviewers:
+        interviewers = block.get("interviewers") or []   # 아직 못 읽으면 받은 명단대로
+    iv_name = iv_names(interviewers)
     st.caption(
         f"받은 시각 {str(doc.get('sent_at'))[:16]} · 보낸 사람 {doc.get('sent_by')} · "
         f"면접 볼 사람 {len(applicants)}명 · 우리 팀 면접 담당자 {len(interviewers)}명"
@@ -3216,8 +3135,39 @@ def render_team_view() -> None:
         return
 
     st.divider()
-    st.subheader("① 면접 볼 사람 고르고, 담당자 정하기")
-    b1, b2, b3 = st.columns([1, 1, 3])
+    st.subheader("① 면접에 들어갈 수 있는 우리 팀 담당자")
+    st.caption(
+        "'부서 1 · 우리 팀 면접 담당자 정하기' 에서 이번 회차로 고른 사람들입니다. "
+        "아래에서 짝을 지을 때도 이 사람들 중에서만 고를 수 있습니다."
+    )
+    ap_name = {row["applicant_id"]: row.get("name") or row["applicant_id"]
+               for row in applicants}
+    already = Counter(iid for aid, iid in saved.items() if iid in iv_name)
+    card_grid([
+        card(
+            f"{role_label(row.get('priority'))} · 맡은 사람 "
+            f"{already.get(row['interviewer_id'], 0)}/{row.get('max_daily') or '-'}",
+            iv_label(row),
+            ", ".join(sorted(ap_name[a] for a, i in saved.items()
+                             if i == row["interviewer_id"] and a in ap_name))
+            or "아직 맡은 사람 없음",
+            tone="done" if already.get(row["interviewer_id"]) else "empty",
+            team=team,
+        )
+        for row in interviewers
+    ], cols=3)
+
+    st.divider()
+    st.subheader("② 면접 볼 사람 고르고, 담당자 정하기")
+    auto = st.session_state.get("tv_auto")
+    if auto and auto[0] == team:
+        st.success(
+            f"{auto[1]}명을 담당자에게 고르게 나눠 두었습니다."
+            + (f" 하루 최대 인원을 넘겨 {auto[2]}명은 팀장에게 몰아 두었으니 "
+               "확인해 주세요." if auto[2] else "")
+        )
+        st.session_state.pop("tv_auto", None)
+    b1, b2, b3, b4 = st.columns([1, 1, 1.4, 2.6])
     if b1.button("전체 고르기", key="tv_all"):
         for row in applicants:
             st.session_state[f"tv_on_{team}_{row['applicant_id']}"] = True
@@ -3226,7 +3176,32 @@ def render_team_view() -> None:
         for row in applicants:
             st.session_state[f"tv_on_{team}_{row['applicant_id']}"] = False
         st.rerun()
-    b3.caption("체크한 사람만 보내집니다. 담당자를 따로 고르지 않으면 팀장이 맡습니다.")
+    if b3.button("🎯 담당자 자동배치하기", key="tv_auto_go"):
+        # 체크한 사람만 나눈다. 아무도 안 골랐으면 전체를 고른 것으로 본다.
+        targets = [row["applicant_id"] for row in applicants
+                   if st.session_state.get(f"tv_on_{team}_{row['applicant_id']}")]
+        if not targets:
+            targets = [row["applicant_id"] for row in applicants]
+        for aid in targets:
+            # 화면을 다시 그릴 때 체크가 풀리지 않게 여기서 한 번 더 적어 둔다
+            st.session_state[f"tv_on_{team}_{aid}"] = True
+        caps = {row["interviewer_id"]: int(row.get("max_daily") or SLOTS_PER_DAY)
+                for row in interviewers}
+        load = {iid: 0 for iid in caps}
+        lead = next((row["interviewer_id"] for row in interviewers
+                     if row.get("priority") == 1), interviewers[0]["interviewer_id"])
+        over = 0
+        for aid in targets:
+            free = [iid for iid in caps if load[iid] < caps[iid]]
+            if free:                       # 가장 적게 맡은 사람에게 붙인다
+                who = min(free, key=lambda i: load[i])
+            else:
+                who, over = lead, over + 1  # 다 찼으면 팀장이 떠안고 알려 준다
+            load[who] += 1
+            st.session_state[f"tv_iv_{team}_{aid}"] = who
+        st.session_state["tv_auto"] = (team, len(targets), over)
+        st.rerun()
+    b4.caption("체크한 사람만 보내집니다. 담당자를 따로 고르지 않으면 팀장이 맡습니다.")
 
     default_iv = next((row["interviewer_id"] for row in interviewers
                        if row.get("priority") == 1), interviewers[0]["interviewer_id"])
@@ -3242,12 +3217,17 @@ def render_team_view() -> None:
                 + ("  :red-badge[중복면접]" if aid in duplicated else "")
             )
             st.caption(f"{degree} · {row.get('major_final') or '-'}")
-            on = st.checkbox("면접 보기", key=f"tv_on_{team}_{aid}",
-                             value=aid in saved)
+            # 처음 그릴 때만 보낸 내용대로 맞춰 둔다 — 그 뒤로는 화면에서 고른 값이 기준
+            on_key, iv_key = f"tv_on_{team}_{aid}", f"tv_iv_{team}_{aid}"
+            st.session_state.setdefault(on_key, aid in saved)
+            want = saved.get(aid, default_iv)
+            st.session_state.setdefault(
+                iv_key, want if want in iv_name else default_iv)
+            if st.session_state[iv_key] not in iv_name:
+                st.session_state[iv_key] = default_iv   # 담당자가 빠졌으면 팀장으로
+            on = st.checkbox("면접 보기", key=on_key)
             who = st.selectbox(
-                "면접 담당자", list(iv_name), key=f"tv_iv_{team}_{aid}",
-                index=list(iv_name).index(saved.get(aid, default_iv))
-                if saved.get(aid, default_iv) in iv_name else 0,
+                "면접 담당자", list(iv_name), key=iv_key,
                 format_func=lambda i: iv_name[i], label_visibility="collapsed",
             )
             if on:
@@ -3264,13 +3244,32 @@ def render_team_view() -> None:
     if st.session_state.get("tv_done") == team:
         st.success("보냈습니다 — 아래가 이번에 정한 최종 일정입니다.")
 
+    # 짝이 없는 사람은 인사 담당자 시간표에서 '면접 못 보는 사람'이 되므로 여기서 짚어 준다
+    left = [(row["applicant_id"], ap_name[row["applicant_id"]],
+             degree_full(row.get("degree_type")))
+            for row in applicants if row["applicant_id"] not in saved]
+    if left:
+        st.markdown("**아직 담당자가 정해지지 않은 면접자**")
+        card_grid([
+            card(team, name, "짝 없음", tone="out", team=team, degree=degree)
+            for _, name, degree in sorted(left, key=lambda x: x[1])
+        ], cols=5)
+
+    all_pairs = handoff_pairs(doc)
+    total_ap = sum(len(b.get("applicants") or []) for b in teams_doc.values())
+    st.caption(
+        f"우리 팀 {len(saved)}/{len(applicants)}명 · 전체 회차로는 "
+        f"{len(all_pairs)}/{total_ap}명에게 담당자가 정해졌습니다 — 짝이 없는 사람은 "
+        "인사 담당자 시간표에서 '면접 못 보는 사람'으로 다시 보여 드립니다."
+    )
+
     pairs = dict(saved)
     if not pairs:
         st.info("아직 보낸 내용이 없습니다.")
         return
 
     st.divider()
-    st.subheader("② 우리 팀 면접 시간표")
+    st.subheader("③ 우리 팀 면접 시간표")
     c1, c2, c3, c4 = st.columns(4)
     start = c1.text_input("면접 시작 시각", value="09:00", key="tv_start")
     minutes = c2.number_input("한 사람당 면접 시간(분)", 10, 120, SLOT_MINUTES, 5,
@@ -3291,9 +3290,10 @@ def render_team_view() -> None:
         f"{team} · 모두 {len(rows)}명 · 한 사람당 {int(minutes)}분 면접에 "
         f"{int(rest)}분 휴식 · 하루 {int(per_day)}명씩 · {max(r['day'] for r in rows)}일차까지"
         " · 카드 위쪽 띠줄은 학력(박사 · 석사 · 학사)입니다."
+        " 학력은 날짜마다 고르게 나누되, 하루 안에서는 박사 → 석사 → 학사 순으로 묶습니다."
     )
 
-    st.subheader("③ 담당자별 면접 일정")
+    st.subheader("④ 담당자별 면접 일정")
     schedule_cards(rows, by_person=True, team=team)
 
     frame = pd.DataFrame([
@@ -3307,6 +3307,27 @@ def render_team_view() -> None:
             "⬇ 우리 팀 시간표 내려받기", to_excel({team: frame}),
             file_name=f"면접시간표_{team}_{round_id}.xlsx", mime=XLSX_MIME,
             key="tv_xlsx",
+        )
+
+    # 다른 팀까지 한 번에 — 인사 담당자에게 그대로 넘길 수 있는 짝짓기 표
+    match_rows = []
+    for tname, tblock in sorted(teams_doc.items()):
+        names = iv_names(tblock.get("interviewers") or [])
+        tpairs = (tblock.get("submitted") or {}).get("pairs") or {}
+        for row in tblock.get("applicants") or []:
+            match_rows.append({
+                "팀": tname,
+                "면접자": row.get("name"),
+                "지원자 번호": row["applicant_id"],
+                "학력": degree_full(row.get("degree_type")),
+                "면접 담당자": names.get(tpairs.get(row["applicant_id"]), ""),
+            })
+    match_frame = pd.DataFrame(match_rows)
+    with st.expander("이번 회차 전체 짝짓기 보기 · 내려받기"):
+        st.dataframe(match_frame, width="stretch", hide_index=True, height=360)
+        st.download_button(
+            "⬇ 짝짓기 결과 XLSX", to_excel({"매칭": match_frame}),
+            file_name=f"면접매칭_{round_id}.xlsx", mime=XLSX_MIME, key="tv_match_xlsx",
         )
 
 
@@ -3649,8 +3670,6 @@ if viewer == VIEWERS[1]:
     dept_alert_bar()              # 온 요청과 할 일을 맨 윗줄에 먼저 보여 준다
     if dept_menu == DEPT_MENUS[1]:
         render_team_view()
-    elif dept_menu == DEPT_MENUS[2]:
-        render_matching()
     else:
         render_interviewers()
 elif viewer == VIEWERS[2]:

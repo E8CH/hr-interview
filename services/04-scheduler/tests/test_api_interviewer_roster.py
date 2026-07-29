@@ -86,6 +86,7 @@ def test_import_creates_master_rows(client, roster_bytes):
     assert leader["priority"] == 1
     assert leader["max_daily"] == 4
     assert leader["email"] == "iv101@example.com"
+    assert leader["title"] == "수석"  # 직급 — 동명이인을 가르는 표시
 
 
 def test_import_is_idempotent(client, roster_bytes):
@@ -110,13 +111,14 @@ def test_import_keeps_existing_availability(client, db, roster_bytes):
 
 def test_import_accepts_alias_columns(client):
     data = _sheet_bytes([
-        ["사원번호", "이름", "팀", "메일", "하루최대", "우선순위"],
-        ["A1", "홍길동", "AI솔루션팀", "a1@example.com", "5", "1"],
+        ["사원번호", "이름", "직위", "팀", "메일", "하루최대", "우선순위"],
+        ["A1", "홍길동", "책임", "AI솔루션팀", "a1@example.com", "5", "1"],
     ])
     result = _upload(client, data).json()["data"]
     assert result["parsed"] == 1
     assert result["interviewers"][0] == {
-        "interviewer_id": "A1", "name": "홍길동", "team": "AI솔루션팀",
+        "interviewer_id": "A1", "name": "홍길동", "title": "책임",
+        "team": "AI솔루션팀",
         "email": "a1@example.com", "max_daily": 5, "priority": 1,
     }
 
@@ -126,6 +128,7 @@ def test_import_uses_defaults_for_blank_numbers(client):
     parsed = _upload(client, data).json()["data"]["interviewers"][0]
     assert parsed["max_daily"] == 6
     assert parsed["priority"] == 2
+    assert parsed["title"] == ""  # 직급 칸이 없어도 업로드는 통과한다
 
 
 def test_import_rejects_file_without_headers(client):

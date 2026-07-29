@@ -1,7 +1,7 @@
 """면접관명단.xlsx 업로드 · 회차별 선별.
 
 콘솔 3번 메뉴(면접 담당자 선별)가 쓰는 경로다.
-  - 업로드: 사번 | 성명 | 소속팀 | 이메일 | 일일최대 | 우선순위 를 마스터에 반영
+  - 업로드: 사번 | 성명 | 직급 | 소속팀 | 이메일 | 일일최대 | 우선순위 를 마스터에 반영
   - 선별: 회차마다 그중 누구를 투입할지 골라 round_interviewers 에 저장
 
 가용성(어느 요일 몇 시)은 여기서 다루지 않는다. 그건 03(회신 수집)이 모으고
@@ -23,6 +23,7 @@ from app.errors import ValidationFailed
 COLUMN_ALIASES = {
     "interviewer_id": ("사번", "사원번호", "면접관ID", "interviewer_id"),
     "name": ("성명", "이름", "한글성명", "name"),
+    "title": ("직급", "직위", "직책", "title"),
     "team": ("소속팀", "팀", "소속", "team"),
     "email": ("이메일", "메일", "email"),
     "max_daily": ("일일최대", "하루최대", "max_daily"),
@@ -103,6 +104,7 @@ def parse_roster(data: bytes) -> list[dict]:
         out.append({
             "interviewer_id": interviewer_id,
             "name": _norm(cell(row, "name")),
+            "title": _norm(cell(row, "title")),
             "team": team,
             "email": _norm(cell(row, "email")),
             "max_daily": _to_int(cell(row, "max_daily"), DEFAULT_MAX_DAILY),
@@ -185,6 +187,7 @@ def list_for_round(db: Session, round_id: str) -> list[dict]:
         {
             "interviewer_id": r.interviewer_id,
             "name": r.name,
+            "title": r.title or "",
             "team": r.team,
             "email": r.email,
             "max_daily": r.max_daily,

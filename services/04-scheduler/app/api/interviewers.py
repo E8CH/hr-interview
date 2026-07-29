@@ -22,6 +22,7 @@ def _serialize(row: Interviewer) -> dict:
     return {
         "interviewer_id": row.interviewer_id,
         "name": row.name,
+        "title": row.title or "",
         "team": row.team,
         "max_daily": row.max_daily,
         "priority": row.priority,
@@ -46,7 +47,7 @@ async def import_roster(
     actor: str = Form("console"),
     db: Session = Depends(get_db),
 ):
-    """사번 | 성명 | 소속팀 | 이메일 | 일일최대 | 우선순위 컬럼을 읽어 마스터에 반영."""
+    """사번 | 성명 | 직급 | 소속팀 | 이메일 | 일일최대 | 우선순위 컬럼을 읽어 마스터에 반영."""
     data = await file.read()
     result = interviewer_roster.import_roster(db, data)
     result["file_name"] = file.filename

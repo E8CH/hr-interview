@@ -35,6 +35,7 @@ class InterviewerIn:
     interviewer_id: str
     name: str
     team: str
+    title: str = ""          # 직급
     max_daily: int = 6
     priority: int = 2
     email: str = ""
@@ -98,6 +99,7 @@ class LockRequest(BaseModel):
 class InterviewerCreate(BaseModel):
     interviewer_id: str
     name: str = ""
+    title: str = ""          # 직급 (책임 · 선임 …) — 동명이인을 가르는 표시
     team: str
     max_daily: int = 6
     priority: int = 2
@@ -119,6 +121,7 @@ class InterviewerCreate(BaseModel):
 
 class InterviewerUpdate(BaseModel):
     name: str | None = None
+    title: str | None = None
     team: str | None = None
     max_daily: int | None = None
     priority: int | None = None

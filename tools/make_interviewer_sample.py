@@ -10,7 +10,8 @@ from pathlib import Path
 from openpyxl import Workbook
 
 TEAMS = ["AI솔루션팀", "로봇응용기술팀", "미래혁신팀", "배터리기술팀", "전극기술팀"]
-HEADER = ["사번", "성명", "소속팀", "이메일", "일일최대", "우선순위"]
+HEADER = ["사번", "성명", "직급", "소속팀", "이메일", "일일최대", "우선순위"]
+TITLES = ["수석", "책임", "선임", "선임"]
 OUT = Path(__file__).resolve().parent / "fixtures" / "면접관명단_sample.xlsx"
 
 
@@ -27,6 +28,7 @@ def build() -> Workbook:
             sheet.append([
                 emp_id,
                 f"{team} {'리더' if is_leader else f'실무{member_no}'}",
+                TITLES[member_no % len(TITLES)],
                 team,
                 f"{emp_id.lower()}@example.com",
                 4 if is_leader else 6,

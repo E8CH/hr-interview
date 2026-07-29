@@ -12,6 +12,7 @@ class Interviewer(Base):
 
     interviewer_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(64), default="")
+    title: Mapped[str] = mapped_column(String(32), default="", server_default="")  # 직급
     team: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     max_daily: Mapped[int] = mapped_column(Integer, default=6)
     priority: Mapped[int] = mapped_column(Integer, default=2)  # 1=리더, 2=실무
