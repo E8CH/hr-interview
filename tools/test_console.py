@@ -70,8 +70,9 @@ def error_text(response: httpx.Response) -> str:
 st.title("🎯 HR Interview System - Test Console")
 st.caption("7개 마이크로서비스 통합 테스트 콘솔 (v3 — 실제 서비스 계약 반영)")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "🩺 헬스체크", "🚀 시나리오 실행", "📜 이벤트 타임라인", "🗃️ DB 조회", "📊 KPI 대시보드"
+tab1, tab2, tab6, tab3, tab4, tab5 = st.tabs([
+    "🩺 헬스체크", "🚀 시나리오 실행", "🗓️ 시간표 / 배정",
+    "📜 이벤트 타임라인", "🗃️ DB 조회", "📊 KPI 대시보드"
 ])
 
 # ============================================================
@@ -304,6 +305,137 @@ with tab2:
                 st.session_state["last_schedule_id"] = schedule_id
 
 # ============================================================
+# Tab 6: 시간표 / 배정 결과
+# ============================================================
+with tab6:
+    st.subheader("최종 시간표 · 배정 결과")
+    import pandas as pd
+
+    default_schedule = st.session_state.get("last_schedule_id", "")
+    sc_id = st.text_input(
+        "Schedule ID",
+        value=default_schedule,
+        key="sc_id",
+        help="시나리오 실행 후 자동으로 채워진다. 04의 GET /api/v1/schedules/{id} 를 조회한다.",
+    )
+
+    if not sc_id:
+        st.info("시나리오 탭에서 3단계까지 실행하면 Schedule ID 가 자동으로 채워집니다.")
+    elif st.button("🗓️ 시간표 조회", type="primary"):
+        try:
+            r = httpx.get(f"{SCHEDULER}/api/v1/schedules/{sc_id}", timeout=20.0)
+        except Exception as e:
+            st.error(str(e))
+            r = None
+
+        if r is None:
+            pass
+        elif r.status_code != 200:
+            st.error(f"status {r.status_code}: {error_text(r)}")
+        else:
+            sched = unwrap(r) or {}
+            rc = sched.get("rule_compliance") or {}
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("배정", f"{sched.get('total_assigned')} / {sched.get('total_applicants')}")
+            c2.metric("커버리지", f"{sched.get('coverage_pct')}%")
+            c3.metric("하드 위반", sched.get("hard_violations"))
+            c4.metric("규칙 준수", f"{rc.get('overall')}%")
+            st.caption(
+                f"round {sched.get('round_id')} · plan {sched.get('plan_id')} · "
+                f"algorithm {sched.get('algorithm')} · status {sched.get('status')} · "
+                f"{sched.get('elapsed_ms')}ms"
+            )
+
+            assignments = sched.get("assignments") or []
+            if not assignments:
+                st.warning("배정 결과가 비어 있습니다.")
+            else:
+                df = pd.DataFrame(assignments)
+                cols = [
+                    c for c in [
+                        "applicant_id", "applicant_name", "team", "degree",
+                        "day", "hour", "interviewer_id", "lock_level", "reason_tags",
+                    ] if c in df.columns
+                ]
+                df = df[cols + [c for c in df.columns if c not in cols and c != "assignment_id"]]
+
+                view = st.radio(
+                    "보기", ["전체 목록", "팀별", "요일 × 시간 히트맵", "규칙 상세"],
+                    horizontal=True, key="sc_view",
+                )
+
+                if view == "전체 목록":
+                    teams = sorted(df["team"].dropna().unique()) if "team" in df else []
+                    pick = st.multiselect("팀 필터", teams, default=list(teams), key="sc_teams")
+                    shown = df[df["team"].isin(pick)] if teams else df
+                    sort_cols = [c for c in ["team", "day", "hour"] if c in shown.columns]
+                    if sort_cols:
+                        shown = shown.sort_values(sort_cols)
+                    st.dataframe(shown, use_container_width=True, hide_index=True)
+                    st.caption(f"총 {len(shown)}건")
+                    st.download_button(
+                        "⬇ CSV 다운로드",
+                        shown.to_csv(index=False).encode("utf-8-sig"),
+                        file_name=f"schedule_{sc_id[:8]}.csv",
+                        mime="text/csv",
+                    )
+
+                elif view == "팀별":
+                    rt = httpx.get(f"{SCHEDULER}/api/v1/schedules/{sc_id}/by-team", timeout=20.0)
+                    teams = (unwrap(rt) or {}).get("teams", {}) if rt.status_code == 200 else {}
+                    if not teams:
+                        st.error(f"status {rt.status_code}: {error_text(rt)}")
+                    for team, rows in teams.items():
+                        with st.expander(f"{team} — {len(rows)}명", expanded=True):
+                            tdf = pd.DataFrame(rows)
+                            order = [c for c in ["day", "hour", "applicant_id", "applicant_name",
+                                                 "degree", "interviewer_id", "lock_level",
+                                                 "reason_tags"] if c in tdf.columns]
+                            st.dataframe(
+                                tdf[order].sort_values([c for c in ["day", "hour"] if c in order]),
+                                use_container_width=True, hide_index=True,
+                            )
+
+                elif view == "요일 × 시간 히트맵":
+                    rh = httpx.get(f"{SCHEDULER}/api/v1/schedules/{sc_id}/heatmap", timeout=20.0)
+                    if rh.status_code != 200:
+                        st.error(f"status {rh.status_code}: {error_text(rh)}")
+                    else:
+                        hm = unwrap(rh) or {}
+                        grid = hm.get("grid", {})
+                        hours = hm.get("hours", [])
+                        hdf = pd.DataFrame(
+                            [[grid.get(d, {}).get(h, 0) for h in hours] for d in hm.get("days", [])],
+                            index=hm.get("days", []), columns=hours,
+                        )
+                        try:  # 색 그라데이션은 matplotlib 이 있을 때만
+                            st.dataframe(
+                                hdf.style.background_gradient(cmap="Blues", axis=None),
+                                use_container_width=True,
+                            )
+                        except ImportError:
+                            st.dataframe(hdf, use_container_width=True)
+                        st.caption("칸의 숫자 = 해당 요일·시간대에 배정된 면접 건수")
+
+                else:  # 규칙 상세
+                    rr = httpx.get(f"{SCHEDULER}/api/v1/schedules/{sc_id}/rules", timeout=20.0)
+                    if rr.status_code != 200:
+                        st.error(f"status {rr.status_code}: {error_text(rr)}")
+                    else:
+                        rules = unwrap(rr) or {}
+                        labels = {
+                            "rule1_grad_balance": "규칙1 학위 균형",
+                            "rule2_team_conflict": "규칙2 팀 충돌(HARD)",
+                            "rule3_vertical_group": "규칙3 수직 묶음",
+                            "rule4_first_slot": "규칙4 첫 슬롯",
+                        }
+                        cols = st.columns(len(labels))
+                        for col, (key, label) in zip(cols, labels.items()):
+                            col.metric(label, f"{(rules.get(key) or {}).get('score', '-')}%")
+                        st.json(rules)
+
+# ============================================================
 # Tab 3: Timeline
 # ============================================================
 with tab3:
@@ -360,20 +492,60 @@ with tab4:
 # ============================================================
 with tab5:
     st.subheader("KPI 대시보드")
-    if st.button("📊 KPI 조회"):
-        try:
-            r = httpx.get(f"{AUDIT}/api/v1/dashboard/kpi", timeout=5.0)
-            if r.status_code == 200:
-                st.json(r.json())
-            else:
-                st.warning(f"status {r.status_code}")
-        except Exception as e:
-            st.error(str(e))
+    import pandas as pd
+
+    # 07의 dashboard 엔드포인트는 전부 round_id 가 필수다 (없으면 422).
+    kpi_round = st.text_input(
+        "Round ID",
+        value=st.session_state.get("last_round_id", "R2026-TEST-001"),
+        key="kpi_round",
+    )
+
+    def fetch(path: str):
+        r = httpx.get(f"{AUDIT}{path}", params={"round_id": kpi_round}, timeout=10.0)
+        if r.status_code != 200:
+            st.error(f"status {r.status_code}: {error_text(r)}")
+            return None
+        return unwrap(r)
+
+    if st.button("📊 KPI 조회", type="primary"):
+        kpi = fetch("/api/v1/dashboard/kpi")
+        if isinstance(kpi, dict) and kpi:
+            keys = list(kpi.keys())
+            for row_start in range(0, len(keys), 4):
+                for col, key in zip(st.columns(4), keys[row_start:row_start + 4]):
+                    col.metric(key.replace("_", " "), kpi[key])
+            st.json(kpi)
+        elif kpi is not None:
+            st.info("해당 Round의 KPI 데이터가 없습니다.")
+
     st.divider()
     if st.button("🏢 조직 응답 통계"):
+        orgs = fetch("/api/v1/dashboard/organizations")
+        if orgs:
+            st.dataframe(pd.DataFrame(orgs), use_container_width=True, hide_index=True)
+        elif orgs is not None:
+            st.info("조직 응답 데이터가 없습니다. (03 회신 수집 전이면 비어 있는 게 정상)")
+
+    st.divider()
+    if st.button("⚠ 위험 신호"):
+        risks = fetch("/api/v1/dashboard/risks")
+        if risks:
+            st.dataframe(pd.DataFrame(risks), use_container_width=True, hide_index=True)
+        elif risks is not None:
+            st.success("감지된 위험 신호가 없습니다.")
+
+    st.divider()
+    if st.button("📄 라운드 리포트"):
         try:
-            r = httpx.get(f"{AUDIT}/api/v1/dashboard/organizations", timeout=5.0)
-            if r.status_code == 200:
-                st.json(r.json())
+            r = httpx.get(f"{AUDIT}/api/v1/reports/rounds/{kpi_round}", timeout=10.0)
         except Exception as e:
             st.error(str(e))
+        else:
+            if r.status_code != 200:
+                st.error(f"status {r.status_code}: {error_text(r)}")
+            else:
+                rep = unwrap(r) or {}
+                if rep.get("phases"):
+                    st.dataframe(pd.DataFrame(rep["phases"]), use_container_width=True, hide_index=True)
+                st.json(rep)
