@@ -311,17 +311,54 @@ with tab6:
     st.subheader("최종 시간표 · 배정 결과")
     import pandas as pd
 
-    default_schedule = st.session_state.get("last_schedule_id", "")
-    sc_id = st.text_input(
-        "Schedule ID",
+    default_schedule = st.session_state.get(
+        "last_schedule_id", st.session_state.get("last_round_id", "")
+    )
+    key_input = st.text_input(
+        "Schedule ID 또는 Round ID",
         value=default_schedule,
         key="sc_id",
-        help="시나리오 실행 후 자동으로 채워진다. 04의 GET /api/v1/schedules/{id} 를 조회한다.",
+        help=(
+            "시나리오 실행 후 자동으로 채워진다. Round ID(R2026-…)를 넣으면 "
+            "07 타임라인의 SCHEDULE_GENERATED 이벤트에서 Schedule ID를 찾아 조회한다."
+        ),
     )
 
-    if not sc_id:
+    def resolve_schedule_id(text: str):
+        """Round ID 를 넣어도 되게 한다.
+
+        Schedule ID 는 UUID(16진수)라 절대 'R' 로 시작하지 않으므로 이걸로 구분한다.
+        """
+        text = (text or "").strip()
+        if not text or not text.upper().startswith("R"):
+            return text, None  # Schedule ID(UUID) 로 간주
+        try:
+            r = httpx.get(
+                f"{AUDIT}/api/v1/audit/timeline",
+                params={"round_id": text, "event_type": "SCHEDULE_GENERATED"},
+                timeout=10.0,
+            )
+        except Exception as e:
+            return text, f"Round ID 조회 실패: {e}"
+        if r.status_code != 200:
+            return text, f"Round ID 조회 실패 (status {r.status_code})"
+        data = unwrap(r)
+        events = data if isinstance(data, list) else (data or {}).get("events", [])
+        for ev in reversed(events):  # 재생성된 경우 가장 최근 것
+            sid = (ev.get("payload") or {}).get("schedule_id")
+            if sid:
+                return sid, f"Round {text} → Schedule {sid}"
+        return text, (
+            f"Round {text} 에 SCHEDULE_GENERATED 이벤트가 없습니다. "
+            "3단계(스케줄 생성)까지 실행됐는지 확인하세요."
+        )
+
+    if not key_input:
         st.info("시나리오 탭에서 3단계까지 실행하면 Schedule ID 가 자동으로 채워집니다.")
     elif st.button("🗓️ 시간표 조회", type="primary"):
+        sc_id, note = resolve_schedule_id(key_input)
+        if note:
+            (st.caption if sc_id != key_input else st.warning)(note)
         try:
             r = httpx.get(f"{SCHEDULER}/api/v1/schedules/{sc_id}", timeout=20.0)
         except Exception as e:
