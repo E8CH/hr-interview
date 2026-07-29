@@ -105,9 +105,13 @@ def compare_versions(session: Session, version_ids: list[str]) -> dict:
         integrity = check_integrity(list(base.applicant_ids), team_map)
         integrity["master_version_id"] = base.version_id
 
+    # 마스터가 하나도 없으면(배포본만 올린 회차) 읽힌 파일 전부가 병합 대상이 된다.
+    readable_ids = [v.version_id for v in versions if v.version_id in tables]
+
     return {
         "versions": [_version_brief(v) for v in versions],
         "master_version_ids": [v.version_id for v in masters],
+        "mergeable_version_ids": master_ids or readable_ids,
         "team_version_ids": [v.version_id for v in teams],
         "unreadable": unreadable,
         "conflicts": conflicts,
@@ -198,15 +202,19 @@ def merge_versions(
 
     selections 에 없는 지원자는 기준(base) 파일의 행을 그대로 쓴다. 기준에도
     없으면 version_ids 순서상 먼저 나온 파일의 행을 쓴다.
+
+    마스터가 하나도 없는 회차(배포본만 올린 경우)는 넘어온 파일들을 그대로 합쳐
+    최종 취합본을 만든다 — 등록한 파일이 곧 이 회차의 전부이기 때문이다.
     """
     ids = list(dict.fromkeys([base_version_id, *version_ids]))
     versions = {vid: svc.get_by_id(session, vid) for vid in ids}
-    if versions[base_version_id].kind != KIND_MASTER:
+    has_master = any(v.kind == KIND_MASTER for v in versions.values())
+    if has_master and versions[base_version_id].kind != KIND_MASTER:
         raise svc.VersionError("VALIDATION_FAILED", "기준 버전은 마스터여야 합니다")
 
     tables: dict[str, SheetTable] = {}
     for vid, version in versions.items():
-        if version.kind != KIND_MASTER:
+        if has_master and version.kind != KIND_MASTER:
             continue
         try:
             tables[vid] = _load_table(version)

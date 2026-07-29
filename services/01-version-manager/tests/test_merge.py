@@ -202,15 +202,61 @@ def test_merge_pulls_in_rows_missing_from_base(client, sample_bytes, sample_roun
     assert merged["rows_from"][full["version_id"]] == 3
 
 
-def test_merge_rejects_team_file_as_base(client, sample_bytes, sample_round_id):
+def test_merge_rejects_team_file_as_base_when_master_exists(
+    client, sample_bytes, sample_round_id
+):
+    """마스터가 있는 회차에서는 기준이 마스터여야 한다."""
+    master = _register(client, "취합파일.xlsx", sample_bytes, sample_round_id)
     team = _register(client, "희망지원자_AI솔루션팀.xlsx", sample_bytes, sample_round_id)
     r = client.post("/api/v1/versions/merge", json={
         "round_id": sample_round_id,
         "base_version_id": team["version_id"],
+        "version_ids": [master["version_id"]],
         "actor": "pytest",
     })
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+def test_merge_uses_distribution_files_when_no_master(
+    client, sample_bytes, sample_round_id
+):
+    """배포본만 올린 회차도 등록한 파일 그대로 최종 취합본이 된다."""
+    table = read_table(sample_bytes)
+    half = len(table.rows) // 2
+    first = _register(client, "희망지원자_AI솔루션팀.xlsx",
+                      write_table(table, table.rows[:half]), sample_round_id)
+    second = _register(client, "희망지원자_전극기술팀.xlsx",
+                       write_table(table, table.rows[half:]), sample_round_id)
+
+    compared = client.post("/api/v1/versions/compare", json={
+        "version_ids": [first["version_id"], second["version_id"]],
+    }).json()["data"]
+    assert compared["master_version_ids"] == []
+    assert compared["mergeable_version_ids"] == [
+        first["version_id"], second["version_id"]
+    ]
+
+    merged = client.post("/api/v1/versions/merge", json={
+        "round_id": sample_round_id,
+        "base_version_id": first["version_id"],
+        "version_ids": [second["version_id"]],
+        "actor": "pytest",
+    }).json()["data"]
+    # 두 배포본을 합치면 전원이 들어오고, 결과는 새 마스터로 등록된다
+    assert merged["row_count"] == len(table.ids())
+    active = client.get(f"/api/v1/versions/{sample_round_id}").json()["data"]
+    assert active["version_id"] == merged["version_id"]
+
+
+def test_compare_reports_master_as_mergeable(client, sample_bytes, sample_round_id):
+    master = _register(client, "취합파일.xlsx", sample_bytes, sample_round_id)
+    team = _register(client, "희망지원자_AI솔루션팀.xlsx", sample_bytes, sample_round_id)
+    compared = client.post("/api/v1/versions/compare", json={
+        "version_ids": [master["version_id"], team["version_id"]],
+    }).json()["data"]
+    # 마스터가 있으면 배포본은 병합 대상이 아니다
+    assert compared["mergeable_version_ids"] == [master["version_id"]]
 
 
 # ------------------------------------------------------------------ 회차 초기화

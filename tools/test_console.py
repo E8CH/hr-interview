@@ -666,6 +666,15 @@ def render_versions() -> None:
 
     conflicts = result.get("conflicts") or []
     masters = [vid for vid in result.get("master_version_ids", []) if vid in names]
+    # 마스터로 판별된 파일이 없어도(배포본 이름으로만 올린 회차) 등록한 파일 자체가
+    # 곧 최종 취합본이다 — 읽힌 파일 전부를 병합 대상으로 쓴다.
+    teams_only = not masters
+    if teams_only:
+        broken = {b.get("version_id") for b in (result.get("unreadable") or [])}
+        readable = [v["version_id"] for v in result.get("versions", [])
+                    if v["version_id"] not in broken]
+        masters = [vid for vid in (result.get("mergeable_version_ids") or readable)
+                   if vid in names]
     selections: dict[str, str] = st.session_state.setdefault("v_selections", {})
 
     st.markdown("#### ⚖️ 값이 어긋난 지원자 — 채택할 버전 선택")
@@ -723,26 +732,33 @@ def render_versions() -> None:
     st.divider()
     st.subheader("④ 최종 취합본 생성")
     if not masters:
-        in_round = [v for v in history if v.get("kind") == KIND_MASTER]
-        if in_round:
+        rest = [v for v in history if v["version_id"] not in picked_ids]
+        if rest:
             st.warning(
-                "대조 대상에 마스터(전체 취합본)가 빠져 있어 최종본을 만들 수 없다. "
-                "위 ②에서 아래 파일을 선택해 다시 대조하세요 — "
-                + ", ".join(v.get("file_name") or v["version_id"][:8] for v in in_round)
+                "대조 대상에서 빠진 파일이 있어 최종본을 만들 수 없다. 위 ②에서 "
+                "아래 파일까지 골라 다시 대조하세요 — "
+                + ", ".join(v.get("file_name") or v["version_id"][:8] for v in rest)
             )
-            if st.button("🔁 마스터를 넣어 다시 대조", key="v_add_master"):
-                st.session_state["v_registered"] = (
-                    picked_ids + [v["version_id"] for v in in_round]
-                )
+            if st.button("🔁 전부 넣어 다시 대조", key="v_add_master"):
+                st.session_state["v_registered"] = [
+                    v["version_id"] for v in history
+                ]
                 st.session_state.pop("v_compare_pick", None)
                 st.session_state.pop("v_compare_result", None)
                 st.rerun()
         else:
             st.warning(
-                "이 회차에 지원자 엑셀이 아직 없다. ①에서 파일을 등록하면 그 파일이 "
-                "곧 최종 취합본이 되고, 2번 메뉴가 그 데이터로 명단을 정리한다."
+                "대조한 파일을 하나도 읽지 못했다. ①에서 엑셀(.xlsx)을 다시 등록하세요 "
+                "— 등록한 파일이 곧 최종 취합본이 되고, 2번 메뉴가 그 데이터로 "
+                "명단을 정리한다."
             )
         return
+
+    if teams_only:
+        st.info(
+            "이 회차에는 배포본만 올라와 있어, 등록한 파일들을 그대로 합쳐 최종 "
+            "취합본을 만든다. (마스터 파일을 따로 올릴 필요가 없다)"
+        )
 
     c1, c2 = st.columns([2, 3])
     base = c1.selectbox("기준 파일", masters, format_func=lambda v: names.get(v, v),
