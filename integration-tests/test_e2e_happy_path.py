@@ -18,13 +18,13 @@ import httpx
 import pytest
 
 BASE = {
-    "vm": "http://localhost:8001",
-    "dist": "http://localhost:8002",
-    "resp": "http://localhost:8003",
-    "sched": "http://localhost:8004",
-    "repair": "http://localhost:8005",
-    "notify": "http://localhost:8006",
-    "audit": "http://localhost:8007",
+    "vm": "http://127.0.0.1:8001",
+    "dist": "http://127.0.0.1:8002",
+    "resp": "http://127.0.0.1:8003",
+    "sched": "http://127.0.0.1:8004",
+    "repair": "http://127.0.0.1:8005",
+    "notify": "http://127.0.0.1:8006",
+    "audit": "http://127.0.0.1:8007",
 }
 
 API = "/api/v1"

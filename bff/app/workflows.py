@@ -60,15 +60,21 @@ async def run_full_round(
         steps.append({"step": "schedule", "status": "fail", "error": str(e)})
         return {"round_id": round_id, "status": "partial", "steps": steps}
 
-    # Step 4: Audit (이벤트 포워딩은 비동기라 잠깐 재시도)
+    # Step 4: Audit — 포워딩이 비동기라, 앞 단계가 성공시킨 이벤트가 다 도착할
+    # 때까지 기다린다. 첫 1건에서 멈추면 나머지가 오기 전에 끝나버린다.
+    expected = {"MASTER_REGISTERED", "DISTRIBUTION_PLAN_CREATED", "SCHEDULE_GENERATED"}
     try:
         events = []
-        for _ in range(10):
+        for _ in range(20):
             events = await clients.get_timeline(round_id) or []
-            if events:
+            if expected <= {ev.get("event_type") for ev in events}:
                 break
-            await asyncio.sleep(0.3)
-        steps.append({"step": "audit", "status": "ok", "event_count": len(events)})
+            await asyncio.sleep(0.2)
+        missing = sorted(expected - {ev.get("event_type") for ev in events})
+        steps.append({
+            "step": "audit", "status": "ok",
+            "event_count": len(events), "missing_events": missing,
+        })
     except Exception as e:
         steps.append({"step": "audit", "status": "fail", "error": str(e)})
 

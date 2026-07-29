@@ -65,7 +65,7 @@ def cmd_health():
     ok = 0
     for name, port, _ in SERVICES:
         try:
-            r = httpx.get(f"http://localhost:{port}/healthz", timeout=1.0)
+            r = httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=1.0)
             if r.status_code == 200:
                 print(f"  ✅ OK    port {port}  {name}")
                 ok += 1
@@ -92,7 +92,7 @@ def cmd_scenario(kind="happy"):
     else:
         try:
             r = httpx.post(
-                "http://localhost:8001/api/v1/versions/register",
+                "http://127.0.0.1:8001/api/v1/versions/register",
                 files={"file": (master.name, master.read_bytes(), XLSX_MIME)},
                 data={"round_id": round_id, "kind": "master", "actor": "test_runner"},
                 timeout=30.0,
@@ -114,7 +114,7 @@ def cmd_scenario(kind="happy"):
     else:
         try:
             r = httpx.post(
-                "http://localhost:8002/api/v1/distribute/plan",
+                "http://127.0.0.1:8002/api/v1/distribute/plan",
                 json={
                     "round_id": round_id,
                     "master_version_id": version_id,
@@ -139,7 +139,7 @@ def cmd_scenario(kind="happy"):
     else:
         try:
             r = httpx.post(
-                "http://localhost:8004/api/v1/schedules/generate",
+                "http://127.0.0.1:8004/api/v1/schedules/generate",
                 json={
                     "round_id": round_id,
                     "plan_id": plan_id,
@@ -162,21 +162,32 @@ def cmd_scenario(kind="happy"):
         except Exception as e:
             print(f"  ❌ {e}")
 
-    # Step 4: audit — 07 로의 이벤트 포워딩은 비동기라 잠깐 재시도한다
+    # Step 4: audit — 포워딩이 비동기라, 앞 단계가 성공시킨 이벤트가 다 도착할
+    # 때까지 기다린다. 첫 1건에서 멈추면 나머지가 오기 전에 끝나버린다.
     print(f"[4/4] Audit - 이벤트 타임라인 확인")
+    expected = set()
+    if version_id:
+        expected.add("MASTER_REGISTERED")
+    if plan_id:
+        expected.add("DISTRIBUTION_PLAN_CREATED")
+    if schedule_id:
+        expected.add("SCHEDULE_GENERATED")
     try:
         events = []
-        for _ in range(10):
+        for _ in range(20):
             r = httpx.get(
-                "http://localhost:8007/api/v1/audit/timeline",
+                "http://127.0.0.1:8007/api/v1/audit/timeline",
                 params={"round_id": round_id}, timeout=5.0
             )
             data = unwrap(r)
             events = data if isinstance(data, list) else (data or {}).get("events", [])
-            if events:
+            if expected <= {ev.get("event_type") for ev in events}:
                 break
-            time.sleep(0.3)
+            time.sleep(0.2)
+        missing = expected - {ev.get("event_type") for ev in events}
         print(f"  → status {r.status_code}, events: {len(events)}")
+        if missing:
+            print(f"  ⚠ 도착하지 않은 이벤트: {', '.join(sorted(missing))}")
         for ev in events:
             print(f"     · {ev.get('event_type')}  ({ev.get('producer')})")
     except Exception as e:
@@ -188,7 +199,7 @@ def cmd_events(round_id):
     print(f"\n=== 이벤트 타임라인: {round_id} ===")
     try:
         r = httpx.get(
-            "http://localhost:8007/api/v1/audit/timeline",
+            "http://127.0.0.1:8007/api/v1/audit/timeline",
             params={"round_id": round_id}, timeout=5.0
         )
         print(f"status {r.status_code}")

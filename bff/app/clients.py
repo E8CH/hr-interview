@@ -8,13 +8,13 @@ from typing import Any, Optional
 
 import httpx
 
-VERSION_MANAGER    = "http://localhost:8001"
-DISTRIBUTOR        = "http://localhost:8002"
-RESPONSE_COLLECTOR = "http://localhost:8003"
-SCHEDULER          = "http://localhost:8004"
-REPAIR_ENGINE      = "http://localhost:8005"
-NOTIFICATION_HUB   = "http://localhost:8006"
-AUDIT              = "http://localhost:8007"
+VERSION_MANAGER    = "http://127.0.0.1:8001"
+DISTRIBUTOR        = "http://127.0.0.1:8002"
+RESPONSE_COLLECTOR = "http://127.0.0.1:8003"
+SCHEDULER          = "http://127.0.0.1:8004"
+REPAIR_ENGINE      = "http://127.0.0.1:8005"
+NOTIFICATION_HUB   = "http://127.0.0.1:8006"
+AUDIT              = "http://127.0.0.1:8007"
 
 TIMEOUT = 60.0
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
