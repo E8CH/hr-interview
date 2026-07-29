@@ -15,7 +15,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.api import form, patterns, reminders, requests, responses
+from app.api import form, patterns, reminders, requests, responses, rounds
 from app.api.errors import register_error_handlers
 from app.config import settings
 from app.domain.invitee import Invitee
@@ -64,6 +64,7 @@ app = FastAPI(
 register_error_handlers(app)
 app.include_router(requests.router)
 app.include_router(responses.router)
+app.include_router(rounds.router)
 app.include_router(patterns.router)
 app.include_router(reminders.router)
 app.include_router(form.router)

@@ -87,6 +87,8 @@ def test_history(client, master_bytes, team_files, sample_round_id):
     hist = r.json()["data"]
     assert len(hist) == 2
     assert all("version_id" in h for h in hist)
+    # 콘솔이 버전을 파일명으로 고르므로 이력에도 파일명이 있어야 한다
+    assert {h["file_name"] for h in hist} == {"master.xlsx", "t.xlsx"}
 
 
 def test_reregister_deactivates_previous(client, master_bytes, sample_round_id):

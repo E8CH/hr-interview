@@ -11,6 +11,7 @@ from app.api.versions import router as versions_router
 from app.infrastructure.db import init_db
 from app.logging_conf import get_logger
 from app.schemas import err
+from app.services.excel_table import TableError
 from app.services.version_service import VersionError
 
 log = get_logger("main")
@@ -38,6 +39,12 @@ async def count_requests(request: Request, call_next):
 @app.exception_handler(VersionError)
 async def version_error_handler(request: Request, exc: VersionError):
     return JSONResponse(status_code=exc.status_code, content=err(exc.code, exc.message))
+
+
+@app.exception_handler(TableError)
+async def table_error_handler(request: Request, exc: TableError):
+    """엑셀 구조를 못 읽는 건 서버 잘못이 아니라 올린 파일 문제다."""
+    return JSONResponse(status_code=400, content=err("VALIDATION_FAILED", str(exc)))
 
 
 app.include_router(versions_router)

@@ -47,7 +47,56 @@ def row_to_interviewer(row: InterviewerRow) -> InterviewerIn:
     )
 
 
+def _merge_availability(
+    row: InterviewerRow, responded: dict[str, InterviewerIn]
+) -> InterviewerIn:
+    """마스터 정보 + 03 회신 가용성을 합친다.
+
+    회신이 없는 사람은 마스터에 저장된 가용성을 쓰고, 그것도 없으면 전 시간대
+    가용으로 본다 — 선별해 놓고 회신을 안 했다고 명단에서 빼버리면 시간표가
+    통째로 비어버려서, PoC에서는 제약 없음으로 두고 회신 여부는 03에서 본다.
+    """
+    hit = responded.get(row.interviewer_id)
+    if hit is not None and hit.availability:
+        return InterviewerIn(
+            interviewer_id=row.interviewer_id,
+            name=row.name or hit.name,
+            team=row.team or hit.team,
+            max_daily=hit.max_daily or row.max_daily or 6,
+            priority=row.priority or hit.priority or 2,
+            email=row.email or hit.email,
+            availability=hit.availability,
+        )
+    base = row_to_interviewer(row)
+    if base.availability:
+        return base
+    return InterviewerIn(
+        interviewer_id=base.interviewer_id,
+        name=base.name,
+        team=base.team,
+        max_daily=base.max_daily,
+        priority=base.priority,
+        email=base.email,
+        availability={day: list(HOURS) for day in DAYS},
+    )
+
+
 def load_interviewers(db: Session, round_id: str) -> list[InterviewerIn]:
+    """회차 선별 목록 > 면접관 마스터 > 03(또는 목) 순으로 명단을 정한다."""
+    from app.services import interviewer_roster
+
+    selected = interviewer_roster.selected_ids(db, round_id)
+    if selected:
+        rows = db.scalars(
+            select(InterviewerRow).where(InterviewerRow.interviewer_id.in_(selected))
+        ).all()
+        responded = {}
+        try:
+            responded = {iv.interviewer_id: iv for iv in availability_source.fetch(round_id)}
+        except Exception:  # 03 미기동 · 회신 0건 → 마스터 가용성으로 진행
+            responded = {}
+        return [_merge_availability(r, responded) for r in rows]
+
     rows = db.scalars(select(InterviewerRow)).all()
     if rows:
         return [row_to_interviewer(r) for r in rows]

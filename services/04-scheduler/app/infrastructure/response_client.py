@@ -5,8 +5,9 @@ USE_MOCK=true 이면 02를 호출하지 않고 목 데이터 88명을 지어냈�
 시간표에 나오는 이름이 업로드한 취합파일 어디에도 없는 사람이 된다.
 02 호출이 실패했을 때만(그리고 USE_MOCK=true 일 때만) 목 데이터로 폴백한다.
 
-면접관 가용성은 Service 03에 아직 조회 엔드포인트가 없어 USE_MOCK=true 면
-목 데이터를 쓴다. 면접관은 업로드 파일에 없는 정보라 대조 대상이 아니다.
+면접관 가용성도 같은 규칙으로 Service 03(회신 수집)에서 가져온다. 아직 아무도
+회신하지 않아 가용 슬롯이 비어 있으면 시간표를 짤 수 없으므로, USE_MOCK=true
+일 때만 목 면접관으로 폴백한다.
 """
 from __future__ import annotations
 
@@ -69,28 +70,50 @@ class ApplicantSource:
 
 
 class AvailabilitySource:
-    """Service 03 — 면접관 가용성 응답"""
+    """Service 03 — 면접관 가용성 응답
+
+    지원자 명단과 같은 규칙이다. 항상 03을 먼저 부르고, 회신이 아직 하나도
+    없거나 03이 죽어 있을 때만(그리고 USE_MOCK=true 일 때만) 목 데이터를 쓴다.
+    """
 
     def fetch(self, round_id: str) -> list[InterviewerIn]:
-        if settings.use_mock:
+        try:
+            return self._fetch_remote(round_id)
+        except (httpx.HTTPError, KeyError, ValueError) as exc:
+            if not settings.use_mock:
+                raise
+            logger.warning(
+                "03 가용성 조회 실패 — 목 데이터로 폴백한다 (round_id=%s): %s",
+                round_id, exc,
+            )
             return mock_data.build_interviewers()
+
+    def _fetch_remote(self, round_id: str) -> list[InterviewerIn]:
         url = f"{settings.response_collector_url}/api/v1/rounds/{round_id}/availability"
         with httpx.Client(timeout=10.0) as client:
             resp = client.get(url)
             resp.raise_for_status()
             rows = resp.json().get("data", [])
-        return [
+        if not rows:
+            raise ValueError(f"round_id={round_id} 회신된 가용성이 없음")
+        interviewers = [
             InterviewerIn(
                 interviewer_id=r["interviewer_id"],
                 name=r.get("name", ""),
                 team=r["team"],
-                max_daily=int(r.get("max_daily", 6)),
-                priority=int(r.get("priority", 2)),
+                max_daily=int(r.get("max_daily") or 6),
+                priority=int(r.get("priority") or 2),
                 email=r.get("email", ""),
                 availability=r.get("availability", {}),
             )
             for r in rows
+            if r.get("availability")
         ]
+        if not interviewers:
+            raise ValueError(f"round_id={round_id} 가용 슬롯을 낸 면접관이 없음")
+        logger.info("면접관 %d명 가용성 로드 (출처=response-collector, round_id=%s)",
+                    len(interviewers), round_id)
+        return interviewers
 
 
 applicant_source = ApplicantSource()

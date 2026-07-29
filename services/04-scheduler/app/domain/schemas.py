@@ -134,6 +134,13 @@ class InterviewerUpdate(BaseModel):
         return InterviewerCreate._valid_availability(v)
 
 
+class RoundSelectionIn(BaseModel):
+    """회차에 투입할 면접관 선별 — 넘긴 목록으로 통째로 교체한다."""
+
+    interviewer_ids: list[str] = Field(default_factory=list)
+    actor: str = "console"
+
+
 class AssignmentOut(BaseModel):
     assignment_id: str
     applicant_id: str

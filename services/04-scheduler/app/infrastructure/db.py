@@ -21,7 +21,12 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 def init_db() -> None:
     """테이블 생성 (PoC — Alembic 대신 create_all)"""
     # 모든 모델을 임포트해야 metadata에 등록된다
-    from app.domain import assignment, interviewer, schedule  # noqa: F401
+    from app.domain import (  # noqa: F401
+        assignment,
+        interviewer,
+        round_interviewer,
+        schedule,
+    )
 
     Base.metadata.create_all(bind=engine)
 

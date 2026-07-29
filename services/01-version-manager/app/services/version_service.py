@@ -61,7 +61,10 @@ def read_file(session: Session, version_id: str) -> tuple[bytes, str]:
     02(배포)가 "이 회차에 실제로 올라온 그 파일"을 다시 파싱하기 위해 쓴다.
     01은 지원자 번호만 뽑아 두므로 상세 컬럼은 원본에서 읽어야 한다.
     """
-    version = get_by_id(session, version_id)
+    return read_file_of(get_by_id(session, version_id))
+
+
+def read_file_of(version: Version) -> tuple[bytes, str]:
     path = Path(version.file_path)
     if not path.is_file():
         raise VersionError(

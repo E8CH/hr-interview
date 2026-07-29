@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.infrastructure.db import get_session
-from app.schemas import RollbackRequest, ok
-from app.services import version_service as svc
+from app.schemas import CompareRequest, MergeRequest, RollbackRequest, ok
+from app.services import merge_service, version_service as svc
 
 router = APIRouter(prefix="/api/v1/versions", tags=["versions"])
 
@@ -38,6 +38,76 @@ async def register(
         "applicant_count": version.applicant_count,
         "created_at": version.created_at,
     })
+
+
+@router.post("/register-batch", status_code=201, summary="여러 파일 한 번에 등록")
+async def register_batch(
+    files: list[UploadFile] = File(...),
+    round_id: str = Form(...),
+    actor: str = Form(...),
+    kinds: str | None = Form(None),
+    session: Session = Depends(get_session),
+):
+    """올린 파일들의 종류(마스터/팀배포본)를 파일명으로 자동 판별해 등록한다.
+
+    kinds 를 콤마로 넘기면(예: `master,team_distribution:AI솔루션팀`) 자동 판별을
+    덮어쓴다 — 파일명이 규칙을 안 따를 때 콘솔에서 손으로 고치는 경로다.
+    """
+    overrides = [k.strip() for k in kinds.split(",")] if kinds else []
+    registered = []
+    for index, upload in enumerate(files):
+        file_name = upload.filename or f"upload_{index}.xlsx"
+        kind, team_name = merge_service.classify_file(file_name)
+        if index < len(overrides) and overrides[index]:
+            head, _, tail = overrides[index].partition(":")
+            kind = head.strip() or kind
+            team_name = tail.strip() or team_name
+        data = await upload.read()
+        version = svc.register_version(
+            session,
+            file_bytes=data,
+            file_name=file_name,
+            round_id=round_id,
+            kind=kind,
+            actor=actor,
+            team_name=team_name,
+        )
+        registered.append({
+            "version_id": version.version_id,
+            "file_name": version.file_name,
+            "kind": version.kind,
+            "team_name": version.team_name,
+            "fingerprint": version.fingerprint,
+            "applicant_count": version.applicant_count,
+        })
+    return ok({"registered": registered, "count": len(registered)})
+
+
+@router.post("/compare", summary="여러 버전 셀 대조 + 무결성 검사")
+def compare(body: CompareRequest, session: Session = Depends(get_session)):
+    return ok(merge_service.compare_versions(session, body.version_ids))
+
+
+@router.post("/merge", status_code=201, summary="행 채택 결과로 최종 취합본 생성")
+def merge(body: MergeRequest, session: Session = Depends(get_session)):
+    return ok(merge_service.merge_versions(
+        session,
+        round_id=body.round_id,
+        base_version_id=body.base_version_id,
+        version_ids=body.version_ids,
+        selections=body.selections,
+        actor=body.actor,
+        file_name=body.file_name,
+    ))
+
+
+@router.get("/by-id/{version_id}/preview", summary="등록본 표 미리보기")
+def preview(
+    version_id: str,
+    limit: int = Query(50, ge=1, le=1000),
+    session: Session = Depends(get_session),
+):
+    return ok(merge_service.preview_merged(session, version_id, limit=limit))
 
 
 @router.get("/diff")
@@ -109,6 +179,7 @@ def history(round_id: str, session: Session = Depends(get_session)):
             "version_id": v.version_id,
             "kind": v.kind,
             "team_name": v.team_name,
+            "file_name": v.file_name,
             "fingerprint": v.fingerprint,
             "applicant_count": v.applicant_count,
             "actor": v.actor,
