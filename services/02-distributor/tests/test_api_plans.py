@@ -45,6 +45,28 @@ def test_get_plan_detail(client, created_plan):
             assert "applicant_id" in row and "score" in row
 
 
+def test_list_round_plans(client, created_plan):
+    """화면이 배정안 번호를 잊어도 회차만 알면 되찾을 수 있어야 한다."""
+    second = client.post("/api/v1/distribute/plan", json=BODY).json()["data"]
+    response = client.get(f"/api/v1/distribute/rounds/{BODY['round_id']}/plans")
+    assert response.status_code == 200
+    rows = response.json()["data"]
+    assert [r["plan_id"] for r in rows][:2] == [second["plan_id"], created_plan["plan_id"]] or (
+        # 두 배포안의 created_at 이 같은 초에 찍히면 순서가 뒤집힐 수 있다
+        {r["plan_id"] for r in rows} == {second["plan_id"], created_plan["plan_id"]}
+    )
+    assert rows[0]["round_id"] == BODY["round_id"]
+    assert rows[0]["total_applicants"] == 88
+    assert rows[0]["status"] == "draft"
+    assert rows[0]["created_at"]
+
+
+def test_list_round_plans_empty(client):
+    response = client.get("/api/v1/distribute/rounds/R-없는회차/plans")
+    assert response.status_code == 200
+    assert response.json()["data"] == []
+
+
 def test_get_plan_not_found(client):
     response = client.get("/api/v1/distribute/does-not-exist")
     assert response.status_code == 404

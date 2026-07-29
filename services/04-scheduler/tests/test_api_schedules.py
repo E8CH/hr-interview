@@ -99,6 +99,30 @@ def test_get_schedule_returns_assignments(client, generated):
     assert first["lock_level"] == "DRAFT"
 
 
+def test_list_round_schedules(client, generated):
+    """화면이 '어느 시간표를 볼까요' 를 감사 로그가 아니라 여기서 받아야 한다."""
+    other = _generate(client, "v4", round_id="R2026-Q3-02").json()["data"]
+
+    rows = client.get("/api/v1/schedules/rounds/R2026-Q3-01").json()["data"]
+    ids = [r["schedule_id"] for r in rows]
+    assert generated["schedule_id"] in ids
+    assert other["schedule_id"] not in ids          # 다른 회차는 섞이지 않는다
+    row = next(r for r in rows if r["schedule_id"] == generated["schedule_id"])
+    assert row["round_id"] == "R2026-Q3-01"
+    assert row["total_assigned"] == generated["total_assigned"]
+    assert row["generated_at"]
+    # 최신순 — 화면이 맨 위를 기본값으로 쓴다
+    assert [r["generated_at"] for r in rows] == sorted(
+        (r["generated_at"] for r in rows), reverse=True
+    )
+
+
+def test_list_round_schedules_empty(client):
+    resp = client.get("/api/v1/schedules/rounds/R-없는회차")
+    assert resp.status_code == 200
+    assert resp.json()["data"] == []
+
+
 def test_get_schedule_not_found(client):
     resp = client.get("/api/v1/schedules/does-not-exist")
     assert resp.status_code == 404

@@ -56,18 +56,29 @@ def _merge_availability(
     회신이 없는 사람은 마스터에 저장된 가용성을 쓰고, 그것도 없으면 전 시간대
     가용으로 본다 — 선별해 놓고 회신을 안 했다고 명단에서 빼버리면 시간표가
     통째로 비어버려서, PoC에서는 제약 없음으로 두고 회신 여부는 03에서 본다.
+
+    둘 다 있으면 교집합이다. 부서 화면에서 '오전만' 을 골라 뒀는데 회신에 오후가
+    섞여 있다고 오후에 넣어 버리면, 골라 둔 의미가 없어진다.
     """
     hit = responded.get(row.interviewer_id)
     if hit is not None and hit.availability:
+        merged = hit.availability
+        if row.availability:
+            both = {
+                day: [h for h in hours if h in set(row.availability.get(day, []))]
+                for day, hours in hit.availability.items()
+            }
+            both = {day: hours for day, hours in both.items() if hours}
+            merged = both or row.availability   # 겹치는 시간이 없으면 부서 뜻을 따른다
         return InterviewerIn(
             interviewer_id=row.interviewer_id,
             name=row.name or hit.name,
             team=row.team or hit.team,
             title=row.title or hit.title,
-            max_daily=hit.max_daily or row.max_daily or 6,
+            max_daily=min(hit.max_daily or 6, row.max_daily or 6),
             priority=row.priority or hit.priority or 2,
             email=row.email or hit.email,
-            availability=hit.availability,
+            availability=merged,
         )
     base = row_to_interviewer(row)
     if base.availability:
@@ -105,6 +116,32 @@ def load_interviewers(db: Session, round_id: str) -> list[InterviewerIn]:
         return [row_to_interviewer(r) for r in rows]
     # DB가 비어 있으면 Service 03(또는 목)에서 가용성을 받아온다
     return availability_source.fetch(round_id)
+
+
+DEFAULT_TITLES = {1: "수석", 2: "책임"}
+
+
+def backfill_titles(db: Session) -> int:
+    """직급 칸이 생기기 전에 넣어 둔 면접관에게 직급을 채워 준다.
+
+    목 데이터에 있는 사번은 그 직급을 그대로 쓰고, 나머지는 역할(팀장/실무)에서
+    가져온다. 직급이 비어 있으면 콘솔의 '이번 회차에 들어갈 담당자' 표가 빈칸으로
+    나와 누가 누군지 헷갈린다.
+    """
+    from app.services import mock_data
+
+    known = {iv.interviewer_id: iv.title for iv in mock_data.build_interviewers()
+             if iv.title}
+    rows = db.scalars(
+        select(InterviewerRow).where(
+            (InterviewerRow.title.is_(None)) | (InterviewerRow.title == "")
+        )
+    ).all()
+    for row in rows:
+        row.title = known.get(row.interviewer_id) or DEFAULT_TITLES.get(row.priority, "책임")
+    if rows:
+        db.commit()
+    return len(rows)
 
 
 def seed_interviewers(db: Session) -> int:
@@ -239,6 +276,36 @@ def get_schedule(db: Session, schedule_id: str) -> Schedule:
     if schedule is None:
         raise NotFoundError(f"스케줄을 찾을 수 없습니다: {schedule_id}")
     return schedule
+
+
+def list_schedules_for_round(db: Session, round_id: str) -> list[dict]:
+    """그 회차에 실제로 남아 있는 시간표 목록 (최신순).
+
+    콘솔은 그동안 감사 로그의 SCHEDULE_GENERATED 기록으로 시간표를 골랐는데,
+    기록은 남아도 시간표가 지워졌거나 DB 를 갈아 끼우면 '스케줄을 찾을 수
+    없습니다' 만 나온다. 화면이 실제 목록을 물어볼 수 있게 열어 둔다.
+    """
+    rows = db.scalars(
+        select(Schedule)
+        .where(Schedule.round_id == round_id)
+        .order_by(Schedule.generated_at.desc())
+    ).all()
+    return [
+        {
+            "schedule_id": row.schedule_id,
+            "round_id": row.round_id,
+            "plan_id": row.plan_id,
+            "status": row.status,
+            "algorithm": row.algorithm,
+            "total_assigned": row.total_assigned,
+            "total_applicants": row.total_applicants,
+            "coverage_pct": row.coverage_pct,
+            "hard_violations": row.hard_violations,
+            "generated_at": row.generated_at.isoformat() if row.generated_at else None,
+            "generated_by": row.generated_by,
+        }
+        for row in rows
+    ]
 
 
 def list_assignments(db: Session, schedule_id: str) -> list[Assignment]:

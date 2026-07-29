@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from contracts.constants import tag_text
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -64,7 +65,7 @@ def build_team_workbook(plan_id: str, team_name: str, rows: list[dict]) -> Workb
                 snapshot.get("target_lab"),
                 snapshot.get("advisor"),
                 row.get("score"),
-                ", ".join(row.get("tags") or []),
+                tag_text(row.get("tags")),      # 팀이 읽는 문서라 우리말로 적는다
                 "Y" if row.get("is_duplicate") else "N",
                 row.get("primary_team") or "",
             ]

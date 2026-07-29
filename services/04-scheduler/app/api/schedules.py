@@ -37,6 +37,11 @@ def generate_schedule(req: GenerateRequest, db: Session = Depends(get_db)):
     return ok(payload)
 
 
+@router.get("/rounds/{round_id}", summary="회차의 시간표 목록 (최신순)")
+def list_round_schedules(round_id: str, db: Session = Depends(get_db)):
+    return ok(schedule_service.list_schedules_for_round(db, round_id))
+
+
 @router.get("/{schedule_id}")
 def get_schedule(schedule_id: str, db: Session = Depends(get_db)):
     schedule = schedule_service.get_schedule(db, schedule_id)

@@ -144,6 +144,13 @@ class RoundSelectionIn(BaseModel):
     actor: str = "console"
 
 
+class InterviewerBandsIn(BaseModel):
+    """사번 → 가능 시간(오전·오후 / 오전만 / 오후만 / 어려움) 일괄 저장."""
+
+    bands: dict[str, str] = Field(default_factory=dict)
+    actor: str = "console"
+
+
 class AssignmentOut(BaseModel):
     assignment_id: str
     applicant_id: str

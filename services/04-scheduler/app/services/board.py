@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 
 from app.domain.schemas import ApplicantIn, InterviewerIn, PlannedAssignment
-from app.infrastructure.contracts import DAYS, HOURS
+from app.infrastructure.contracts import AM_HOURS, DAYS, HOURS, PM_HOURS
 
 MAX_SLOTS_PER_DAY = 8  # 명세의 "8타임 초과" 하드 상한
 
@@ -41,8 +41,28 @@ class Board:
     def team_slot_free(self, team: str, day: str, hour: str) -> bool:
         return (team, day, hour) not in self.team_slot
 
+    def _adjacent(self, interviewer_id: str, day: str, hour: str) -> bool:
+        """그 사람이 바로 앞 · 뒤 시간에 이미 면접이 있는가.
+
+        11시와 14시는 점심시간을 사이에 두므로 붙어 있다고 보지 않는다 —
+        오전은 오전끼리, 오후는 오후끼리만 이어 붙인다.
+        """
+        band = AM_HOURS if hour in AM_HOURS else PM_HOURS
+        index = band.index(hour)
+        return any(
+            (interviewer_id, day, band[near]) in self.iv_slot
+            for near in (index - 1, index + 1)
+            if 0 <= near < len(band)
+        )
+
     def find_interviewer(self, team: str, day: str, hour: str) -> InterviewerIn | None:
-        """해당 슬롯을 맡을 수 있는 면접관 중 부하가 가장 낮은 사람.
+        """해당 슬롯을 맡을 수 있는 면접관 중 붙여 앉힐 수 있는 사람을 먼저.
+
+        면접관 입장에서는 09시 한 건 보고 세 시간 비웠다가 15시에 또 한 건 보는
+        것보다 연달아 보는 편이 낫다. 그래서 앞 · 뒤 시간에 이미 면접이 있는
+        사람을 먼저 고르고, 그런 사람이 없을 때만 지금까지 가장 적게 맡은
+        사람에게 넘긴다. 하루 한도(가능 시간에서 정해진 칸 수)는 그대로 지키므로
+        한 사람이 온종일 떠안지는 않는다.
 
         priority=1(리더)을 뒤로 미뤄 v1에서 관측된 '리더 90% 부하'를 방지한다.
         """
@@ -58,6 +78,7 @@ class Board:
         return min(
             candidates,
             key=lambda iv: (
+                not self._adjacent(iv.interviewer_id, day, hour),
                 iv.priority == 1,
                 self.iv_total[iv.interviewer_id],
                 self.iv_day[(iv.interviewer_id, day)],

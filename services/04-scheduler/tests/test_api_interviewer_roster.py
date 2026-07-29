@@ -120,6 +120,7 @@ def test_import_accepts_alias_columns(client):
         "interviewer_id": "A1", "name": "홍길동", "title": "책임",
         "team": "AI솔루션팀",
         "email": "a1@example.com", "max_daily": 5, "priority": 1,
+        "time_band": "",   # 가능시간 칸이 없으면 빈칸 — 가용성은 건드리지 않는다
     }
 
 
@@ -136,6 +137,59 @@ def test_import_rejects_file_without_headers(client):
     r = _upload(client, data)
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+# ------------------------------------------------------------- 가능 시간(오전·오후)
+
+def test_import_reads_time_band_column(client, db):
+    """명단에 적어 낸 '오전만' 이 그대로 가용성이 된다."""
+    data = _sheet_bytes([
+        ["사번", "성명", "소속팀", "가능시간"],
+        ["A1", "홍길동", "AI솔루션팀", "오전만"],
+        ["A2", "김철수", "AI솔루션팀", "오후"],
+        ["A3", "이영희", "AI솔루션팀", ""],
+    ])
+    parsed = _upload(client, data).json()["data"]["interviewers"]
+    assert [p["time_band"] for p in parsed] == ["오전만", "오후만", ""]
+
+    listed = {i["interviewer_id"]: i for i in client.get("/api/v1/interviewers").json()["data"]}
+    assert listed["A1"]["availability"]["월"] == ["09시", "10시", "11시"]
+    assert listed["A2"]["availability"]["금"] == ["14시", "15시", "16시"]
+    assert listed["A3"]["availability"] == {}   # 안 적었으면 건드리지 않는다
+    assert listed["A1"]["time_band"] == "오전만"
+
+
+def test_set_bands_updates_availability_and_cap(client, roster_bytes):
+    _upload(client, roster_bytes)
+    r = client.put("/api/v1/interviewers/bands",
+                   json={"bands": {"IV101": "오전만", "IV102": "오후만"}, "actor": "pytest"})
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["updated"] == 2
+
+    listed = {i["interviewer_id"]: i for i in client.get("/api/v1/interviewers").json()["data"]}
+    assert listed["IV101"]["time_band"] == "오전만"
+    # 오전만 고르면 하루 최대도 그 칸 수(3명)로 줄어든다
+    assert listed["IV101"]["max_daily"] == 3
+    assert listed["IV102"]["availability"]["수"] == ["14시", "15시", "16시"]
+
+
+def test_set_bands_rejects_unknown_band(client, roster_bytes):
+    _upload(client, roster_bytes)
+    r = client.put("/api/v1/interviewers/bands", json={"bands": {"IV101": "새벽만"}})
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+def test_band_limits_schedule_hours(client, db, roster_bytes, sample_round_id):
+    """부서가 고른 오전 · 오후가 실제 배치를 묶는다."""
+    _upload(client, roster_bytes)
+    interviewer_roster.set_bands(db, {"IV101": "오전만", "IV102": "오전만"})
+    interviewer_roster.select_for_round(db, sample_round_id, ["IV101", "IV102"])
+
+    loaded = {iv.interviewer_id: iv for iv in
+              schedule_service.load_interviewers(db, sample_round_id)}
+    assert loaded["IV101"].availability["월"] == ["09시", "10시", "11시"]
+    assert not loaded["IV101"].is_available("월", "15시")
 
 
 # ------------------------------------------------------------------ 회차 선별

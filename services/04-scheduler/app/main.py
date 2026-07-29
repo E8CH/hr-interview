@@ -42,10 +42,13 @@ async def lifespan(_: FastAPI):
     bus.start_listener()
 
     seeded = 0
-    if settings.use_mock:
-        with SessionLocal() as db:
+    with SessionLocal() as db:
+        # 직급 컬럼이 생기기 전에 등록된 면접관은 여기서 직급을 채워 준다
+        filled = schedule_service.backfill_titles(db)
+        if settings.use_mock:
             seeded = schedule_service.seed_interviewers(db)
-    log.info("scheduler.startup", port=settings.service_port, mock=settings.use_mock, seeded=seeded)
+    log.info("scheduler.startup", port=settings.service_port, mock=settings.use_mock,
+             seeded=seeded, titles_filled=filled)
     try:
         yield
     finally:

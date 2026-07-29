@@ -1,11 +1,14 @@
 """면접관명단.xlsx 업로드 · 회차별 선별.
 
 콘솔 3번 메뉴(면접 담당자 선별)가 쓰는 경로다.
-  - 업로드: 사번 | 성명 | 직급 | 소속팀 | 이메일 | 일일최대 | 우선순위 를 마스터에 반영
+  - 업로드: 사번 | 성명 | 직급 | 소속팀 | 이메일 | 일일최대 | 우선순위 | 가능시간
+            을 마스터에 반영
   - 선별: 회차마다 그중 누구를 투입할지 골라 round_interviewers 에 저장
 
-가용성(어느 요일 몇 시)은 여기서 다루지 않는다. 그건 03(회신 수집)이 모으고
-04는 스케줄을 짤 때 회차 단위로 받아온다.
+시간 단위 가용성(어느 요일 몇 시)은 03(회신 수집)이 모은다. 다만 현업이 명단을
+낼 때 "오전만 / 오후만" 정도는 미리 적어 두므로, 가능시간 컬럼이 있으면 그
+덩어리를 요일 전체에 펼쳐 마스터 가용성으로 저장한다 — 회신이 오면 04가
+둘을 교집합으로 합친다.
 """
 from __future__ import annotations
 
@@ -18,6 +21,12 @@ from sqlalchemy.orm import Session
 from app.domain.interviewer import Interviewer
 from app.domain.round_interviewer import RoundInterviewer
 from app.errors import ValidationFailed
+from app.infrastructure.contracts import (
+    TIME_BANDS,
+    band_availability,
+    band_hours,
+    band_of,
+)
 
 # 엑셀 컬럼명 → 모델 필드. 운영에서 쓰는 표기 흔들림을 흡수한다.
 COLUMN_ALIASES = {
@@ -28,6 +37,7 @@ COLUMN_ALIASES = {
     "email": ("이메일", "메일", "email"),
     "max_daily": ("일일최대", "하루최대", "max_daily"),
     "priority": ("우선순위", "priority"),
+    "time_band": ("가능시간", "가능 시간", "오전오후", "time_band"),
 }
 REQUIRED = ("interviewer_id", "team")
 HEADER_SCAN_ROWS = 10
@@ -52,6 +62,27 @@ def _to_int(value, default: int) -> int:
         return int(float(text))
     except ValueError:
         return default
+
+
+def _band(value) -> str:
+    """적어 낸 가능시간을 오전 · 오후 표기로 정리한다 (빈칸이면 빈 문자열)."""
+    text = _norm(value).replace(" ", "")
+    if not text:
+        return ""
+    if text in TIME_BANDS:
+        return text
+    has_am, has_pm = "오전" in text, "오후" in text
+    if has_am and has_pm:
+        return "오전·오후"
+    if has_am:
+        return "오전만"
+    if has_pm:
+        return "오후만"
+    if text in ("종일", "하루종일", "전일", "모두", "전체"):
+        return "오전·오후"
+    if text in ("불가", "없음", "어렵다", "-"):
+        return "어려움"
+    return ""
 
 
 def _locate_header(rows: list[list]) -> tuple[int, dict[str, int]]:
@@ -109,6 +140,7 @@ def parse_roster(data: bytes) -> list[dict]:
             "email": _norm(cell(row, "email")),
             "max_daily": _to_int(cell(row, "max_daily"), DEFAULT_MAX_DAILY),
             "priority": _to_int(cell(row, "priority"), DEFAULT_PRIORITY),
+            "time_band": _band(cell(row, "time_band")),
         })
     if not out:
         raise ValidationFailed("면접관 행을 하나도 읽지 못했습니다")
@@ -118,19 +150,26 @@ def parse_roster(data: bytes) -> list[dict]:
 def import_roster(db: Session, data: bytes) -> dict:
     """업로드한 명단을 마스터에 반영한다 (사번 기준 upsert).
 
-    가용성 컬럼은 건드리지 않는다 — 이미 회신으로 채워진 값을 덮어쓰면 안 된다.
+    가능시간 칸을 적어 냈을 때만 가용성을 새로 쓴다 — 빈칸이면 이미 회신으로
+    채워진 값을 그대로 둔다.
     """
     parsed = parse_roster(data)
     created = updated = 0
     for row in parsed:
+        fields = {k: v for k, v in row.items() if k != "time_band"}
+        band = row.get("time_band") or ""
         existing = db.get(Interviewer, row["interviewer_id"])
         if existing is None:
-            db.add(Interviewer(**row, availability={}))
+            db.add(Interviewer(
+                **fields, availability=band_availability(band) if band else {}
+            ))
             created += 1
         else:
-            for field, value in row.items():
+            for field, value in fields.items():
                 if field != "interviewer_id":
                     setattr(existing, field, value)
+            if band:
+                existing.availability = band_availability(band)
             updated += 1
     db.commit()
     teams = sorted({row["team"] for row in parsed})
@@ -141,6 +180,44 @@ def import_roster(db: Session, data: bytes) -> dict:
         "teams": teams,
         "interviewers": parsed,
     }
+
+
+def set_bands(db: Session, bands: dict[str, str], actor: str = "console") -> dict:
+    """사번별 가능 시간(오전 · 오후)을 마스터에 반영한다.
+
+    고른 덩어리가 곧 하루에 볼 수 있는 최대 인원의 천장이 된다 — 오전만 되는
+    사람에게 하루 6명을 배정할 수는 없으므로 일일최대를 시간 칸 수까지 줄인다.
+    """
+    bad = [b for b in bands.values() if b not in TIME_BANDS]
+    if bad:
+        raise ValidationFailed(
+            f"알 수 없는 가능 시간입니다: {bad[0]}", {"allowed": list(TIME_BANDS)}
+        )
+    rows = {
+        r.interviewer_id: r
+        for r in db.scalars(
+            select(Interviewer).where(Interviewer.interviewer_id.in_(list(bands)))
+        ).all()
+    } if bands else {}
+    unknown = [i for i in bands if i not in rows]
+    if unknown:
+        raise ValidationFailed(
+            f"등록되지 않은 면접관입니다: {', '.join(unknown[:5])}",
+            {"unknown": unknown},
+        )
+
+    changed = 0
+    for interviewer_id, band in bands.items():
+        row = rows[interviewer_id]
+        if band_of(row.availability) == band and row.availability:
+            continue  # 바뀐 게 없으면 손대지 않는다 (직접 줄여 둔 일일최대 보존)
+        hours = band_hours(band)
+        row.availability = band_availability(band)
+        row.max_daily = len(hours)
+        changed += 1
+    if changed:
+        db.commit()
+    return {"updated": changed, "actor": actor}
 
 
 def select_for_round(db: Session, round_id: str, interviewer_ids: list[str],
@@ -192,6 +269,10 @@ def list_for_round(db: Session, round_id: str) -> list[dict]:
             "email": r.email,
             "max_daily": r.max_daily,
             "priority": r.priority,
+            "availability": r.availability or {},
+            # 화면은 시간 한 칸씩이 아니라 오전 · 오후 덩어리로 읽는다.
+            # 아직 아무것도 적지 않았으면 빈칸 — 배치할 때는 하루 종일로 본다.
+            "time_band": band_of(r.availability) if r.availability else "",
         }
         for r in rows
     ]

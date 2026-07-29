@@ -6,6 +6,7 @@ import time
 import pytest
 
 from app.domain.schemas import ApplicantIn, GenerateConstraints
+from app.infrastructure.contracts import AM_HOURS, PM_HOURS
 from app.services import algorithm_v1, algorithm_v4, algorithm_v5, registry
 from app.services.constraint_checker import check_hard_constraints
 from app.services.rule_evaluator import rule_compliance
@@ -102,6 +103,33 @@ def test_no_duplicate_applicant(algorithm, applicants, interviewers):
     plan = registry.run(algorithm, applicants, interviewers)
     ids = [a.applicant_id for a in plan.assignments]
     assert len(ids) == len(set(ids))
+
+
+def _interviewer_blocks(assignments) -> list[tuple[str, str, str, list[int]]]:
+    """(면접관, 요일, 오전/오후)별로 맡은 시간을 시간표 순서 번호로 편다."""
+    slots: dict[tuple[str, str, str], list[int]] = {}
+    for a in assignments:
+        band = AM_HOURS if a.hour in AM_HOURS else PM_HOURS
+        slots.setdefault((a.interviewer_id, a.day, band[0]), []).append(band.index(a.hour))
+    return [(iv, day, band, sorted(idx)) for (iv, day, band), idx in slots.items()]
+
+
+@pytest.mark.parametrize("algorithm", ALL_ALGORITHMS)
+def test_interviewer_slots_are_back_to_back(algorithm, applicants, interviewers):
+    """면접관 한 사람의 하루 일정은 띄엄띄엄 흩어지지 않는다 (X5).
+
+    09시 한 건 보고 세 시간 비웠다가 15시에 또 한 건 보는 일정이 나오면
+    현업에서 하루를 통째로 버린다. Board.find_interviewer 가 '앞·뒤 시간에
+    이미 면접이 있는 사람' 을 먼저 고르는 이유이고, 그 선호가 빠지면
+    (v1 55블록 중 23개처럼) 끊긴 블록이 바로 나타난다.
+    """
+    plan = registry.run(algorithm, applicants, interviewers)
+    broken = [
+        (iv, day, band, idx)
+        for iv, day, band, idx in _interviewer_blocks(plan.assignments)
+        if max(idx) - min(idx) != len(idx) - 1
+    ]
+    assert broken == [], f"{algorithm}: 끊긴 일정 {broken[:3]}"
 
 
 def test_stage3_fallback_absorbs_overflow(interviewers):

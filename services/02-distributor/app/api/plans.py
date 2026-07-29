@@ -24,6 +24,11 @@ def create_plan(body: CreatePlanRequest, session: Session = Depends(db_session))
     return {"data": summary.model_dump(mode="json"), "error": None}
 
 
+@router.get("/rounds/{round_id}/plans", summary="회차의 배포안 목록 (최신순)")
+def list_round_plans(round_id: str, session: Session = Depends(db_session)):
+    return {"data": plan_service.list_plans_for_round(session, round_id), "error": None}
+
+
 @router.get("/{plan_id}", summary="배포안 상세 조회")
 def get_plan(plan_id: str, session: Session = Depends(db_session)):
     return {"data": plan_service.get_plan_detail(session, plan_id), "error": None}

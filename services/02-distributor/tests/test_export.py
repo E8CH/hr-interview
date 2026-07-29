@@ -27,10 +27,12 @@ def test_export_team_excel(client, plan_id):
     # 정원 16명 + 중복 배포분
     assert sheet.max_row >= 17
 
+    # 팀이 읽는 문서라 사유는 영어 태그가 아니라 우리말로 적힌다
     tag_col = header.index("배포사유태그") + 1
     for row in range(2, sheet.max_row + 1):
         tags = sheet.cell(row=row, column=tag_col).value
-        assert tags and len(tags.split(", ")) >= 2
+        assert tags and len(tags.split(" · ")) >= 2
+        assert not any(ch.isascii() and ch.isalpha() for ch in tags), tags
 
 
 def test_export_all_teams(client, plan_id):

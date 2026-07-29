@@ -12,7 +12,22 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from shared.contracts.constants import DAYS, HOURS, RULES, TAGS  # noqa: E402
+from shared.contracts.constants import (  # noqa: E402
+    AM_HOURS,
+    BAND_ALL,
+    BAND_AM,
+    BAND_NONE,
+    BAND_PM,
+    DAYS,
+    HOURS,
+    PM_HOURS,
+    RULES,
+    TAGS,
+    TIME_BANDS,
+    band_availability,
+    band_hours,
+    band_of,
+)
 from shared.contracts.events import (  # noqa: E402
     EventEnvelope,
     EventType,
@@ -26,6 +41,16 @@ __all__ = [
     "HOURS",
     "RULES",
     "TAGS",
+    "AM_HOURS",
+    "PM_HOURS",
+    "TIME_BANDS",
+    "BAND_ALL",
+    "BAND_AM",
+    "BAND_PM",
+    "BAND_NONE",
+    "band_availability",
+    "band_hours",
+    "band_of",
     "EventEnvelope",
     "EventType",
     "ScheduleGeneratedPayload",

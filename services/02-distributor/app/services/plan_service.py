@@ -65,6 +65,32 @@ def get_plan(session: Session, plan_id: str) -> DistributionPlanORM:
     return plan
 
 
+def list_plans_for_round(session: Session, round_id: str) -> list[dict]:
+    """그 회차에서 만든 배포안을 최신순으로 — 화면이 배정안 번호를 잊었을 때 되찾는 길.
+
+    콘솔은 배정안 번호를 브라우저 세션에만 들고 있어서, 새로 열거나 다른 사람이
+    이어받으면 '2단계에서 팀별 명단을 먼저 나눠 주세요' 만 보게 된다. 회차만 알면
+    여기서 다시 찾아 쓸 수 있게 한다.
+    """
+    rows = session.scalars(
+        select(DistributionPlanORM)
+        .where(DistributionPlanORM.round_id == round_id)
+        .order_by(DistributionPlanORM.created_at.desc())
+    ).all()
+    return [
+        {
+            "plan_id": row.plan_id,
+            "round_id": row.round_id,
+            "status": row.status,
+            "total_applicants": row.total_applicants,
+            "duplicate_count": row.duplicate_count,
+            "created_by": row.created_by,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+
+
 def create_plan(
     session: Session,
     round_id: str,
