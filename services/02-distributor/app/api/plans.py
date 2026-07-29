@@ -29,6 +29,11 @@ def get_plan(plan_id: str, session: Session = Depends(db_session)):
     return {"data": plan_service.get_plan_detail(session, plan_id), "error": None}
 
 
+@router.get("/{plan_id}/applicants", summary="확정 명단 (스케줄러 입력)")
+def get_plan_applicants(plan_id: str, session: Session = Depends(db_session)):
+    return {"data": plan_service.get_plan_applicants(session, plan_id), "error": None}
+
+
 @router.post("/{plan_id}/approve", summary="배포안 승인")
 def approve(plan_id: str, body: ApproveRequest, session: Session = Depends(db_session)):
     summary = plan_service.approve_plan(session, plan_id, body.actor)

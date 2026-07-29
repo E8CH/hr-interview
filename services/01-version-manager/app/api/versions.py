@@ -1,5 +1,7 @@
 """버전 관리 API 라우터 (/api/v1/versions)."""
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.infrastructure.db import get_session
@@ -7,6 +9,8 @@ from app.schemas import RollbackRequest, ok
 from app.services import version_service as svc
 
 router = APIRouter(prefix="/api/v1/versions", tags=["versions"])
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 @router.post("/register", status_code=201)
@@ -43,6 +47,34 @@ def diff(
     session: Session = Depends(get_session),
 ):
     return ok(svc.diff(session, from_, to))
+
+
+@router.get("/by-id/{version_id}")
+def get_by_id(version_id: str, session: Session = Depends(get_session)):
+    version = svc.get_by_id(session, version_id)
+    return ok({
+        "version_id": version.version_id,
+        "round_id": version.round_id,
+        "kind": version.kind,
+        "file_name": version.file_name,
+        "fingerprint": version.fingerprint,
+        "applicant_count": version.applicant_count,
+        "actor": version.actor,
+        "created_at": version.created_at,
+    })
+
+
+@router.get("/by-id/{version_id}/file")
+def download_file(version_id: str, session: Session = Depends(get_session)):
+    """등록된 원본 엑셀을 그대로 내려준다 (02가 마스터를 파싱할 때 호출)."""
+    data, file_name = svc.read_file(session, version_id)
+    return Response(
+        content=data,
+        media_type=XLSX_MIME,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(file_name)}"
+        },
+    )
 
 
 @router.get("/{round_id}")

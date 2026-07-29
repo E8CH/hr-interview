@@ -1,19 +1,22 @@
 """Service 01 (version-manager) 클라이언트.
 
-USE_MOCK=true (PoC 기본) 이면 Service 01을 호출하지 않고 로컬 마스터를 쓴다.
+기본 경로: `master_version_id` 로 01에 원본 엑셀을 요청해 파싱한다.
+회차에 실제로 업로드된 파일과 배포 명단이 반드시 일치해야 하므로 이게 정상 경로다.
 
-1. `MASTER_XLSX` 경로에 실제 취합파일이 있으면 그것을 파싱한다 (기본 `./data/취합파일.xlsx`,
-   실데이터 467명). 백테스트가 이 경로를 탄다.
-2. 파일이 없으면 시드 고정 합성 데이터로 폴백한다.
+01을 못 부르는 경우(서비스 미기동 등)에는 USE_MOCK=true 일 때만 폴백한다.
+1. `MASTER_XLSX` 경로에 취합파일이 있으면 그것을 파싱 (기본 `./data/취합파일.xlsx`).
+   백테스트가 이 경로를 탄다.
+2. 그것도 없으면 시드 고정 합성 데이터.
    - 전체 467명, 그중 `결과P ∧ 구분R` 통과자 정확히 88명
    - 88 = 5개 팀 target_headcount 합(16+19+17+16+20)
    - 각 통과자는 최소 1개 팀에 배정 가능(조직 조건 충족)하도록 생성되어
      완전 매칭이 존재함 → 정원 오차 0 재현 가능
 
-운영에서는 USE_MOCK=false + VERSION_MANAGER_URL 로 Service 01을 직접 조회한다.
+USE_MOCK=false 면 폴백 없이 01 실패를 그대로 올린다.
 """
 from __future__ import annotations
 
+import logging
 import random
 import zlib
 
@@ -23,6 +26,8 @@ from contracts.types import Applicant
 from app.config import settings
 from app.domain.profile import TEAM_PROFILES
 from app.infrastructure.master_excel import load_master_excel
+
+logger = logging.getLogger(__name__)
 
 TOTAL_MASTER = 467
 
@@ -131,9 +136,24 @@ class VersionClient:
         self._use_mock = settings.use_mock if use_mock is None else use_mock
 
     def fetch_master(self, master_version_id: str) -> list[Applicant]:
-        if not self._use_mock:
+        """master_version_id 로 등록된 "그 파일"을 파싱해서 돌려준다.
+
+        01에서 원본을 받아오는 것이 정상 경로다. 예전에는 USE_MOCK=true 이면
+        01을 아예 건너뛰고 로컬 ./data/취합파일.xlsx 를 읽었는데, 그 결과
+        업로드한 파일과 배포 결과가 서로 다른 명단이 될 수 있었다.
+        이제는 항상 01을 먼저 시도하고, 실패했을 때만(그리고 USE_MOCK=true
+        일 때만) 로컬 파일 → 합성 데이터 순으로 폴백한다.
+        """
+        try:
             return self._fetch_remote(master_version_id)
-        # PoC: 실제 취합파일이 있으면 그걸 쓰고, 없으면 합성 데이터로 폴백
+        except (MasterNotFound, httpx.HTTPError) as exc:
+            if not self._use_mock:
+                raise
+            logger.warning(
+                "01 조회 실패 — 로컬 폴백으로 진행한다 (version_id=%s): %s",
+                master_version_id, exc,
+            )
+
         path = settings.master_xlsx
         if path is not None:
             return load_master_excel(path)
@@ -141,16 +161,18 @@ class VersionClient:
         return generate_mock_master(seed)
 
     def _fetch_remote(self, master_version_id: str) -> list[Applicant]:
-        url = f"{self._base_url}/api/v1/versions/{master_version_id}/applicants"
+        """01이 보관 중인 원본 엑셀을 내려받아 파싱한다."""
+        url = f"{self._base_url}/api/v1/versions/by-id/{master_version_id}/file"
         try:
-            response = httpx.get(url, timeout=10.0)
+            response = httpx.get(url, timeout=30.0)
         except httpx.HTTPError as exc:  # pragma: no cover - 네트워크 예외
             raise MasterNotFound(f"version-manager 호출 실패: {exc}") from exc
         if response.status_code == 404:
             raise MasterNotFound(f"master_version_id={master_version_id} 없음")
         response.raise_for_status()
-        body = response.json()
-        rows = body.get("data", body)
-        if isinstance(rows, dict):
-            rows = rows.get("applicants", [])
-        return [Applicant(**row) for row in rows]
+        applicants = load_master_excel(response.content)
+        logger.info(
+            "마스터 %d명 로드 (출처=version-manager, version_id=%s)",
+            len(applicants), master_version_id,
+        )
+        return applicants

@@ -45,34 +45,26 @@ def test_synthetic_fallback_when_no_master_file(synthetic_master):
     assert len(first) == 467
 
 
-def test_remote_mode_parses_envelope(monkeypatch):
-    payload = {
-        "data": {
-            "applicants": [
-                {
-                    "applicant_id": "1",
-                    "name": "김민준",
-                    "team_1st": "제1기술원",
-                    "job_1st": "직무다",
-                    "rnd_type": "구분R",
-                    "degree_type": "과정1",
-                    "doc_result": "결과P",
-                }
-            ]
-        }
-    }
+@pytest.mark.uses_version_manager
+def test_remote_mode_parses_registered_file(monkeypatch, master_xlsx_bytes):
+    """01이 내려준 원본 엑셀을 그대로 파싱한다 — 로컬 파일이 아니라."""
+    seen = {}
 
-    def fake_get(url, timeout=None):
-        return httpx.Response(200, json=payload, request=httpx.Request("GET", url))
+    def fake_get(url, timeout=None, **kwargs):
+        seen["url"] = url
+        return httpx.Response(
+            200, content=master_xlsx_bytes, request=httpx.Request("GET", url)
+        )
 
     monkeypatch.setattr(httpx, "get", fake_get)
     applicants = VersionClient(use_mock=False).fetch_master("vm_1")
-    assert len(applicants) == 1
-    assert applicants[0].applicant_id == "1"
+    assert applicants, "01이 준 파일에서 지원자를 못 뽑았다"
+    assert "/api/v1/versions/by-id/vm_1/file" in seen["url"]
 
 
+@pytest.mark.uses_version_manager
 def test_remote_mode_404(monkeypatch):
-    def fake_get(url, timeout=None):
+    def fake_get(url, timeout=None, **kwargs):
         return httpx.Response(404, request=httpx.Request("GET", url))
 
     monkeypatch.setattr(httpx, "get", fake_get)
@@ -80,13 +72,24 @@ def test_remote_mode_404(monkeypatch):
         VersionClient(use_mock=False).fetch_master("vm_missing")
 
 
+@pytest.mark.uses_version_manager
 def test_remote_transport_error(monkeypatch):
-    def fake_get(url, timeout=None):
+    def fake_get(url, timeout=None, **kwargs):
         raise httpx.ConnectError("연결 실패")
 
     monkeypatch.setattr(httpx, "get", fake_get)
     with pytest.raises(MasterNotFound):
         VersionClient(use_mock=False).fetch_master("vm_x")
+
+
+@pytest.mark.uses_version_manager
+def test_remote_failure_falls_back_when_mock_allowed(monkeypatch, synthetic_master):
+    """USE_MOCK=true 면 01이 죽어 있어도 배포가 멈추지는 않는다."""
+    def fake_get(url, timeout=None, **kwargs):
+        raise httpx.ConnectError("연결 실패")
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    assert len(VersionClient(use_mock=True).fetch_master("vm_x")) == 467
 
 
 def test_plan_creation_surfaces_master_not_found(client, monkeypatch):

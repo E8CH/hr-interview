@@ -29,7 +29,7 @@ from urllib import request as urllib_request
 
 log = logging.getLogger("audit-sink")
 
-_DEFAULT_URL = "http://localhost:8007"
+_DEFAULT_URL = "http://127.0.0.1:8007"
 _PATH = "/api/v1/audit/events"
 _TIMEOUT = float(os.getenv("AUDIT_SINK_TIMEOUT", "2.0"))
 

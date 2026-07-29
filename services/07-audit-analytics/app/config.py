@@ -50,9 +50,9 @@ class Settings:
         self.event_channel_pattern_override: str | None = os.getenv("EVENT_CHANNEL_PATTERN")
 
         # 다른 서비스 base URL (USE_MOCK=false일 때만 사용)
-        self.scheduler_url: str = os.getenv("SCHEDULER_URL", "http://localhost:8004")
+        self.scheduler_url: str = os.getenv("SCHEDULER_URL", "http://127.0.0.1:8004")
         self.response_collector_url: str = os.getenv(
-            "RESPONSE_COLLECTOR_URL", "http://localhost:8003"
+            "RESPONSE_COLLECTOR_URL", "http://127.0.0.1:8003"
         )
         self.http_timeout_s: float = float(os.getenv("HTTP_TIMEOUT_S", "3.0"))
 

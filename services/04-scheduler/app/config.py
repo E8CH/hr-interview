@@ -33,8 +33,8 @@ class Settings:
     event_channel: str = "hr.events"
 
     # 외부 서비스 (USE_MOCK=false 일 때만 사용)
-    distributor_url: str = os.getenv("DISTRIBUTOR_URL", "http://localhost:8002")
-    response_collector_url: str = os.getenv("RESPONSE_COLLECTOR_URL", "http://localhost:8003")
+    distributor_url: str = os.getenv("DISTRIBUTOR_URL", "http://127.0.0.1:8002")
+    response_collector_url: str = os.getenv("RESPONSE_COLLECTOR_URL", "http://127.0.0.1:8003")
 
     def ensure_storage(self) -> Path:
         self.storage_dir.mkdir(parents=True, exist_ok=True)

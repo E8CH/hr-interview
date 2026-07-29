@@ -22,7 +22,7 @@ class Settings:
     use_mock: bool = _bool("USE_MOCK", "true")
     storage_dir: Path = SERVICE_DIR / os.getenv("STORAGE_DIR", "./storage").lstrip("./")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
-    scheduler_base_url: str = os.getenv("SCHEDULER_BASE_URL", "http://localhost:8004")
+    scheduler_base_url: str = os.getenv("SCHEDULER_BASE_URL", "http://127.0.0.1:8004")
 
     def __init__(self) -> None:
         self.storage_dir.mkdir(parents=True, exist_ok=True)

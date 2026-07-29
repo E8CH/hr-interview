@@ -56,7 +56,7 @@ def _mock_roster() -> list[InviteeIn]:
 def _fetch_remote(plan_id: str, round_id: str) -> list[InviteeIn]:  # pragma: no cover - 통합 시 사용
     import httpx
 
-    base = f"http://localhost:{SERVICE_PORTS['distributor']}"
+    base = f"http://127.0.0.1:{SERVICE_PORTS['distributor']}"
     try:
         resp = httpx.get(
             f"{base}/api/v1/plans/{plan_id}/interviewers",

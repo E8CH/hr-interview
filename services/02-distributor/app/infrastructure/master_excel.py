@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 from contracts.types import Applicant
@@ -60,13 +61,22 @@ def _to_int(value) -> int:
         return 0
 
 
-def load_master_excel(path: str | Path) -> list[Applicant]:
-    """취합파일을 Applicant 리스트로 파싱한다."""
-    path = Path(path)
-    if not path.exists():
-        raise MasterFileError(f"취합파일이 없습니다: {path}")
+def load_master_excel(source: str | Path | bytes) -> list[Applicant]:
+    """취합파일을 Applicant 리스트로 파싱한다.
 
-    workbook = load_workbook(path, read_only=True, data_only=True)
+    경로뿐 아니라 바이트도 받는다 — 01(version-manager)에서 원본 파일을
+    내려받아 그대로 파싱하는 경로가 있어서다.
+    """
+    if isinstance(source, (bytes, bytearray)):
+        handle = BytesIO(source)
+        path = "<uploaded bytes>"
+    else:
+        path = Path(source)
+        if not path.exists():
+            raise MasterFileError(f"취합파일이 없습니다: {path}")
+        handle = path
+
+    workbook = load_workbook(handle, read_only=True, data_only=True)
     sheet = workbook[workbook.sheetnames[0]]
     rows = list(sheet.iter_rows(values_only=True))
     workbook.close()

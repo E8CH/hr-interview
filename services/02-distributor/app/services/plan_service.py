@@ -181,6 +181,41 @@ def get_plan_detail(session: Session, plan_id: str) -> dict:
     }
 
 
+def get_plan_applicants(session: Session, plan_id: str) -> list[dict]:
+    """확정 명단(중복 배정 제외) — 04(스케줄러)가 이걸 그대로 배정에 쓴다.
+
+    snapshot 에 마스터 원본 행이 통째로 들어 있으므로 학위·학점·타겟랩까지
+    같이 내려준다. 04가 규칙1(학위 균형) 계산에 degree_type 이 필요하다.
+    """
+    get_plan(session, plan_id)  # 없는 plan_id 면 404
+    rows = session.scalars(
+        select(AssignmentReasonORM)
+        .where(
+            AssignmentReasonORM.plan_id == plan_id,
+            AssignmentReasonORM.is_duplicate.is_(False),
+        )
+        .order_by(AssignmentReasonORM.team_name, AssignmentReasonORM.score.desc())
+    ).all()
+    out: list[dict] = []
+    for row in rows:
+        snapshot = row.snapshot or {}
+        out.append(
+            {
+                "applicant_id": row.applicant_id,
+                "name": row.applicant_name or snapshot.get("name") or "",
+                "team": row.team_name,
+                "team_1st": snapshot.get("team_1st"),
+                "degree_type": snapshot.get("degree_type") or "",
+                "major_final": snapshot.get("major_final"),
+                "gpa_final": snapshot.get("gpa_final"),
+                "target_lab": snapshot.get("target_lab"),
+                "score": row.score,
+                "reason_tags": list(row.tags or []),
+            }
+        )
+    return out
+
+
 def approve_plan(session: Session, plan_id: str, actor: str) -> PlanSummary:
     plan = get_plan(session, plan_id)
     if plan.status not in ("draft", "adjusted"):

@@ -57,7 +57,7 @@ class Settings:
 
     @property
     def version_manager_url(self) -> str:
-        return os.getenv("VERSION_MANAGER_URL", "http://localhost:8001")
+        return os.getenv("VERSION_MANAGER_URL", "http://127.0.0.1:8001")
 
     @property
     def mock_seed(self) -> int:

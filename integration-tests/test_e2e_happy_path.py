@@ -178,6 +178,48 @@ def test_05_audit_timeline(chain):
     assert "SCHEDULE_GENERATED" in types, f"04 이벤트 미도달: {types}"
 
 
+def test_05b_schedule_traces_back_to_uploaded_file(chain):
+    """시간표에 나온 사람이 1단계에 올린 그 파일 안에 실제로 있는지 확인.
+
+    04가 목 데이터로 88명을 지어내면 여기서 잡힌다. 시간표의 이름을 원본
+    엑셀에서 검색했을 때 안 나오는 상황을 막는 회귀 테스트다.
+    """
+    if "schedule_id" not in chain:
+        pytest.skip("앞 단계 실패 — 대조할 시간표 없음")
+
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(FIXTURE, read_only=True, data_only=True)
+    sheet = workbook[workbook.sheetnames[0]]
+    rows = list(sheet.iter_rows(values_only=True))
+    workbook.close()
+    header = {str(v).strip(): i for i, v in enumerate(rows[1]) if v}
+    id_col = header["지원자 번호"]
+    name_col = header["한글성명"]
+    source = {
+        str(r[id_col]).strip(): str(r[name_col]).strip()
+        for r in rows[2:]
+        if r[id_col] not in (None, "지원자 번호")
+    }
+
+    r = httpx.get(f"{BASE['sched']}{API}/schedules/{chain['schedule_id']}", timeout=30.0)
+    assert r.status_code == 200, f"HTTP {r.status_code}: {r.text[:300]}"
+    assignments = data_of(r)["assignments"]
+    assert assignments, "배정 결과가 비어 있음"
+
+    unknown = [a for a in assignments if str(a["applicant_id"]) not in source]
+    assert not unknown, (
+        f"원본 파일에 없는 지원자가 {len(unknown)}명 배정됨 "
+        f"(예: {unknown[0]['applicant_id']} {unknown[0].get('applicant_name')})"
+    )
+    mismatched = [
+        (a["applicant_id"], a.get("applicant_name"), source[str(a["applicant_id"])])
+        for a in assignments
+        if a.get("applicant_name") and source[str(a["applicant_id"])] != a["applicant_name"]
+    ]
+    assert not mismatched, f"지원자 번호는 있는데 이름이 다름: {mismatched[:3]}"
+
+
 def test_06_dashboard_kpi(chain):
     """대시보드 KPI 조회 — 200 응답 확인"""
     r = httpx.get(

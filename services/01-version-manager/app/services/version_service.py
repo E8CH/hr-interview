@@ -2,6 +2,7 @@
 
 명세 API 6종의 비즈니스 로직을 담당.
 """
+from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -45,6 +46,28 @@ def get_active(session: Session, round_id: str, kind: str,
                team_name: str | None = None) -> Version | None:
     stmt = _active_query(round_id, kind, team_name).order_by(Version.created_at.desc())
     return session.scalars(stmt).first()
+
+
+def get_by_id(session: Session, version_id: str) -> Version:
+    version = session.get(Version, version_id)
+    if version is None:
+        raise VersionError("NOT_FOUND", f"version_id={version_id} 없음", status_code=404)
+    return version
+
+
+def read_file(session: Session, version_id: str) -> tuple[bytes, str]:
+    """등록 때 저장해 둔 원본 파일 그대로 돌려준다.
+
+    02(배포)가 "이 회차에 실제로 올라온 그 파일"을 다시 파싱하기 위해 쓴다.
+    01은 지원자 번호만 뽑아 두므로 상세 컬럼은 원본에서 읽어야 한다.
+    """
+    version = get_by_id(session, version_id)
+    path = Path(version.file_path)
+    if not path.is_file():
+        raise VersionError(
+            "NOT_FOUND", f"저장된 원본 파일이 없습니다: {path}", status_code=404
+        )
+    return path.read_bytes(), version.file_name
 
 
 def register_version(session: Session, *, file_bytes: bytes, file_name: str,

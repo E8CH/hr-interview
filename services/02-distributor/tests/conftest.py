@@ -76,12 +76,39 @@ def master_applicants():
 
 
 @pytest.fixture(scope="session")
+def master_xlsx_bytes():
+    """01이 내려줄 원본 엑셀 바이트 (개인정보 없는 합성 샘플)."""
+    sample = Path(__file__).resolve().parents[3] / "tools" / "fixtures" / "master_sample.xlsx"
+    if not sample.is_file():
+        pytest.skip(f"샘플 마스터 없음: {sample}")
+    return sample.read_bytes()
+
+
+@pytest.fixture(scope="session")
 def team_truth():
     """희망지원자_{팀}.xlsx — 실제 배포 결과(정답지) 팀별 지원자 번호 집합."""
     return {
         team: set(load_team_roster(FIXTURES / f"희망지원자_{team}.xlsx"))
         for team in TEAM_NAMES
     }
+
+
+@pytest.fixture(autouse=True)
+def no_version_manager(monkeypatch, request):
+    """01(version-manager)을 부를 수 없는 상태로 고정한다.
+
+    fetch_master 는 이제 01을 먼저 호출하므로, 폴백 경로를 검증하는
+    테스트가 실제로 떠 있는 로컬 서비스에 붙어버리면 결과가 달라진다.
+    01 호출 자체를 검증하는 테스트는 `uses_version_manager` 마커로 제외한다.
+    """
+    if request.node.get_closest_marker("uses_version_manager"):
+        return
+    import httpx
+
+    def refuse(url, timeout=None, **kwargs):
+        raise httpx.ConnectError("version-manager 미기동 (테스트 고정)")
+
+    monkeypatch.setattr(httpx, "get", refuse)
 
 
 @pytest.fixture

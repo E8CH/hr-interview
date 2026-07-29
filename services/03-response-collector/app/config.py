@@ -30,7 +30,7 @@ class Settings:
         self.log_level: str = os.getenv("LOG_LEVEL", "INFO")
         self.storage_dir: Path = Path(os.getenv("STORAGE_DIR", "./storage")).resolve()
         self.notification_url: str = os.getenv(
-            "NOTIFICATION_SERVICE_URL", "http://localhost:8006"
+            "NOTIFICATION_SERVICE_URL", "http://127.0.0.1:8006"
         )
         # 리마인더 폴링 주기(분) — 명세: 30분 주기
         self.reminder_poll_minutes: int = int(os.getenv("REMINDER_POLL_MINUTES", "30"))
