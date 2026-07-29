@@ -28,7 +28,7 @@ import httpx
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="HR Interview Console", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="LG 면접 진행 도우미", page_icon="🔴", layout="wide")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MASTER = PROJECT_ROOT / "docs" / "취합파일.xlsx"
@@ -60,40 +60,235 @@ AUDIT = "http://127.0.0.1:8007"
 
 
 # ============================================================
-# 카드 UI — 모든 화면은 시간표처럼 칸(카드)으로 보여 준다
+# 화면 톤앤매너 — LG전자 스타일 (흰 바탕 · 넉넉한 여백 · 알약 버튼 · LG Active Red)
 # ============================================================
-st.markdown("""
+LG_RED = "#A50034"          # LG Active Red — 브랜드 강조색
+LG_RED_DARK = "#7A0026"
+LG_INK = "#111111"          # 본문 글자
+LG_SUB = "#6B6B6B"          # 보조 글자
+LG_LINE = "#E3E3E3"         # 실선
+LG_SURFACE = "#F5F5F5"      # 카드 바탕
+LG_FONT = ("'LG Smart UI','Pretendard','Noto Sans KR','Malgun Gothic',"
+           "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif")
+
+# 부서(팀)마다 카드 색을 달리한다. 팀 이름을 가나다순으로 줄 세워 번호를 매기므로
+# 같은 회차 안에서는 어느 화면에서 보든 같은 팀이 같은 색으로 나온다.
+# 색은 LG 톤에 맞춰 채도를 낮춘 계열로 고른다 (첫 자리는 LG Active Red).
+TEAM_PALETTE = [
+    "#A50034", "#1B6CA8", "#2E7D6B", "#8A5A2B",
+    "#5B4B8A", "#0F7A8C", "#6E7B22", "#B4477E",
+]
+
+# 학력은 카드 위쪽 띠줄 색으로 알아본다 (박사 · 석사 · 학사).
+DEGREE_STRIPE = {
+    "박사": ("dgd", "#5B4B8A"),
+    "석사": ("dgm", "#1B6CA8"),
+    "대학원": ("dgm", "#1B6CA8"),
+    "학사": ("dgb", "#2E7D6B"),
+    "미상": ("dgx", "#BDBDBD"),
+}
+
+_TEAM_TINT = "\n".join(
+    f".hrcard.tm{i}{{border-color:{c}33;background:{c}0f;}}"
+    f".hrcard.tm{i} .t{{color:{c};opacity:.9;}}"
+    f".hrhead.tm{i}{{border-color:{c}33;background:{c}14;color:{c};}}"
+    for i, c in enumerate(TEAM_PALETTE)
+)
+_DEGREE_TINT = "\n".join(
+    f".hrcard.{cls}{{border-top-color:{color};}}"
+    for cls, color in dict(DEGREE_STRIPE.values()).items()
+)
+
+st.markdown(f"""
 <style>
-.hrgrid {display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 14px;}
-.hrcard {flex:1 1 200px; min-width:170px; max-width:280px; padding:8px 11px;
-         border:1px solid rgba(130,140,160,.35); border-radius:10px;
-         background:rgba(130,150,190,.08);}
-.hrcard .t {font-size:.74rem; opacity:.6; letter-spacing:.02em;}
-.hrcard .h {font-weight:600; font-size:.97rem; margin:1px 0 2px;}
-.hrcard .s {font-size:.79rem; opacity:.82; line-height:1.35;}
-.hrcard.empty {opacity:.4; border-style:dashed; background:transparent;}
-.hrcard.fix {border-color:#d9a406; background:rgba(217,164,6,.10);}
-.hrcard.out {border-color:#c96; background:rgba(200,120,80,.10);}
-.hrcard.done {border-color:#3a9; background:rgba(50,160,140,.10);}
-.hrday {font-weight:700; font-size:.92rem; margin:12px 0 2px; opacity:.85;}
+:root {{--lg-red:{LG_RED}; --lg-ink:{LG_INK}; --lg-sub:{LG_SUB};
+        --lg-line:{LG_LINE}; --lg-surface:{LG_SURFACE};}}
+
+/* ---------- 바탕과 글꼴 ---------- */
+html, body, [class*="css"], .stApp {{font-family:{LG_FONT};}}
+.stApp {{background:#FFFFFF; color:var(--lg-ink);}}
+.block-container {{padding-top:1.6rem; padding-bottom:3rem; max-width:1500px;}}
+h1,h2,h3,h4 {{letter-spacing:-.02em; color:var(--lg-ink); font-weight:700;}}
+h1 {{font-size:1.72rem;}} h2 {{font-size:1.34rem;}} h3 {{font-size:1.08rem;}}
+[data-testid="stCaptionContainer"] {{color:var(--lg-sub);}}
+hr {{border-color:var(--lg-line);}}
+
+/* ---------- 브랜드 머리띠 ---------- */
+.lgbar {{display:flex; align-items:center; gap:12px; padding:2px 0 14px;
+         border-bottom:1px solid var(--lg-line); margin-bottom:20px;}}
+.lgmark {{font-weight:800; font-size:1.02rem; letter-spacing:-.04em;
+          color:#fff; background:var(--lg-red); border-radius:999px;
+          padding:6px 13px; line-height:1;}}
+.lgbar .ttl {{font-weight:700; font-size:1.02rem; letter-spacing:-.02em;}}
+.lgbar .sub {{color:var(--lg-sub); font-size:.82rem; margin-left:auto;}}
+
+/* ---------- 알약 버튼 ---------- */
+.stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {{
+    border-radius:999px; border:1px solid var(--lg-line); background:#fff;
+    color:var(--lg-ink); font-weight:600; letter-spacing:-.01em;
+    padding:.46rem 1.05rem; transition:.15s;}}
+.stButton > button:hover, .stDownloadButton > button:hover {{
+    border-color:var(--lg-ink); color:var(--lg-ink); background:#FAFAFA;}}
+.stButton > button[kind="primary"], .stFormSubmitButton > button[kind="primary"],
+.stDownloadButton > button[kind="primary"] {{
+    background:var(--lg-red); border-color:var(--lg-red); color:#fff;}}
+.stButton > button[kind="primary"]:hover {{
+    background:{LG_RED_DARK}; border-color:{LG_RED_DARK}; color:#fff;}}
+
+/* ---------- 왼쪽 메뉴 ---------- */
+[data-testid="stSidebar"] {{background:#FAFAFA; border-right:1px solid var(--lg-line);}}
+[data-testid="stSidebar"] .stButton > button {{text-align:left; justify-content:flex-start;}}
+
+/* ---------- 입력·표 ---------- */
+[data-baseweb="input"], [data-baseweb="select"] > div, .stTextArea textarea {{
+    border-radius:10px !important;}}
+[data-testid="stMetric"] {{background:var(--lg-surface); border-radius:14px;
+    padding:14px 16px;}}
+[data-testid="stMetricValue"] {{font-weight:700; letter-spacing:-.02em;}}
+[data-testid="stDataFrame"] {{border-radius:12px; overflow:hidden;
+    border:1px solid var(--lg-line);}}
+[data-testid="stExpander"] {{border:1px solid var(--lg-line); border-radius:14px;
+    background:#fff;}}
+[data-testid="stExpander"] summary {{font-weight:600;}}
+.stTabs [data-baseweb="tab-list"] {{gap:6px;}}
+.stTabs [data-baseweb="tab"] {{border-radius:999px; padding:6px 16px;
+    background:var(--lg-surface);}}
+.stTabs [aria-selected="true"] {{background:var(--lg-ink) !important; color:#fff !important;}}
+
+/* ---------- 알림 ---------- */
+[data-testid="stAlert"] {{border-radius:14px; border:1px solid var(--lg-line);
+    box-shadow:none;}}
+
+/* ---------- 칸 수를 고정한 격자 (마지막 줄은 빈칸으로 채워 줄을 맞춘다) ---------- */
+.hrgrid {{display:grid; gap:10px; margin:8px 0 18px;
+          grid-template-columns:repeat(var(--cols,4), minmax(0,1fr));}}
+.hrcard {{position:relative; padding:11px 13px 10px; border-radius:14px;
+          border:1px solid var(--lg-line); border-top:4px solid #D7D7D7;
+          background:var(--lg-surface); min-height:66px; overflow:hidden;}}
+.hrcard .t {{font-size:.7rem; color:var(--lg-sub); letter-spacing:0;}}
+.hrcard .h {{font-weight:700; font-size:.97rem; margin:2px 0 3px;
+             letter-spacing:-.02em; color:var(--lg-ink);}}
+.hrcard .s {{font-size:.77rem; color:var(--lg-sub); line-height:1.4;}}
+.hrcard.empty {{background:#FCFCFC; border-style:dashed; border-top-style:dashed;}}
+.hrcard.void {{border:0; background:transparent;}}   /* 줄 맞추는 빈칸 */
+.hrcard.fix {{box-shadow:inset 0 0 0 1.5px {LG_RED}44;}}
+.hrcard.out {{border-color:#E2C7A8; background:#FBF4EC;}}
+.hrcard.done {{border-color:#BEDDD3; background:#EFF7F4;}}
+.hrbadge {{position:absolute; top:8px; right:8px; font-size:.62rem; font-weight:700;
+           padding:2px 8px; border-radius:999px; background:var(--lg-red);
+           color:#fff; letter-spacing:-.01em;}}
+.hrday {{font-weight:700; font-size:.94rem; margin:18px 0 4px;
+         letter-spacing:-.02em; color:var(--lg-ink);}}
+
+/* ---------- 스케줄러식 시간표 (왼쪽 시간 축 + 팀·일자 세로줄) ---------- */
+.hrsched {{overflow-x:auto; margin:8px 0 18px; padding-bottom:6px;}}
+.hrsched-in {{display:grid; gap:8px;
+              grid-template-columns:104px repeat(var(--cols,1), minmax(158px,1fr));}}
+.hrhead {{font-weight:700; font-size:.8rem; text-align:center; padding:9px 8px;
+          border:1px solid var(--lg-line); border-radius:999px;
+          letter-spacing:-.02em;}}
+.hrhead.corner {{border:0; background:transparent; color:var(--lg-sub);
+                 font-size:.74rem; font-weight:600;}}
+.hrtime {{font-size:.76rem; font-weight:600; color:var(--lg-sub); text-align:right;
+          white-space:nowrap; padding:17px 10px 0 0;}}
+{_TEAM_TINT}
+{_DEGREE_TINT}
 </style>
 """, unsafe_allow_html=True)
 
 
-def card(top: str = "", head: str = "", sub: str = "", tone: str = "") -> str:
-    """카드 한 칸 — 위(시간·구분) / 가운데(이름) / 아래(부가 정보)."""
+def brand_bar(title: str, note: str = "") -> None:
+    """화면 맨 위 브랜드 머리띠 — LG 마크 + 지금 보고 있는 화면 이름."""
+    st.markdown(
+        f'<div class="lgbar"><span class="lgmark">LG</span>'
+        f'<span class="ttl">{escape(title)}</span>'
+        + (f'<span class="sub">{escape(note)}</span>' if note else "")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+_TEAM_CLASS: dict[str, str] = {}
+
+
+def team_colors(teams) -> None:
+    """팀 이름을 가나다순으로 줄 세워 색 번호를 붙인다."""
+    for index, name in enumerate(sorted({str(t).strip() for t in teams if str(t).strip()})):
+        _TEAM_CLASS[name] = f"tm{index % len(TEAM_PALETTE)}"
+
+
+def team_class(team) -> str:
+    name = str(team or "").strip()
+    if not name:
+        return ""
+    if name not in _TEAM_CLASS:  # 팀 목록을 못 받은 화면도 색은 갖게 한다
+        _TEAM_CLASS[name] = f"tm{sum(ord(c) for c in name) % len(TEAM_PALETTE)}"
+    return _TEAM_CLASS[name]
+
+
+def degree_class(degree) -> str:
+    return DEGREE_STRIPE.get(str(degree or "").strip(), DEGREE_STRIPE["미상"])[0]
+
+
+def degree_chip(degree) -> str:
+    """위젯이 들어가는 칸에도 학력 띠줄을 얹는다 (카드가 아니라 컨테이너일 때)."""
+    color = DEGREE_STRIPE.get(str(degree or "").strip(), DEGREE_STRIPE["미상"])[1]
+    return (f'<div style="height:4px;border-radius:3px;background:{color};'
+            f'margin:-4px 0 6px;"></div>')
+
+
+def card(top: str = "", head: str = "", sub: str = "", tone: str = "", *,
+         team=None, degree=None, badge: str = "") -> str:
+    """카드 한 칸 — 위(시간·구분) / 가운데(이름) / 아래(부가 정보).
+
+    team 을 주면 부서 색이, degree 를 주면 학력 띠줄이, badge 를 주면 우상단에
+    작은 표가 붙는다.
+    """
+    classes = " ".join(c for c in (
+        "hrcard", tone, team_class(team) if team else "",
+        degree_class(degree) if degree else "",
+    ) if c)
+    mark = f'<span class="hrbadge">{escape(str(badge))}</span>' if badge else ""
     return (
-        f'<div class="hrcard {tone}">'
+        f'<div class="{classes}">{mark}'
         f'<div class="t">{escape(str(top))}</div>'
         f'<div class="h">{escape(str(head))}</div>'
         f'<div class="s">{escape(str(sub))}</div></div>'
     )
 
 
-def card_grid(cards: list[str]) -> None:
+def card_grid(cards: list[str], cols: int = 4) -> None:
+    """카드를 칸 수가 고정된 격자로 깐다 — 모자라는 자리는 빈칸으로 채워 줄을 맞춘다."""
     if not cards:
         return
-    st.markdown('<div class="hrgrid">' + "".join(cards) + "</div>", unsafe_allow_html=True)
+    cols = max(1, int(cols))
+    pad = (-len(cards)) % cols
+    body = "".join(cards) + '<div class="hrcard void"></div>' * pad
+    st.markdown(f'<div class="hrgrid" style="--cols:{cols}">{body}</div>',
+                unsafe_allow_html=True)
+
+
+def time_grid(columns: list, slots: list, cells: dict, *, corner: str = "시간",
+              heads: dict | None = None) -> None:
+    """스케줄러식 시간표 — 왼쪽에 시간, 위에 팀(또는 일자·담당자)을 놓은 격자.
+
+    cells 는 {(열 이름, 시간): 카드 HTML}. 비어 있는 칸도 빈 카드로 자리를 지켜서
+    어느 팀의 몇 시 칸인지 눈으로 바로 따라갈 수 있게 한다.
+    """
+    if not columns or not slots:
+        return
+    parts = [f'<div class="hrhead corner">{escape(str(corner))}</div>']
+    for name in columns:
+        klass = team_class(name) if heads is None else heads.get(name, "")
+        parts.append(f'<div class="hrhead {klass}">{escape(str(name))}</div>')
+    for slot in slots:
+        parts.append(f'<div class="hrtime">{escape(str(slot))}</div>')
+        for name in columns:
+            parts.append(cells.get((name, slot)) or '<div class="hrcard empty"></div>')
+    st.markdown(
+        f'<div class="hrsched"><div class="hrsched-in" style="--cols:{len(columns)}">'
+        + "".join(parts) + "</div></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def day_title(text: str) -> None:
@@ -447,7 +642,13 @@ def nav_button(label: str, key: str, active: bool, slot: str, value: str) -> Non
 
 
 with st.sidebar:
-    st.markdown("## 🎯 면접 진행 도우미")
+    st.markdown(
+        f'<div style="display:flex;align-items:center;gap:10px;margin:2px 0 18px;">'
+        f'<span class="lgmark">LG</span>'
+        f'<span style="font-weight:700;font-size:1.02rem;letter-spacing:-.02em;">'
+        f'면접 진행 도우미</span></div>',
+        unsafe_allow_html=True,
+    )
     viewer = st.session_state["viewer"]
     menu = st.session_state["menu"]
 
@@ -983,13 +1184,31 @@ SLOTS_PER_DAY = 8      # 하루 최대 면접 건수
 
 
 def degree_label(value) -> str:
-    """마스터의 학교유형 코드(과정1/2/3)를 학사·대학원으로 읽는다."""
+    """마스터의 학교유형 코드(과정1/2/3)를 학사·대학원으로 읽는다.
+
+    배정 규칙(학사·대학원 균형)이 이 두 갈래를 쓰기 때문에 그대로 둔다. 화면에
+    박사·석사를 갈라 보여 줄 때는 degree_full() 을 쓴다.
+    """
     text = str(value or "").strip()
     if not text:
         return "미상"
     if text in (BACHELOR_CODE, "학사"):
         return "학사"
     return "대학원"
+
+
+def degree_full(value) -> str:
+    """카드 띠줄용 — 과정1/2/3 을 학사·석사·박사로 갈라 읽는다."""
+    text = str(value or "").strip()
+    if text in (BACHELOR_CODE, "학사"):
+        return "학사"
+    if text in ("과정2", "석사"):
+        return "석사"
+    if text in ("과정3", "박사"):
+        return "박사"
+    if text == "대학원":
+        return "대학원"
+    return "미상"
 
 
 def team_rosters_from_versions(history: list[dict]) -> dict[str, list[dict]]:
@@ -1011,6 +1230,7 @@ def team_rosters_from_versions(history: list[dict]) -> dict[str, list[dict]]:
                 "name": row.get(NAME_HEADER, ""),
                 "team": team,
                 "degree": degree_label(row.get(DEGREE_HEADER)),
+                "degree_full": degree_full(row.get(DEGREE_HEADER)),
             }
             for row in preview.get("rows") or []
             if row.get(NAME_HEADER)
@@ -1026,6 +1246,7 @@ def team_rosters_from_plan(applicants: list[dict]) -> dict[str, list[dict]]:
             "name": row.get("name", ""),
             "team": row["team"],
             "degree": degree_label(row.get("degree_type")),
+            "degree_full": degree_full(row.get("degree_type")),
         })
     return rosters
 
@@ -1164,6 +1385,22 @@ def render_roster_organizer(history: list[dict], plan_id: str,
         return
 
     teams = sorted(rosters)
+    team_colors(teams)
+
+    # 두 팀 이상이 같은 사람을 보겠다고 한 경우 — 카드에 표시해 준다
+    wanted: dict[str, set] = {}
+    for team, rows in rosters.items():
+        for row in rows:
+            key = row.get("applicant_id") or row.get("name")
+            if key:
+                wanted.setdefault(key, set()).add(team)
+    duplicated = {key for key, owners in wanted.items() if len(owners) > 1}
+    dup_names = {
+        row.get("name")
+        for rows in rosters.values() for row in rows
+        if (row.get("applicant_id") or row.get("name")) in duplicated
+    }
+
     longest = max(len(rows) for rows in rosters.values())
     matrix = pd.DataFrame(
         {
@@ -1179,13 +1416,35 @@ def render_roster_organizer(history: list[dict], plan_id: str,
         day_title(f"🏢 {team} — {len(people)}명")
         card_grid([
             card(f"{index}번", row.get("name") or row.get("applicant_id"),
-                 row.get("degree"))
+                 row.get("degree_full") or row.get("degree"),
+                 team=team, degree=row.get("degree_full") or row.get("degree"),
+                 badge="중복면접" if (row.get("applicant_id")
+                                  or row.get("name")) in duplicated else "")
             for index, row in enumerate(people, start=1)
-        ])
+        ], cols=6)
     st.caption(
         " · ".join(f"{team} {len(rosters[team])}명" for team in teams)
-        + f" · 모두 {sum(len(v) for v in rosters.values())}명 (팀별 가나다순)"
+        + f" · 모두 {sum(len(v) for v in rosters.values())}명 (팀별 가나다순) · "
+        "카드 색은 부서, 위쪽 띠줄은 학력입니다."
+        + (f" · 두 팀 이상이 함께 원하는 지원자 {len(duplicated)}명은 "
+           "[중복면접] 표가 붙습니다." if duplicated else "")
     )
+    if duplicated:
+        with st.expander(f"중복면접 {len(duplicated)}명 — 어느 팀끼리 겹쳤나"):
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "지원자": next(
+                            (r.get("name") for rows in rosters.values() for r in rows
+                             if (r.get("applicant_id") or r.get("name")) == key),
+                            key),
+                        "겹친 팀": " · ".join(sorted(wanted[key])),
+                        "면접 횟수": len(wanted[key]),
+                    }
+                    for key in sorted(duplicated)
+                ]),
+                width="stretch", hide_index=True,
+            )
     with st.expander("표로 보기"):
         st.dataframe(matrix, width="stretch", height=min(38 * (longest + 1) + 3, 520))
 
@@ -1222,20 +1481,37 @@ def render_roster_organizer(history: list[dict], plan_id: str,
         f"{int(rest)}분 휴식으로 순서를 잡았습니다."
     )
     team_cols = [c for c in table.columns if c != "구분"]
+    degree_of = {
+        (row.get("name") or ""): (row.get("degree_full") or row.get("degree"))
+        for rows in rosters.values() for row in rows
+    }
+    slots: list[str] = []
+    cells: dict[tuple, str] = {}
     for _, line in table.iterrows():
         head = str(line["구분"])
-        if head.startswith("──"):
+        if head.startswith("──"):          # 하루가 끝나면 그때까지 모은 칸을 깐다
+            if slots:
+                time_grid(team_cols, slots, cells)
+            slots, cells = [], {}
             day_title(head)
             continue
         if not head.strip():
             continue
-        card_grid([
-            card(f"{team} · {head}", str(line[team]).split(" (")[0] or "—",
-                 (str(line[team]).split(" (")[1].rstrip(")")
-                  if " (" in str(line[team]) else ""),
-                 tone="" if str(line[team]).strip() else "empty")
-            for team in team_cols
-        ])
+        slots.append(head)
+        for team in team_cols:
+            text = str(line[team]).strip()
+            if not text:
+                continue
+            name = text.split(" (")[0]
+            degree = degree_of.get(name) or (
+                text.split(" (")[1].rstrip(")") if " (" in text else ""
+            )
+            cells[(team, head)] = card(
+                degree, name, "", team=team, degree=degree,
+                badge="중복면접" if name in dup_names else "")
+    if slots:
+        time_grid(team_cols, slots, cells)
+    st.caption("카드 색은 부서, 위쪽 띠줄은 학력(박사 · 석사 · 학사)입니다.")
     with st.expander("표로 보기"):
         st.dataframe(
             table, width="stretch", hide_index=True,
@@ -1815,6 +2091,7 @@ def render_send(selected: list[dict]) -> None:
     if not teams:
         st.info("아직 보낸 명단이 없습니다.")
         return
+    team_colors(teams)
     cards = []
     for team in sorted(teams):
         block = teams[team]
@@ -1826,8 +2103,9 @@ def render_send(selected: list[dict]) -> None:
             (f"부서에서 {len(pairs)}명 보내 옴 · {str(sub.get('at'))[:16]}"
              if sub else "부서 회신 기다리는 중"),
             tone="done" if sub else "",
+            team=team,
         ))
-    card_grid(cards)
+    card_grid(cards, cols=min(4, len(cards)) or 1)
 
 
 def render_matching(selected: list[dict]) -> None:
@@ -1844,6 +2122,7 @@ def render_matching(selected: list[dict]) -> None:
         st.info("위 ②에서 명단을 먼저 보내면 여기서 짝을 지을 수 있습니다.")
         return
 
+    team_colors(teams_doc)
     team = st.selectbox("팀", sorted(teams_doc), key="c_match_team")
     block = teams_doc[team]
     team_ap = block.get("applicants") or []
@@ -1920,15 +2199,22 @@ def render_matching(selected: list[dict]) -> None:
             ", ".join(sorted(ap_name[a] for a, i in pairs.items()
                              if i == iid and a in ap_name)) or "맡은 사람 없음",
             tone="done" if any(i == iid for i in pairs.values()) else "empty",
+            team=team,
         )
         for iid, row in iv_row.items()
-    ])
+    ], cols=3)
 
-    left = [ap_name[row["applicant_id"]] for row in team_ap
+    ap_degree = {row["applicant_id"]: degree_full(row.get("degree_type"))
+                 for row in team_ap}
+    left = [(row["applicant_id"], ap_name[row["applicant_id"]]) for row in team_ap
             if row["applicant_id"] not in pairs]
     if left:
         st.markdown("**아직 담당자가 없는 면접자**")
-        card_grid([card(team, name, "짝 없음", tone="out") for name in sorted(left)])
+        card_grid([
+            card(team, name, f"{ap_degree.get(aid, '미상')} · 짝 없음", tone="out",
+                 degree=ap_degree.get(aid))
+            for aid, name in sorted(left, key=lambda x: x[1])
+        ], cols=5)
 
     fresh = load_handoff(round_id)
     all_pairs = handoff_pairs(fresh)
@@ -2178,6 +2464,7 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
             "applicant_id": row["applicant_id"],
             "name": row.get("name") or row["applicant_id"],
             "degree": degree_label(row.get("degree_type")),
+            "degree_full": degree_full(row.get("degree_type")),
             "interviewer_id": pairs.get(row["applicant_id"]),
         }
         for row in applicants if row["applicant_id"] in pairs
@@ -2194,29 +2481,37 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
     return out
 
 
-def schedule_cards(rows: list[dict], *, by_person: bool = False) -> None:
-    """시간표를 일자(또는 담당자)별 카드로 깐다."""
+def schedule_cards(rows: list[dict], *, by_person: bool = False, team: str = "") -> None:
+    """시간표를 스케줄러처럼 — 왼쪽에 시간, 위에 일자(또는 담당자) — 격자로 깐다."""
     if not rows:
-        st.info("보여 줄 일정이 없다.")
+        st.info("보여 줄 일정이 없습니다.")
         return
+    slots = sorted({r["slot"] for r in rows})
+    days = sorted({r["day"] for r in rows})
+
     if by_person:
-        people = sorted({row["interviewer"] for row in rows})
-        for person in people:
-            mine = sorted([r for r in rows if r["interviewer"] == person],
-                          key=lambda r: (r["day"], r["slot"]))
-            day_title(f"👤 {person} — {len(mine)}건")
-            card_grid([
-                card(f"{r['day']}일차 · {r['slot']}", r["name"], r["degree"])
-                for r in mine
-            ])
+        people = sorted({r["interviewer"] for r in rows})
+        for day in days:
+            day_title(f"── {day}일차 ──")
+            cells = {
+                (r["interviewer"], r["slot"]): card(
+                    r["slot"], r["name"], r.get("degree_full") or r["degree"],
+                    team=team, degree=r.get("degree_full") or r["degree"],
+                )
+                for r in rows if r["day"] == day
+            }
+            time_grid(people, slots, cells, heads={})
         return
-    for day in sorted({row["day"] for row in rows}):
-        mine = sorted([r for r in rows if r["day"] == day], key=lambda r: r["slot"])
-        day_title(f"── {day}일차 ── ({len(mine)}명)")
-        card_grid([
-            card(r["slot"], r["name"], f"{r['degree']} · 담당 {r['interviewer']}")
-            for r in mine
-        ])
+
+    cells = {
+        (f"{r['day']}일차", r["slot"]): card(
+            f"담당 {r['interviewer']}", r["name"],
+            r.get("degree_full") or r["degree"],
+            team=team, degree=r.get("degree_full") or r["degree"],
+        )
+        for r in rows
+    }
+    time_grid([f"{d}일차" for d in days], slots, cells, heads={})
 
 
 def render_timetable(assignments: list[dict]) -> None:
@@ -2240,7 +2535,22 @@ def render_timetable(assignments: list[dict]) -> None:
     }
 
     # 4번·부서 뷰어에서 확정한 매칭이 있으면 그 담당자를 우선한다 (★ 표시)
-    matched: dict[str, str] = handoff_pairs(load_handoff(round_id))
+    doc = load_handoff(round_id)
+    matched: dict[str, str] = handoff_pairs(doc)
+    # 부서에 보낸 명단에는 학교유형 원본이 남아 있어 박사·석사까지 갈라 볼 수 있다
+    degrees: dict[str, str] = {
+        row["applicant_id"]: degree_full(row.get("degree_type"))
+        for block in (doc.get("teams") or {}).values()
+        for row in (block.get("applicants") or [])
+    }
+
+    # 두 팀 이상이 같은 사람을 보겠다고 하면 그 사람은 '중복면접' 이다
+    by_applicant: dict[str, set] = {}
+    for row in assignments:
+        by_applicant.setdefault(row.get("applicant_id"), set()).add(
+            row.get("team") or "미상"
+        )
+    duplicated = {aid for aid, ts in by_applicant.items() if len(ts) > 1}
 
     # (팀, 요일) 별로 모아 시간대 순으로 줄을 세운 뒤 하루 슬롯 수만큼 끊는다
     buckets: dict[tuple[str, str], list[dict]] = {}
@@ -2251,6 +2561,7 @@ def render_timetable(assignments: list[dict]) -> None:
         items.sort(key=lambda r: (str(r.get("hour")), r.get("applicant_name") or ""))
 
     teams = sorted({team for team, _ in buckets})
+    team_colors(teams)
     days = sorted({day for _, day in buckets},
                   key=lambda d: DAY_ORDER.index(d) if d in DAY_ORDER else 99)
     blank = {team: "" for team in teams}
@@ -2282,23 +2593,48 @@ def render_timetable(assignments: list[dict]) -> None:
     table = pd.DataFrame(rows, columns=["구분"] + teams)
     for day in days:
         day_title(f"── {day} ──")
-        for slot_index, label in enumerate(labels):
-            cards = []
-            for team in teams:
-                items = buckets.get((team, day)) or []
+        cells: dict[tuple, str] = {}
+        for team in teams:
+            items = buckets.get((team, day)) or []
+            for slot_index, label in enumerate(labels):
                 item = items[slot_index] if slot_index < len(items) else None
                 if item is None:
-                    cards.append(card(team, "—", label, tone="empty"))
                     continue
-                fixed = matched.get(item.get("applicant_id"))
+                aid = item.get("applicant_id")
+                fixed = matched.get(aid)
                 iid = fixed or item.get("interviewer_id")
-                cards.append(card(
-                    f"{team} · {label}",
-                    item.get("applicant_name") or item.get("applicant_id"),
+                degree = degrees.get(aid) or item.get("degree") or "미상"
+                cells[(team, label)] = card(
+                    degree,
+                    item.get("applicant_name") or aid,
                     f"담당 {names.get(iid, iid)}" + (" ★확정" if fixed else ""),
                     tone="fix" if fixed else "",
-                ))
-            card_grid(cards)
+                    team=team, degree=degree,
+                    badge="중복면접" if aid in duplicated else "",
+                )
+        time_grid(teams, labels, cells)
+    st.caption(
+        "카드 색은 부서, 위쪽 띠줄은 학력(박사 · 석사 · 학사)입니다."
+        + (f" · 두 팀 이상이 함께 보려는 {len(duplicated)}명에는 '중복면접' 표를 "
+           "달았습니다." if duplicated else "")
+    )
+    if duplicated:
+        with st.expander(f"⚠ 중복면접 {len(duplicated)}명 — 어느 팀들이 겹쳤는지"):
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "지원자": next(
+                            (r.get("applicant_name") or aid) for r in assignments
+                            if r.get("applicant_id") == aid
+                        ),
+                        "지원자 번호": aid,
+                        "겹친 팀": ", ".join(sorted(by_applicant[aid])),
+                        "면접 횟수": len(by_applicant[aid]),
+                    }
+                    for aid in sorted(duplicated)
+                ]),
+                width="stretch", hide_index=True,
+            )
     with st.expander("표로 보기"):
         st.dataframe(table, width="stretch", hide_index=True,
                      height=min(38 * (len(table) + 1) + 3, 760))
@@ -2530,13 +2866,15 @@ def render_excluded(selected: list[dict], plan_id: str) -> None:
     c1.metric("면접 못 보는 지원자", f"{len(out_ap)} / {total_ap}")
     c2.metric("맡은 사람 없는 담당자", f"{len(out_iv)} / {total_iv}")
 
+    team_colors(teams_doc)
     st.markdown("**면접 못 보는 지원자**")
     if out_ap:
         card_grid([
             card(row["team"], row.get("name") or row["applicant_id"],
-                 f"{degree_label(row.get('degree_type'))} · 짝 없음", tone="out")
+                 f"{degree_full(row.get('degree_type'))} · 짝 없음", tone="out",
+                 team=row["team"], degree=degree_full(row.get("degree_type")))
             for row in sorted(out_ap, key=lambda r: (r["team"], r.get("name") or ""))
-        ])
+        ], cols=5)
     else:
         st.success("모든 지원자에게 담당자가 정해졌습니다.")
 
@@ -2544,9 +2882,9 @@ def render_excluded(selected: list[dict], plan_id: str) -> None:
     if out_iv:
         card_grid([
             card(row["team"], row.get("name") or row["interviewer_id"],
-                 role_label(row.get("priority")), tone="out")
+                 role_label(row.get("priority")), tone="out", team=row["team"])
             for row in sorted(out_iv, key=lambda r: (r["team"], r.get("name") or ""))
-        ])
+        ], cols=5)
     else:
         st.success("정해 둔 담당자 모두에게 면접자가 있습니다.")
 
@@ -2691,9 +3029,16 @@ def render_team_view() -> None:
                 "여기에 나타납니다.")
         return
 
+    team_colors(teams_doc)
     team = st.selectbox("우리 팀", sorted(teams_doc), key="tv_team")
     block = teams_doc[team]
     applicants = block.get("applicants") or []
+    # 다른 팀도 같은 사람을 보겠다고 했으면 '중복면접' 으로 알려 준다
+    shared: dict[str, set] = {}
+    for other, blk in teams_doc.items():
+        for row in blk.get("applicants") or []:
+            shared.setdefault(row["applicant_id"], set()).add(other)
+    duplicated = {aid for aid, ts in shared.items() if len(ts) > 1}
     interviewers = block.get("interviewers") or []
     submitted = block.get("submitted") or {}
     saved: dict[str, str] = dict(submitted.get("pairs") or {})
@@ -2729,11 +3074,14 @@ def render_team_view() -> None:
     columns = st.columns(4)
     for index, row in enumerate(applicants):
         aid = row["applicant_id"]
+        degree = degree_full(row.get("degree_type"))
         with columns[index % 4].container(border=True):
-            st.markdown(f"**{row.get('name') or aid}**")
-            st.caption(
-                f"{degree_label(row.get('degree_type'))} · {row.get('major_final') or '-'}"
+            st.markdown(degree_chip(degree), unsafe_allow_html=True)
+            st.markdown(
+                f"**{row.get('name') or aid}**"
+                + ("  :red-badge[중복면접]" if aid in duplicated else "")
             )
+            st.caption(f"{degree} · {row.get('major_final') or '-'}")
             on = st.checkbox("면접 보기", key=f"tv_on_{team}_{aid}",
                              value=aid in saved)
             who = st.selectbox(
@@ -2778,18 +3126,19 @@ def render_team_view() -> None:
         st.error("시작 시각은 HH:MM 형식으로 입력하세요. (예: 09:00)")
         return
 
-    schedule_cards(rows)
+    schedule_cards(rows, team=team)
     st.caption(
         f"{team} · 모두 {len(rows)}명 · 한 사람당 {int(minutes)}분 면접에 "
         f"{int(rest)}분 휴식 · 하루 {int(per_day)}명씩 · {max(r['day'] for r in rows)}일차까지"
+        " · 카드 위쪽 띠줄은 학력(박사 · 석사 · 학사)입니다."
     )
 
     st.subheader("③ 담당자별 면접 일정")
-    schedule_cards(rows, by_person=True)
+    schedule_cards(rows, by_person=True, team=team)
 
     frame = pd.DataFrame([
         {"일차": r["day"], "시간": r["slot"], "면접자": r["name"],
-         "학력": r["degree"], "면접 담당자": r["interviewer"]}
+         "학력": r.get("degree_full") or r["degree"], "면접 담당자": r["interviewer"]}
         for r in sorted(rows, key=lambda r: (r["day"], r["slot"]))
     ])
     with st.expander("표로 보기 · 내려받기"):
@@ -3131,6 +3480,11 @@ def render_scenario() -> None:
 # ============================================================
 # 라우팅
 # ============================================================
+brand_bar(
+    {VIEWERS[1]: "현업 부서 면접 명단", VIEWERS[2]: "시스템 관리"}.get(viewer, menu),
+    f"{viewer} · {round_id}" if round_id else viewer,
+)
+
 if viewer == VIEWERS[1]:
     render_team_view()
 elif viewer == VIEWERS[2]:

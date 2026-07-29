@@ -1,0 +1,11 @@
+# LG전자 톤앤매너 — 흰 바탕 · LG Active Red 강조
+[theme]
+base = "light"
+primaryColor = "#A50034"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F5F5"
+textColor = "#111111"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"
