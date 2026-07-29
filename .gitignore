@@ -47,3 +47,4 @@ docs/*.xlsx
 services/01-version-manager/tests/fixtures/*.xlsx
 services/02-distributor/data/*.xlsx
 services/02-distributor/tests/fixtures/*.xlsx
+/data/

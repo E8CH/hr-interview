@@ -211,3 +211,46 @@ def test_merge_rejects_team_file_as_base(client, sample_bytes, sample_round_id):
     })
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+# ------------------------------------------------------------------ 회차 초기화
+
+def test_reset_round_clears_history(client, sample_bytes, sample_round_id):
+    """같은 회차를 다시 올릴 때 이전 이력이 남아 있으면 안 된다."""
+    _register(client, "취합파일.xlsx", sample_bytes, sample_round_id)
+    _register(client, "희망지원자_AI솔루션팀.xlsx", sample_bytes, sample_round_id)
+    assert len(client.get(f"/api/v1/versions/{sample_round_id}/history").json()["data"]) == 2
+
+    r = client.delete(f"/api/v1/versions/{sample_round_id}")
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["deleted_versions"] == 2
+    assert client.get(f"/api/v1/versions/{sample_round_id}/history").json()["data"] == []
+
+
+def test_register_batch_reset_keeps_only_new_files(client, sample_bytes, sample_round_id):
+    old = _register(client, "취합파일.xlsx", sample_bytes, sample_round_id)
+
+    r = client.post(
+        "/api/v1/versions/register-batch",
+        files=[("files", ("취합파일.xlsx", io.BytesIO(sample_bytes), XLSX))],
+        data={"round_id": sample_round_id, "actor": "pytest", "reset": "true"},
+    )
+    assert r.status_code == 201, r.text
+    data = r.json()["data"]
+    assert data["cleared"]["deleted_versions"] == 1
+
+    hist = client.get(f"/api/v1/versions/{sample_round_id}/history").json()["data"]
+    assert [h["version_id"] for h in hist] == [data["registered"][0]["version_id"]]
+    assert old["version_id"] not in {h["version_id"] for h in hist}
+    # 새로 올린 것이 활성이고 이전 버전을 부모로 물지 않는다
+    assert hist[0]["is_active"] is True
+    assert hist[0]["parent_version"] is None
+
+
+def test_reset_round_leaves_other_rounds_alone(client, sample_bytes, sample_round_id):
+    _register(client, "취합파일.xlsx", sample_bytes, sample_round_id)
+    _register(client, "취합파일.xlsx", sample_bytes, f"{sample_round_id}-other")
+
+    client.delete(f"/api/v1/versions/{sample_round_id}")
+    other = client.get(f"/api/v1/versions/{sample_round_id}-other/history").json()["data"]
+    assert len(other) == 1

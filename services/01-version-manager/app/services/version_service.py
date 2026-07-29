@@ -166,6 +166,43 @@ def verify_round(session: Session, round_id: str) -> dict:
     return result
 
 
+def reset_round(session: Session, round_id: str) -> dict:
+    """회차에 등록된 버전·무결성 기록을 전부 지운다.
+
+    같은 회차를 다시 올려 처음부터 대조할 때 이전 이력이 섞이면 안 되므로
+    콘솔의 '이력 비우고 등록'이 이 경로를 쓴다. 감사 로그(07)는 건드리지 않는다
+    — 무엇이 올라왔다가 지워졌는지는 남아 있어야 한다.
+    """
+    versions = list(session.scalars(
+        select(Version).where(Version.round_id == round_id)
+    ).all())
+
+    removed_files = 0
+    for version in versions:
+        path = Path(version.file_path)
+        try:
+            if path.is_file():
+                path.unlink()
+                removed_files += 1
+        except OSError:
+            pass  # 파일이 잠겨 있어도 DB 이력은 지운다
+        session.delete(version)
+
+    checks = list(session.scalars(
+        select(IntegrityCheck).where(IntegrityCheck.round_id == round_id)
+    ).all())
+    for check in checks:
+        session.delete(check)
+
+    session.commit()
+    return {
+        "round_id": round_id,
+        "deleted_versions": len(versions),
+        "deleted_checks": len(checks),
+        "removed_files": removed_files,
+    }
+
+
 def get_history(session: Session, round_id: str) -> list[Version]:
     return list(session.scalars(
         select(Version).where(Version.round_id == round_id).order_by(Version.created_at.desc())

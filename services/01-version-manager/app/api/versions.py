@@ -46,13 +46,16 @@ async def register_batch(
     round_id: str = Form(...),
     actor: str = Form(...),
     kinds: str | None = Form(None),
+    reset: bool = Form(False),
     session: Session = Depends(get_session),
 ):
     """올린 파일들의 종류(마스터/팀배포본)를 파일명으로 자동 판별해 등록한다.
 
     kinds 를 콤마로 넘기면(예: `master,team_distribution:AI솔루션팀`) 자동 판별을
     덮어쓴다 — 파일명이 규칙을 안 따를 때 콘솔에서 손으로 고치는 경로다.
+    reset=true 면 이 회차의 기존 버전을 모두 지우고 올린 파일만 남긴다.
     """
+    cleared = svc.reset_round(session, round_id) if reset else None
     overrides = [k.strip() for k in kinds.split(",")] if kinds else []
     registered = []
     for index, upload in enumerate(files):
@@ -80,7 +83,13 @@ async def register_batch(
             "fingerprint": version.fingerprint,
             "applicant_count": version.applicant_count,
         })
-    return ok({"registered": registered, "count": len(registered)})
+    return ok({"registered": registered, "count": len(registered), "cleared": cleared})
+
+
+@router.delete("/{round_id}", summary="회차 등록 이력 비우기")
+def reset_round(round_id: str, session: Session = Depends(get_session)):
+    """같은 회차를 처음부터 다시 올릴 때 이전 버전이 남지 않게 한다."""
+    return ok(svc.reset_round(session, round_id))
 
 
 @router.post("/compare", summary="여러 버전 셀 대조 + 무결성 검사")
