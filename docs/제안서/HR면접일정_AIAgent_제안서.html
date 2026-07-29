@@ -1,0 +1,893 @@
+<meta charset="utf-8">
+<title>HR 면접일정 자동생성 AI Agent — 해커톤 결과 및 도입 제안</title>
+<style>
+  @page { size: A4 landscape; margin: 0; }
+  * { box-sizing: border-box; }
+  :root {
+    --lg: #A50034;          /* LG 톤 메인 */
+    --lg-soft: #FBEEF2;
+    --ink: #16181D;
+    --ink2: #4A4F5A;
+    --ink3: #878C97;
+    --line: #E3E5EA;
+    --bg: #F6F7F9;
+    --ok: #0E7C5A;
+  }
+  html, body { margin: 0; padding: 0; background: #4A4F5A; }
+  body {
+    font-family: "Pretendard", "Malgun Gothic", "맑은 고딕", -apple-system, sans-serif;
+    color: var(--ink); -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .page {
+    position: relative; width: 297mm; height: 210mm; padding: 15mm 18mm 13mm;
+    background: #fff; overflow: hidden; page-break-after: always; margin: 0 auto 8mm;
+  }
+  .page:last-child { page-break-after: auto; margin-bottom: 0; }
+  @media print { .page { margin: 0; box-shadow: none; } }
+
+  /* --- 머리말 / 꼬리말 --- */
+  .eyebrow { font-size: 8.5pt; letter-spacing: .14em; color: var(--ink3); font-weight: 600; }
+  .eyebrow b { color: var(--lg); font-weight: 700; }
+  h1.title { font-size: 25pt; line-height: 1.22; margin: 5mm 0 3mm; letter-spacing: -.02em; }
+  .lead { font-size: 10pt; color: var(--ink2); line-height: 1.6; max-width: 235mm; margin: 0 0 6mm; }
+  .foot {
+    position: absolute; left: 18mm; right: 18mm; bottom: 8mm;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 7.5pt; color: var(--ink3); border-top: 1px solid var(--line); padding-top: 2.5mm;
+  }
+  .foot .no { font-weight: 700; color: var(--ink2); letter-spacing: .08em; }
+
+  /* --- 카드 --- */
+  .grid { display: grid; gap: 5mm; }
+  .g2 { grid-template-columns: repeat(2, 1fr); }
+  .g3 { grid-template-columns: repeat(3, 1fr); }
+  .g4 { grid-template-columns: repeat(4, 1fr); }
+  .g5 { grid-template-columns: repeat(5, 1fr); }
+  .card {
+    border: 1px solid var(--line); border-radius: 3mm; padding: 5mm 5mm 4.5mm; background: #fff;
+  }
+  .card.fill { background: var(--bg); }
+  .card.accent { border-color: var(--lg); background: var(--lg-soft); }
+  .tag {
+    font-size: 7.5pt; letter-spacing: .1em; font-weight: 700; color: var(--lg);
+    display: block; margin-bottom: 2.5mm;
+  }
+  .tag.gray { color: var(--ink3); }
+  .card h3 { font-size: 11.5pt; margin: 0 0 2.5mm; line-height: 1.35; letter-spacing: -.01em; }
+  .card p { font-size: 8.8pt; color: var(--ink2); line-height: 1.62; margin: 0; }
+  .card p + p { margin-top: 2mm; }
+  .card .out {
+    margin-top: 3.5mm; padding-top: 2.5mm; border-top: 1px dashed var(--line);
+    font-size: 8.5pt; font-weight: 700; color: var(--lg);
+  }
+  ul.tight { margin: 0; padding-left: 4.5mm; font-size: 8.8pt; color: var(--ink2); line-height: 1.66; }
+  ul.tight li + li { margin-top: 1mm; }
+  ul.tight b { color: var(--ink); }
+
+  /* --- 수치 --- */
+  .num { font-size: 20pt; font-weight: 800; letter-spacing: -.03em; color: var(--lg); line-height: 1.1; }
+  .num small { font-size: 10pt; font-weight: 700; }
+  .numlabel { font-size: 8pt; color: var(--ink3); margin-top: 1.5mm; }
+
+  /* --- 표 --- */
+  table { width: 100%; border-collapse: collapse; font-size: 8.6pt; }
+  th, td { border-bottom: 1px solid var(--line); padding: 2.6mm 2.5mm; text-align: left; vertical-align: top; }
+  th { background: var(--bg); color: var(--ink2); font-size: 8pt; font-weight: 700; }
+  td.c, th.c { text-align: center; }
+  td b { color: var(--ink); }
+  .chk { color: var(--ok); font-weight: 800; }
+
+  /* --- 그림 --- */
+  figure { margin: 0; }
+  .shot {
+    border: 1px solid var(--line); border-radius: 2.5mm; overflow: hidden; background: var(--bg);
+  }
+  /* figs/ 는 git 에 없다(지원자 성명이 찍혀 있음). 이미지가 없으면 alt 가 자리표시자로 보인다. */
+  .shot img { display: block; width: 100%; object-fit: cover; object-position: top center;
+              font-size: 9pt; color: var(--ink3); }
+  figcaption { font-size: 7.8pt; color: var(--ink3); margin-top: 2mm; line-height: 1.5; }
+  figcaption b { color: var(--ink2); }
+
+  /* --- 흐름 --- */
+  .flow { display: flex; align-items: stretch; gap: 0; }
+  .flow .step { flex: 1; padding: 4mm 3.5mm; border: 1px solid var(--line); border-radius: 2.5mm; }
+  .flow .arw { display: flex; align-items: center; color: var(--ink3); padding: 0 2mm; font-size: 11pt; }
+  .step .n { font-size: 8pt; font-weight: 800; color: var(--lg); }
+  .step h4 { font-size: 9.6pt; margin: 1.5mm 0 1.5mm; line-height: 1.3; }
+  .step p { font-size: 8pt; color: var(--ink2); margin: 0; line-height: 1.5; }
+  .step .tool { font-size: 7.5pt; color: var(--ink3); margin-top: 2mm; }
+
+  .banner {
+    background: var(--bg); border-left: 3px solid var(--lg); border-radius: 0 2mm 2mm 0;
+    padding: 3.5mm 5mm; font-size: 8.8pt; color: var(--ink2); line-height: 1.6;
+  }
+  .banner b { color: var(--ink); }
+  .note { font-size: 7.6pt; color: var(--ink3); line-height: 1.55; }
+</style>
+
+<!-- ============================== 1 · 표지 ============================== -->
+<section class="page" style="padding:0; display:grid; grid-template-columns: 118mm 1fr;">
+  <div style="background:var(--lg); color:#fff; padding:20mm 14mm; display:flex; flex-direction:column; justify-content:space-between;">
+    <div>
+      <div style="font-size:8.5pt; letter-spacing:.18em; opacity:.85; font-weight:600;">PROPOSAL · 해커톤 결과 보고</div>
+      <div style="margin-top:14mm; font-size:9pt; line-height:2.1; opacity:.9;">
+        제안 대상<br><b style="font-size:12pt; opacity:1;">LG전자 HR · 채용팀</b>
+      </div>
+      <div style="margin-top:8mm; font-size:9pt; line-height:2.1; opacity:.9;">
+        과정<br><b style="font-size:11pt; opacity:1;">바이브코딩대학 AX 컨설턴트 양성과정</b>
+      </div>
+    </div>
+    <div style="font-size:8.5pt; line-height:2; opacity:.85;">
+      제출일 &nbsp;2026. 07. 30<br>
+      문서 버전 &nbsp;v1.0<br>
+      제안자 &nbsp;LG전자 박석우
+    </div>
+  </div>
+  <div style="padding:22mm 16mm; display:flex; flex-direction:column; justify-content:center;">
+    <div class="eyebrow">SOLUTION PROPOSAL / <b>HR 면접일정 자동생성 AI Agent</b></div>
+    <h1 class="title" style="font-size:31pt; margin-top:7mm;">
+      16~48시간의 수작업 배정을,<br>
+      <span style="color:var(--lg)">버튼 한 번</span>으로 끝냈습니다
+    </h1>
+    <p class="lead" style="font-size:10.5pt; margin-top:2mm;">
+      해커톤 과제로 제시된 HR 면접일정 편성 업무의 5단계 수작업 프로세스를
+      동작하는 시스템으로 구현한 결과와, 사내 Pilot 도입을 위한 추진 계획을 제안드립니다.
+    </p>
+    <div class="grid g3" style="margin-top:10mm;">
+      <div><div class="num">100<small>%</small></div><div class="numlabel">4대 배치 규칙 준수율 (실측)</div></div>
+      <div><div class="num">0<small>건</small></div><div class="numlabel">HARD 제약 위반</div></div>
+      <div><div class="num">787<small>개</small></div><div class="numlabel">자동 검증 시험 통과</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== 2 · 문제 재정의 ============================== -->
+<section class="page">
+  <div class="eyebrow">SECTION 01 · 우리의 이해 / <b>문제 재정의</b></div>
+  <h1 class="title">해커톤이 지목한 네 가지 병목</h1>
+  <p class="lead">
+    과제 정의서가 지적한 지연 · 오류 · 재작업 · 관리 문제는 결국 하나의 원인으로 모입니다 —
+    <b>업무의 상태가 엑셀 파일과 메일함에만 존재하고, 시스템 어디에도 남지 않는다는 것</b>입니다.
+  </p>
+
+  <div class="grid g4">
+    <div class="card">
+      <span class="tag">CH 01 · 지연</span>
+      <h3>조직 회신 대기</h3>
+      <p>각 조직의 면접 담당자 선별 회신이 늦어지면 전체 일정 확정이 함께 밀립니다. 누가 답했고 누가 안 했는지조차 메일함을 뒤져야 알 수 있습니다.</p>
+      <div class="out">→ 진행 상태가 보이지 않음</div>
+    </div>
+    <div class="card">
+      <span class="tag">CH 02 · 오류</span>
+      <h3>제약 위반 배정</h3>
+      <p>수작업 배정 중 같은 팀 동시간 중복, 학사·대학원 편중, 하루 8타임 초과 같은 고려사항 위반이 발생합니다. 사람이 눈으로 검산할 수밖에 없습니다.</p>
+      <div class="out">→ 규칙이 코드가 아닌 기억 속에</div>
+    </div>
+    <div class="card">
+      <span class="tag">CH 03 · 재작업</span>
+      <h3>전체 일정 재편성</h3>
+      <p>지원자 추가·취소나 조직 변경이 생기면 이미 짜 둔 일정 대부분을 처음부터 다시 만듭니다. 변경 한 건의 비용이 최초 편성과 같습니다.</p>
+      <div class="out">→ 부분 수정이 불가능한 구조</div>
+    </div>
+    <div class="card">
+      <span class="tag">CH 04 · 관리</span>
+      <h3>취합 혼선 · 속인화</h3>
+      <p>엑셀 취합 과정의 누락·버전 혼선이 잦고, 판단 기준이 담당자 경험에만 있어 인수인계가 어렵습니다.</p>
+      <div class="out">→ 담당자가 바뀌면 품질도 바뀜</div>
+    </div>
+  </div>
+
+  <div class="banner" style="margin-top:6mm;">
+    <b>OUR VIEW</b> &nbsp;— 네 가지는 각각의 문제가 아니라 한 가지 결핍의 네 가지 증상입니다.
+    <b>“이번 회차가 지금 어디까지 왔는가”를 시스템이 알고 있으면</b> 네 가지가 동시에 풀립니다.
+    그래서 우리는 일정 배정 알고리즘이 아니라 <b>회차의 상태를 끝까지 들고 가는 업무 흐름</b>부터 만들었습니다.
+  </div>
+
+  <div style="margin-top:6mm;">
+    <div class="eyebrow" style="margin-bottom:3.5mm;">CONTEXT / <b>현행 업무 규모 (과제 정의서 기준)</b></div>
+    <div class="grid g4">
+      <div class="card fill"><div class="num">주 1~2<small>회</small></div><div class="numlabel">면접 일정 편성 주기</div></div>
+      <div class="card fill"><div class="num">500<small>명 이상</small></div><div class="numlabel">1회 편성 대상 지원자</div></div>
+      <div class="card fill"><div class="num">16~48<small>시간</small></div><div class="numlabel">1회 편성에 드는 시간</div></div>
+      <div class="card fill"><div class="num">5<small>단계</small></div><div class="numlabel">엑셀·메일 수작업 프로세스</div></div>
+    </div>
+    <div class="note" style="margin-top:3mm;">
+      편성 주기가 짧고 대상 인원이 많을수록 위 네 가지 병목의 비용은 그대로 반복됩니다 — 한 회차를 줄이는 것이 아니라 <b>매주 반복되는 비용</b>을 줄이는 문제입니다.
+    </div>
+  </div>
+
+  <div class="foot"><span>HR 면접일정 자동생성 AI Agent · 해커톤 결과 및 도입 제안</span><span class="no">02</span></div>
+</section>
+
+<!-- ============================== 3 · 5단계 매핑 ============================== -->
+<section class="page">
+  <div class="eyebrow">SECTION 01 · 우리의 이해 / <b>수작업 5단계의 해체</b></div>
+  <h1 class="title">엑셀과 메일로 하던 5단계를, 그대로 화면 5개로</h1>
+  <p class="lead">
+    업무를 바꾸지 않았습니다. <b>담당자가 이미 하고 있는 5단계를 그 순서 그대로 화면에 옮기고</b>,
+    각 단계가 만들어 내던 엑셀과 메일을 시스템의 상태로 대체했습니다.
+  </p>
+
+  <div class="flow">
+    <div class="step">
+      <div class="n">현행 1</div><h4>지원자 엑셀 정리</h4>
+      <p>지원자 명단을 엑셀로 정리·가공</p><div class="tool">Excel</div>
+    </div>
+    <div class="arw">→</div>
+    <div class="step">
+      <div class="n">현행 2</div><h4>각 조직에 전달</h4>
+      <p>정리된 명단을 면접 조직에 배포</p><div class="tool">Email · 메신저</div>
+    </div>
+    <div class="arw">→</div>
+    <div class="step">
+      <div class="n">현행 3</div><h4>면접 담당자 선별</h4>
+      <p>조직이 면접 희망 담당자를 회신</p><div class="tool">조직 회신(Email)</div>
+    </div>
+    <div class="arw">→</div>
+    <div class="step">
+      <div class="n">현행 4</div><h4>희망자 취합</h4>
+      <p>조직별 희망자를 엑셀로 취합</p><div class="tool">Excel</div>
+    </div>
+    <div class="arw">→</div>
+    <div class="step">
+      <div class="n">현행 5</div><h4>면접 일정 분배</h4>
+      <p>고려사항 반영해 조·시간대 배정</p><div class="tool">Excel (수작업)</div>
+    </div>
+  </div>
+
+  <div style="text-align:center; color:var(--lg); font-size:14pt; margin:4mm 0 3mm;">▼</div>
+
+  <div class="flow">
+    <div class="step" style="border-color:var(--lg); background:var(--lg-soft);">
+      <div class="n">인사 1단계</div><h4>지원자 명단 받기</h4>
+      <p>여러 엑셀을 한 번에 올리면 같은 지원자의 값이 파일마다 다른 곳을 찾아 알려 주고, 고른 쪽이 확정 명단이 됩니다</p>
+    </div>
+    <div class="arw">→</div>
+    <div class="step" style="border-color:var(--lg); background:var(--lg-soft);">
+      <div class="n">인사 2·3단계</div><h4>팀별 명단 나누기 · 부서에 보내기</h4>
+      <p>팀별로 나누고 면접 차례까지 잡아 부서 화면으로 그대로 넘깁니다. 메일 첨부가 사라집니다</p>
+    </div>
+    <div class="arw">→</div>
+    <div class="step" style="border-color:var(--lg); background:var(--lg-soft);">
+      <div class="n">부서 1단계</div><h4>우리 팀 면접 담당자 정하기</h4>
+      <p>부서가 직접 담당자를 등록하고 이번 회차에 들어갈 사람과 가능한 시간대를 고릅니다</p>
+    </div>
+    <div class="arw">→</div>
+    <div class="step" style="border-color:var(--lg); background:var(--lg-soft);">
+      <div class="n">부서 2단계</div><h4>면접자 담당자 매칭</h4>
+      <p>받은 명단에서 면접 볼 사람을 고르고 담당자를 짝지으면 그 결과가 인사에게 즉시 돌아갑니다</p>
+    </div>
+    <div class="arw">→</div>
+    <div class="step" style="border-color:var(--lg); background:var(--lg-soft);">
+      <div class="n">인사 4단계</div><h4>면접 시간표 만들기</h4>
+      <p>4대 규칙을 지킨 시간표를 자동 생성합니다. 실측 <b>2.72ms</b></p>
+    </div>
+  </div>
+
+  <div class="banner" style="margin-top:6mm;">
+    <b>핵심</b> &nbsp;— 현행 2·3·4단계(전달 → 회신 → 취합)에 들어가던 메일 왕복과 엑셀 취합이
+    <b>부서가 직접 쓰는 화면 두 개</b>로 대체되었습니다. 인사 담당자는 “취합”하지 않고 <b>“확인”</b>만 합니다.
+  </div>
+
+  <div class="grid g3" style="margin-top:5mm;">
+    <div class="card fill">
+      <span class="tag gray">사라진 것 01</span>
+      <h3>취합용 엑셀 파일</h3>
+      <p>팀별 회신 파일을 모아 하나로 합치는 작업이 없어졌습니다. 부서가 화면에서 고른 순간이 곧 취합입니다.</p>
+    </div>
+    <div class="card fill">
+      <span class="tag gray">사라진 것 02</span>
+      <h3>메일 왕복과 독촉</h3>
+      <p>누가 답했고 누가 아직인지 회차 화면이 들고 있습니다. 독촉은 미회신 대상만 골라 다시 보냅니다.</p>
+    </div>
+    <div class="card fill">
+      <span class="tag gray">사라진 것 03</span>
+      <h3>눈으로 하는 검산</h3>
+      <p>고려사항 위반 여부를 사람이 확인하지 않습니다. 시간표를 만들 때마다 규칙 준수율이 함께 계산됩니다.</p>
+    </div>
+  </div>
+
+  <div class="foot"><span>HR 면접일정 자동생성 AI Agent · 해커톤 결과 및 도입 제안</span><span class="no">03</span></div>
+</section>
+
+<!-- ============================== 4 · 시스템 구조 ============================== -->
+<section class="page">
+  <div class="eyebrow">SECTION 02 · 구현 결과 / <b>시스템 구조</b></div>
+  <h1 class="title">3-Layer · 7개 서비스로 구현했습니다</h1>
+  <p class="lead">
+    화면 한 벌짜리 시제품이 아니라, 단계마다 책임을 나눈 <b>7개의 독립 서비스와 86개 REST 엔드포인트</b>로
+    구성했습니다. 각 서비스는 자기 데이터를 스스로 들고 있어 한 단계의 변경이 다른 단계를 깨뜨리지 않습니다.
+  </p>
+
+  <div class="grid g3" style="align-items:start;">
+    <div class="card fill">
+      <span class="tag">LAYER 01</span>
+      <h3>업무 화면 (콘솔)</h3>
+      <p style="margin-bottom:3mm;">역할별로 갈라 놓은 세 개의 입구 — 누구도 남의 화면을 볼 필요가 없습니다.</p>
+      <ul class="tight">
+        <li><b>인사 담당자</b> · 1~4단계</li>
+        <li><b>현업 부서(면접관)</b> · 1~2단계</li>
+        <li><b>시스템 관리자</b> · 상태·감사·KPI</li>
+      </ul>
+      <div class="out">→ 사용자는 자기 순서만 본다</div>
+    </div>
+    <div class="card fill">
+      <span class="tag">LAYER 02</span>
+      <h3>업무 서비스 7종</h3>
+      <ul class="tight">
+        <li><b>01 버전 관리</b> (8001) · 취합본 등록·대조·확정</li>
+        <li><b>02 배정</b> (8002) · 팀별 명단 분배안</li>
+        <li><b>03 회신 수집</b> (8003) · 요청·응답·독촉 주기</li>
+        <li><b>04 스케줄러</b> (8004) · 시간표 생성·검증</li>
+        <li><b>05 보정 엔진</b> (8005) · 노쇼·취소 부분 재편성</li>
+        <li><b>06 알림 허브</b> (8006) · 발송·채널·이력</li>
+        <li><b>07 감사·분석</b> (8007) · 타임라인·KPI·리스크</li>
+      </ul>
+    </div>
+    <div class="card accent">
+      <span class="tag">LAYER 03</span>
+      <h3>배치 엔진</h3>
+      <p style="margin-bottom:3mm;">알고리즘 3종을 갈아 끼울 수 있게 등록제로 구성하고, 세 알고리즘 모두에 같은 규칙 시험을 겁니다.</p>
+      <ul class="tight">
+        <li><b>v1</b> 면접관 우선 배치</li>
+        <li><b>v2·v4</b> 계층형 (조직 → 팀 → 개인)</li>
+        <li><b>v5</b> 통합형 — 현재 기본값</li>
+      </ul>
+      <div class="out">→ 규칙은 알고리즘 밖에 따로 있다</div>
+    </div>
+  </div>
+
+  <div class="grid g4" style="margin-top:6mm;">
+    <div class="card"><div class="num">7<small>개</small></div><div class="numlabel">독립 서비스 (8001~8007)</div></div>
+    <div class="card"><div class="num">86<small>개</small></div><div class="numlabel">REST 엔드포인트</div></div>
+    <div class="card"><div class="num">38,528<small>줄</small></div><div class="numlabel">파이썬 구현 코드</div></div>
+    <div class="card"><div class="num">91~97<small>%</small></div><div class="numlabel">서비스별 시험 커버리지</div></div>
+  </div>
+
+  <div class="foot"><span>HR 면접일정 자동생성 AI Agent · 해커톤 결과 및 도입 제안</span><span class="no">04</span></div>
+</section>
+
+<!-- ============================== 5 · 시안 1단계 ============================== -->
+<section class="page">
+  <div class="eyebrow">SECTION 02 · 구현 결과 / <b>시안 01 · 인사 1단계</b></div>
+  <h1 class="title">엑셀 다섯 개를 한 번에 올리고, 다른 값만 짚어 줍니다</h1>
+  <p class="lead">
+    현행 1단계(지원자 엑셀 정리)를 대체하는 화면입니다. 파일 종류(팀별 명단/취합본)를 시스템이 먼저 읽어 보여 주고,
+    담당자는 다르면 고치기만 하면 됩니다. 같은 지원자의 값이 파일마다 어긋난 곳은 <b>확정 전에</b> 드러납니다.
+  </p>
+
+  <div class="grid" style="grid-template-columns: 1fr 78mm; gap:6mm;">
+    <figure>
+      <div class="shot" style="height:120mm;"><img src="figs/fig1-step1-upload.png" alt="1단계 지원자 명단 받기"></div>
+      <figcaption><b>[Fig 1]</b> 인사 1단계 · 지원자 명단 받기 — 5개 팀 파일 동시 업로드, 파일 종류 자동 판별, 회차(R20260730-01) 단위 관리</figcaption>
+    </figure>
+    <div>
+      <div class="card" style="margin-bottom:4mm;">
+        <span class="tag">해결한 병목</span>
+        <h3>취합 혼선 · 버전 관리</h3>
+        <p>파일을 회차에 묶어 이력으로 남기고, 같은 회차에 먼저 올린 파일을 지우고 다시 올릴지도 화면에서 고릅니다.</p>
+      </div>
+      <div class="card">
+        <span class="tag gray">동작</span>
+        <ul class="tight">
+          <li>여러 엑셀 <b>동시 등록</b> — 팀별 명단 5종을 한 번에</li>
+          <li>파일 종류·팀 이름 <b>자동 판별</b> 후 담당자 확인</li>
+          <li>같은 지원자의 값이 <b>파일마다 다른 곳을 대조</b>해 표시</li>
+          <li>행 단위로 <b>어느 쪽을 쓸지 선택</b> → 확정 명단 생성</li>
+          <li>어긋난 값이 없으면 대조 결과가 <b>그대로 최종본</b></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot"><span>HR 면접일정 자동생성 AI Agent · 해커톤 결과 및 도입 제안</span><span class="no">05</span></div>
+</section>
+
+<!-- ============================== 6 · 시안 2단계 ============================== -->
+<section class="page">
+  <div class="eyebrow">SECTION 02 · 구현 결과 / <b>시안 02 · 인사 2단계</b></div>
+  <h1 class="title">팀별로 나누고, 면접 차례까지 미리 잡습니다</h1>
+  <p class="lead">
+    한 사람이 두 팀에 들어간 <b>중복면접자</b>는 이름을 누르면 그 사람이 들어간 팀 카드가 모두 함께 표시됩니다.
+    엑셀에서는 눈으로 찾아야 했던 것이 한 번의 클릭으로 드러납니다.
+  </p>
+
+  <div class="grid" style="grid-template-columns: 1fr 78mm; gap:6mm;">
+    <figure>
+      <div class="shot" style="height:120mm;"><img src="figs/fig2-step2-cards.png" alt="2단계 팀별 면접 순서 잡기"></div>
+      <figcaption><b>[Fig 2]</b> 인사 2단계 · 팀별 면접 순서 잡기 — 5개 팀 83명, 중복면접자 5명 표시, 학력 띠줄(박사·석사·학사)로 구분</figcaption>
+    </figure>
+    <div>
+      <div class="card accent" style="margin-bottom:4mm;">
+        <span class="tag">해결한 병목</span>
+        <h3>학력 편중 · 중복 검토 누락</h3>
+        <p>[면접 순서 잡기]를 누르면 <b>날짜마다 학력이 고르게 섞이도록</b> 차례를 정하고, 하루 안에서는 박사 → 석사 → 학사 순으로 같은 학력끼리 붙여 놓습니다.</p>
+      </div>
+      <div class="card">
+        <span class="tag gray">동작</span>
+        <ul class="tight">
+          <li>명단 출처를 <b>두 가지 중 선택</b> — 부서가 올린 팀별 명단 / 규칙으로 다시 계산한 배정</li>
+          <li>두 명단이 <b>어떻게 다른지</b> 화면에서 바로 대조</li>
+          <li>하루 <b>8타임</b>(30분 면접 + 5분 휴식) 기준으로 차례 배분</li>
+          <li>중복면접자 이름 클릭 → <b>관련 카드 동시 강조</b></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot"><span>HR 면접일정 자동생성 AI Agent · 해커톤 결과 및 도입 제안</span><span class="no">06</span></div>
+</section>
+
+<!-- ============================== 7 · 시안 3단계 ============================== -->
+<section class="page">
+  <div class="eyebrow">SECTION 02 · 구현 결과 / <b>시안 03 · 인사 3단계</b></div>
+  <h1 class="title">메일 왕복이 사라진 자리에 ‘상태’가 남습니다</h1>
+  <p class="lead">
+    현행 2·3·4단계(전달 → 회신 → 취합)를 대체합니다. 명단을 보내면 부서 화면의 ‘받은 명단’이 되고,
+    <b>어느 팀이 답했고 어느 팀이 아직인지</b> 카드 한 줄로 드러납니다. 메일함을 뒤질 일이 없습니다.
+  </p>
+
+  <div class="grid" style="grid-template-columns: 1fr 78mm; gap:6mm;">
+    <figure>
+      <div class="shot" style="height:120mm;"><img src="figs/fig3-step3-send.png" alt="3단계 부서에 명단 보내기"></div>
+      <figcaption><b>[Fig 3]</b> 인사 3단계 · 각 팀에 명단 보내기 / 가능한 시간 물어보기 — 팀별 회신 상태, 담당자 50명 일괄 요청, 회신 기한·시간 설정</figcaption>
+    </figure>
+    <div>
+      <div class="card" style="margin-bottom:4mm;">
+        <span class="tag">해결한 병목</span>
+        <h3>조직 회신 대기 (CH 01)</h3>
+        <p>“부서에서 16명 보내 옴”, “부서 회신 기다리는 중” — 진행 상태가 <b>회차 화면에 상시 표시</b>됩니다. 독촉은 대상만 골라 다시 보냅니다.</p>
+      </div>
+      <div class="card">
+        <span class="tag gray">동작</span>
+        <ul class="tight">
+          <li>5개 팀에 명단 <b>일괄 전달</b> — 2단계에서 잡은 면접 차례도 함께</li>
+          <li>팀별 <b>회신 상태 카드</b> (면접자 수 · 차례 유무 · 회신 시각)</li>
+          <li>담당자 <b>50명에게 가능한 시간 일괄 요청</b>, 기한·마감시간 지정</li>
+          <li>④ 누가 답했는지 보기 — 미회신자만 골라 재요청</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot"><span>HR 면접일정 자동생성 AI Agent · 해커톤 결과 및 도입 제안</span><span class="no">07</span></div>
+</section>
+
+<!-- ============================== 8 · 부서 화면 ============================== -->
+<section class="page">
+  <div class="eyebrow">SECTION 02 · 구현 결과 / <b>시안 04 · 현업 부서 화면</b></div>
+  <h1 class="title">부서는 두 화면만 씁니다 — 담당자 정하기, 그리고 짝 맞추기</h1>
+  <p class="lead">
+    현행 3·4단계(담당자 선별 회신 → 희망자 취합)가 부서가 직접 쓰는 화면 두 개로 바뀌었습니다.
+    부서가 고른 결과는 <b>취합 없이</b> 그대로 인사의 시간표 입력이 됩니다.
+  </p>
+
+  <div class="grid g2" style="gap:6mm;">
+    <figure>
+      <div class="shot" style="height:86mm;"><img src="figs/fig4-dept1-interviewers.png" alt="부서 1 우리 팀 면접 담당자 정하기"></div>
+      <figcaption><b>[Fig 4]</b> 부서 1 · 우리 팀 면접 담당자 정하기 — 직급·역할·하루 최대 인원, 가능 시간을 <b>오전만 / 오후만 / 오전·오후</b> 세 덩어리로만 받습니다</figcaption>
+    </figure>
+    <figure>
+      <div class="shot" style="height:86mm;"><img src="figs/fig5-dept2-matching.png" alt="부서 2 면접자 담당자 매칭"></div>
+      <figcaption><b>[Fig 5]</b> 부서 2 · 면접자 담당자 매칭 — 인사가 잡아 보낸 <b>면접 차례 번호</b>가 카드에 그대로 표시되고, [담당자 자동배치]는 한 사람이 연달아 보도록 묶어 나눕니다</figcaption>
+    </figure>
+  </div>
+
+  <div class="grid g3" style="margin-top:5mm;">
+    <div class="card fill">
+      <span class="tag gray">설계 판단 01</span>
+      <h3>시간은 두 덩어리로만</h3>
+      <p>현업이 시간을 한 칸씩 고르기는 번거롭습니다. 오전·오후 덩어리로 받고, 그 선택이 그대로 배치 제약이 됩니다.</p>
+    </div>
+    <div class="card fill">
+      <span class="tag gray">설계 판단 02</span>
+      <h3>연달아 보게 묶는다</h3>
+      <p>담당자 한 사람의 하루 일정이 흩어지지 않도록 <b>정원까지 채우고 다음 사람</b>으로 넘어갑니다 — Webex 입·퇴장 반복 최소화.</p>
+    </div>
+    <div class="card fill">
+      <span class="tag gray">설계 판단 03</span>
+      <h3>팀장은 적게</h3>
+      <p>직급·역할별로 하루 최대 인원을 다르게 둡니다(팀장 4명 · 실무 6명). 실제 운영 관행을 규칙으로 옮겼습니다.</p>
+    </div>
+  </div>
+
+  <div class="foot"><span>HR 면접일정 자동생성 AI Agent · 해커톤 결과 및 도입 제안</span><span class="no">08</span></div>
+</section>
+
+<!-- ============================== 9 · 시간표 ============================== -->
+<section class="page">
+  <div class="eyebrow">SECTION 02 · 구현 결과 / <b>시안 05 · 최종 산출물</b></div>
+  <h1 class="title">최종 산출물 — 두 가지 시선의 시간표</h1>
+  <p class="lead">
+    같은 배정 결과를 <b>담당자는 자기 하루로</b>, <b>인사는 팀 × 시간 전체로</b> 봅니다.
+    엑셀로 만들던 최종 산출물이 화면에서 즉시 생성되고, 그대로 내려받을 수 있습니다.
+  </p>
+
+  <div class="grid g2" style="gap:6mm;">
+    <figure>
+      <div class="shot" style="height:76mm;"><img src="figs/fig6-dept-daily.png" alt="담당자별 면접 일정"></div>
+      <figcaption><b>[Fig 6]</b> 부서 · 담당자별 면접 일정 — 30분 면접 + 5분 휴식 8타임, 한 담당자의 면접이 <b>연속으로 붙어</b> 있습니다</figcaption>
+    </figure>
+    <figure>
+      <div class="shot" style="height:76mm;"><img src="figs/fig7-hr-timetable.png" alt="인사 면접 시간표"></div>
+      <figcaption><b>[Fig 7]</b> 인사 4단계 · 면접 시간표 — 요일별 팀 × 시간(오전 09·10·11 / 오후 14·15·16), 지원자와 담당 면접관, 확정 표시(★)</figcaption>
+    </figure>
+  </div>
+
+  <div class="banner" style="margin-top:5mm;">
+    <b>실제 회차 기준</b> &nbsp;— 5개 팀 · 지원자 83명 · 팀 담당자 50명 규모의 회차(R20260730-01)에서
+    <b>83명 전원 배치(배치율 100%)</b>, <b>HARD 제약 위반 0건</b>으로 시간표가 생성되었습니다.
+  </div>
+
+  <div class="grid g3" style="margin-top:5mm;">
+    <div class="card fill">
+      <span class="tag gray">시간 구조</span>
+      <h3>하루 8타임 · 30분 + 5분</h3>
+      <p>면접 30분 + 휴식 5분으로 하루 8타임. 팀 시간표는 오전 09·10·11시, 오후 14·15·16시 여섯 칸입니다.</p>
+    </div>
+    <div class="card fill">
+      <span class="tag gray">확정</span>
+      <h3>확정하면 잠깁니다</h3>
+      <p>확정분은 ★로 표시되고 재생성에도 유지됩니다. 변경은 보정 엔진이 바뀐 부분만 다시 잡습니다.</p>
+    </div>
+    <div class="card fill">
+      <span class="tag gray">산출</span>
+      <h3>그대로 내려받기</h3>
+      <p>담당자별 일정과 팀 시간표를 파일로 내려받아 기존 안내 양식에 그대로 씁니다.</p>
+    </div>
+  </div>
+
+  <div class="foot"><span>HR 면접일정 자동생성 AI Agent · 해커톤 결과 및 도입 제안</span><span class="no">09</span></div>
+</section>
+
+<!-- ============================== 10 · 차별점 ============================== -->
+<section class="page">
+  <div class="eyebrow">SECTION 03 · 우리의 접근 방식 / <b>차별점</b></div>
+  <h1 class="title">일정 생성기와 이 시스템을 가르는 네 가지</h1>
+  <p class="lead">시중의 스케줄링 도구가 아니라, <b>HR 채용 업무의 흐름 자체</b>를 옮긴 결과입니다.</p>
+
+  <div class="grid g2" style="gap:5mm;">
+    <div class="card">
+      <span class="tag">DIFFERENTIATOR 01</span>
+      <h3>규칙을 알고리즘 밖에 두었습니다</h3>
+      <p>4대 배치 규칙을 HARD/SOFT로 분리해 공통 계약 파일에 선언하고, 알고리즘 세 개 모두에 <b>같은 규칙 시험</b>을 겁니다. 알고리즘을 바꿔도 규칙은 그대로 지켜집니다.</p>
+      <div class="out">→ 규칙이 담당자 기억이 아니라 코드에</div>
+    </div>
+    <div class="card">
+      <span class="tag">DIFFERENTIATOR 02</span>
+      <h3>화면이 번호를 짐작하지 않습니다</h3>
+      <p>화면이 배정안·시간표 번호를 세션이나 로그로 추측하면 “찾을 수 없습니다”가 납니다. <b>회차만 알면 서비스에 직접 묻는</b> 조회 경로를 서비스마다 열어 두었습니다.</p>
+      <div class="out">→ 화면과 데이터가 어긋나지 않음</div>
+    </div>
+    <div class="card">
+      <span class="tag">DIFFERENTIATOR 03</span>
+      <h3>업무 용어 그대로의 화면</h3>
+      <p>“배정안”, “스케줄 ID” 같은 시스템 용어 대신 <b>“팀별 명단 나누기”, “면접 볼 사람 고르기”</b>로 적었습니다. 교육 없이 첫 화면에서 쓸 수 있는 것이 목표였습니다.</p>
+      <div class="out">→ 인수인계 비용 자체를 없앰</div>
+    </div>
+    <div class="card">
+      <span class="tag">DIFFERENTIATOR 04</span>
+      <h3>동작으로 증명합니다</h3>
+      <p>시연용 시나리오가 아니라 <b>787개의 자동 시험</b>이 매 변경마다 돌아갑니다. 화면 12종 점검과 서비스별 커버리지 91~97%가 함께 유지됩니다.</p>
+      <div class="out">→ 다음 사람이 고쳐도 안 깨짐</div>
+    </div>
+  </div>
+
+  <div style="margin-top:6mm;">
+    <div class="eyebrow" style="margin-bottom:3mm;">EVIDENCE / <b>서비스별 자동 시험 현황</b></div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:16%">구분</th>
+          <th class="c">01 버전 관리</th><th class="c">02 배정</th><th class="c">03 회신 수집</th>
+          <th class="c">04 스케줄러</th><th class="c">05 보정 엔진</th><th class="c">06 알림 허브</th>
+          <th class="c">07 감사·분석</th><th class="c" style="width:9%">합계</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><b>시험 수</b></td>
+          <td class="c">44</td><td class="c">104</td><td class="c">176</td><td class="c">133</td>
+          <td class="c">82</td><td class="c">129</td><td class="c">119</td>
+          <td class="c"><b>787</b></td>
+        </tr>
+        <tr>
+          <td><b>코드 커버리지</b></td>
+          <td class="c">93%</td><td class="c">97%</td><td class="c">96%</td><td class="c">93%</td>
+          <td class="c">97%</td><td class="c">91%</td><td class="c">96%</td>
+          <td class="c"><b>91~97%</b></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="note" style="margin-top:2.5mm;">
+      위 시험과 별도로 업무 화면 12종에 대한 자동 점검이 함께 돌아갑니다 — 화면을 고친 뒤 실제로 열어 보지 않아도 깨진 곳이 드러납니다.
+    </div>
+  </div>
+
+  <div class="foot"><span>HR 면접일정 자동생성 AI Agent · 해커톤 결과 및 도입 제안</span><span class="no">10</span></div>
+</section>
+
+<!-- ============================== 11 · 검증 ============================== -->
+<section class="page">
+  <div class="eyebrow">SECTION 04 · 검증 / <b>고려사항 충족 근거</b></div>
+  <h1 class="title">과제가 요구한 고려사항 — 네 가지 모두 100%</h1>
+  <p class="lead">
+    과제 정의서의 배치 고려사항을 <b>4대 규칙</b>으로 코드화하고, 시간표를 만들 때마다 준수율을 계산해 응답에 함께 실어 보냅니다.
+    아래는 실제 회차에서 측정한 값입니다.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:30%">과제 정의서의 고려사항</th>
+        <th style="width:26%">구현한 규칙</th>
+        <th class="c" style="width:10%">강도</th>
+        <th style="width:22%">동작</th>
+        <th class="c" style="width:12%">실측 준수율</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>학사 / 석·박사 간 실력 편중이 발생하지 않도록 요일을 분산</td>
+        <td><b>RULE 1</b> 학력 요일 분산</td>
+        <td class="c">SOFT</td>
+        <td>날짜마다 학력 구성을 고르게 맞춘 뒤 하루 안에서는 같은 학력끼리 연속 배치</td>
+        <td class="c"><b class="chk">100.0%</b></td>
+      </tr>
+      <tr>
+        <td>같은 팀(담당)이 같은 시간대에 중복 배정되지 않도록 조정</td>
+        <td><b>RULE 2</b> 팀 동시간 중복 금지</td>
+        <td class="c"><b style="color:var(--lg)">HARD</b></td>
+        <td>위반 시 배치 자체를 거부 — 생성 결과에 위반 건수를 명시</td>
+        <td class="c"><b class="chk">100.0%</b></td>
+      </tr>
+      <tr>
+        <td>동일 팀은 세로로 연속 배치해 Webex 입·퇴장 반복 최소화</td>
+        <td><b>RULE 3</b> 세로 연속 배치</td>
+        <td class="c">SOFT</td>
+        <td>면접관이 이미 잡혀 있는 시간의 옆 칸을 우선 선택 — 하루 일정이 끊기지 않음</td>
+        <td class="c"><b class="chk">100.0%</b></td>
+      </tr>
+      <tr>
+        <td>오전·오후 첫 타임은 지각 위험을 고려해 수요 적은 조부터 배치</td>
+        <td><b>RULE 4</b> 첫 타임 소규모 조 우선</td>
+        <td class="c">SOFT</td>
+        <td>09시·14시 첫 칸을 인원이 적은 팀에 먼저 배정</td>
+        <td class="c"><b class="chk">100.0%</b></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="grid g4" style="margin-top:6mm;">
+    <div class="card accent"><div class="num">2.72<small>ms</small></div><div class="numlabel">88명 시간표 배정 연산 시간 (실측)</div></div>
+    <div class="card"><div class="num">100<small>%</small></div><div class="numlabel">배치율 — 88명 중 88명 배치</div></div>
+    <div class="card"><div class="num">0<small>건</small></div><div class="numlabel">HARD 제약 위반</div></div>
+    <div class="card"><div class="num">787<small>개</small></div><div class="numlabel">자동 시험 전건 통과</div></div>
+  </div>
+
+  <div class="note" style="margin-top:4mm;">
+    측정 조건 — 지원자 88명 · 면접관 20명, 알고리즘 v5(통합형), 배정 연산 시간은 서비스가 응답에 담아 보내는 elapsed_ms 값의 실측치입니다.
+    화면에서 [시간표 만들기]를 누른 뒤 결과가 표시되기까지의 왕복 시간은 약 1.0초입니다(이벤트 기록·감사 적재 포함).
+  </div>
+
+  <div class="foot"><span>HR 면접일정 자동생성 AI Agent · 해커톤 결과 및 도입 제안</span><span class="no">11</span></div>
+</section>
+
+<!-- ============================== 12 · 기대효과 ============================== -->
+<section class="page">
+  <div class="eyebrow">SECTION 05 · 기대 효과 / <b>KPI 대비</b></div>
+  <h1 class="title">과제가 제시한 판단 기준에 대한 답</h1>
+  <p class="lead">
+    과제 정의서의 KPI 네 가지에 대해 <b>지금 시점에 확인된 값</b>과 <b>Pilot에서 확정할 값</b>을 나누어 적었습니다.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:16%">판단 기준</th>
+        <th style="width:20%">과제가 제시한 목표</th>
+        <th style="width:34%">현재 확인된 값</th>
+        <th style="width:30%">Pilot에서 확정할 것</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><b>처리시간</b></td>
+        <td>90% 이상 단축</td>
+        <td>배정 연산 <b>2.72ms</b> · 화면 왕복 <b>약 1초</b>. 현행 1회 16~48시간 중 <b>‘일정 분배’ 단계</b>가 사실상 소멸</td>
+        <td>명단 정리·회신 대기를 포함한 <b>회차 전체 리드타임</b> 실측</td>
+      </tr>
+      <tr>
+        <td><b>제약 충족률</b></td>
+        <td>고려사항 100% 충족</td>
+        <td>4대 규칙 <b class="chk">각 100.0%</b> · 종합 <b class="chk">100.0%</b></td>
+        <td>실제 회차 데이터에서의 규칙 재검증 · 규칙 추가 여부</td>
+      </tr>
+      <tr>
+        <td><b>재작업 횟수</b></td>
+        <td>변경당 재편성 최소화</td>
+        <td>노쇼·취소를 <b>부분 보정</b>하는 05 보정 엔진과 확정 잠금 구현 완료</td>
+        <td>변경 1건당 재편성 범위(전체 대비 %) 측정</td>
+      </tr>
+      <tr>
+        <td><b>오류율 / 만족도</b></td>
+        <td>위반 0건 · 담당자 만족도 ↑</td>
+        <td>HARD 위반 <b>0건</b> · 자동 시험 <b>787개</b> 전건 통과</td>
+        <td>HR 간사·현업 면접관 대상 <b>사용성 피드백</b> 수집</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="grid g3" style="margin-top:6mm;">
+    <div class="card accent">
+      <span class="tag">VALUE 01 · CORE</span>
+      <h3>‘분배’가 판단에서 확인으로</h3>
+      <p>담당자가 하던 일이 <b>배정</b>에서 <b>검토</b>로 바뀝니다. 같은 인원으로 더 많은 회차를, 같은 품질로 처리할 수 있습니다.</p>
+    </div>
+    <div class="card">
+      <span class="tag">VALUE 02</span>
+      <h3>속인화 해소</h3>
+      <p>판단 기준이 규칙과 화면에 남아 담당자가 바뀌어도 결과가 같습니다. 인수인계 문서가 곧 시스템입니다.</p>
+    </div>
+    <div class="card">
+      <span class="tag">VALUE 03</span>
+      <h3>커뮤니케이션 비용 절감</h3>
+      <p>전달·회신·취합의 메일 왕복이 화면 상태로 대체됩니다. 인사는 독촉 대상만 골라 다시 보냅니다.</p>
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:5mm;">
+    <div class="card">
+      <span class="tag">VALUE 04</span>
+      <h3>변경 비용의 하향</h3>
+      <p>노쇼·취소·지원자 추가가 생겨도 전체를 다시 짜지 않고 <b>영향 범위만</b> 다시 잡습니다. 회차 중 변경이 잦을수록 효과가 커집니다.</p>
+    </div>
+    <div class="card">
+      <span class="tag">VALUE 05</span>
+      <h3>설명할 수 있는 배정</h3>
+      <p>“왜 이 사람이 이 시간인가”에 답할 수 있습니다. 배정 사유 태그와 감사 타임라인이 회차 단위로 남아 <b>사후 소명이 가능</b>합니다.</p>
+    </div>
+  </div>
+
+  <div class="foot"><span>HR 면접일정 자동생성 AI Agent · 해커톤 결과 및 도입 제안</span><span class="no">12</span></div>
+</section>
+
+<!-- ============================== 13 · 로드맵 ============================== -->
+<section class="page">
+  <div class="eyebrow">SECTION 06 · 확장 계획 / <b>로드맵</b></div>
+  <h1 class="title">해커톤 결과물 위에 쌓아 올리는 4단계</h1>
+  <p class="lead">
+    이번 구현은 <b>일정 편성</b>이라는 한 축을 끝까지 완성한 것입니다. 과제 정의서가 제시한 확장 에이전트들은
+    지금의 회차·명단·시간표 데이터를 그대로 재료로 씁니다.
+  </p>
+
+  <div class="grid g4" style="gap:5mm; align-items:start;">
+    <div class="card accent">
+      <span class="tag">PHASE 01 · 완료</span>
+      <h3>일정 편성 자동화</h3>
+      <ul class="tight">
+        <li>인사 4단계 · 부서 2단계 화면</li>
+        <li>7개 서비스 · 배치 엔진 3종</li>
+        <li>4대 규칙 검증 · 감사 기록</li>
+        <li>787개 자동 시험</li>
+      </ul>
+      <div class="out">→ 해커톤 산출물</div>
+    </div>
+    <div class="card">
+      <span class="tag gray">PHASE 02 · Pilot</span>
+      <h3>실데이터 운영 검증</h3>
+      <ul class="tight">
+        <li>실제 채용 회차 1건 적용</li>
+        <li>사내 계정·권한 체계 연동</li>
+        <li>메일·메신저 실발송 연결</li>
+        <li>리드타임·만족도 측정</li>
+      </ul>
+      <div class="out">→ 도입 판단 근거 확보</div>
+    </div>
+    <div class="card">
+      <span class="tag gray">PHASE 03 · 확장</span>
+      <h3>지원자 대면 자동화</h3>
+      <ul class="tight">
+        <li>지원자 안내·리마인더</li>
+        <li>Webex 링크 발송</li>
+        <li>리스케줄 요청 처리</li>
+        <li>노쇼 대응 (05 엔진 활용)</li>
+      </ul>
+      <div class="out">→ 확정 이후 구간까지</div>
+    </div>
+    <div class="card">
+      <span class="tag gray">PHASE 04 · 고도화</span>
+      <h3>면접 품질 에이전트</h3>
+      <ul class="tight">
+        <li>면접위원 매칭 추천</li>
+        <li>JD·이력서 기반 질문 생성</li>
+        <li>평가 표준화·편향 탐지</li>
+        <li>채용 현황 대시보드</li>
+      </ul>
+      <div class="out">→ 채용 전 과정으로</div>
+    </div>
+  </div>
+
+  <div class="banner" style="margin-top:6mm;">
+    각 단계는 앞 단계의 데이터 위에 누적됩니다 — <b>PHASE 01이 만들어 둔 회차·명단·시간표·감사 기록이
+    이후 모든 에이전트의 입력</b>이 되므로, 확장할수록 새로 만들 것은 줄어듭니다.
+  </div>
+
+  <div class="grid g4" style="margin-top:5mm;">
+    <div class="card fill">
+      <span class="tag gray">재사용 자산 01</span>
+      <h3>회차와 확정 명단</h3>
+      <p>지원자·조직·담당자가 회차 단위로 묶여 있습니다. 어느 확장 에이전트든 “누가 이번 회차에 있는가”를 다시 만들 필요가 없습니다.</p>
+    </div>
+    <div class="card fill">
+      <span class="tag gray">재사용 자산 02</span>
+      <h3>시간표와 배정 사유</h3>
+      <p>확정된 시간·면접관·지원자에 사유 태그가 붙어 있어 안내문 발송과 리스케줄 판단에 그대로 씁니다.</p>
+    </div>
+    <div class="card fill">
+      <span class="tag gray">재사용 자산 03</span>
+      <h3>알림 허브</h3>
+      <p>발송 채널·템플릿·이력 구조가 이미 있습니다. 사내 메일·메신저를 붙이는 것만 남습니다.</p>
+    </div>
+    <div class="card fill">
+      <span class="tag gray">재사용 자산 04</span>
+      <h3>감사 타임라인</h3>
+      <p>회차에서 일어난 일이 시간순으로 남습니다. 대시보드와 지표는 이 기록 위에서 계산됩니다.</p>
+    </div>
+  </div>
+
+  <div class="foot"><span>HR 면접일정 자동생성 AI Agent · 해커톤 결과 및 도입 제안</span><span class="no">13</span></div>
+</section>
+
+<!-- ============================== 14 · 다음 단계 ============================== -->
+<section class="page">
+  <div class="eyebrow">SECTION 07 · 다음 단계 / <b>결정 요청</b></div>
+  <h1 class="title">함께 결정해 주실 세 가지</h1>
+  <p class="lead">아래 세 가지가 정해지면 Pilot을 바로 시작할 수 있습니다.</p>
+
+  <div class="grid g3" style="gap:5mm;">
+    <div class="card">
+      <span class="tag">DECISION 01</span>
+      <h3>Pilot 대상 회차 선정</h3>
+      <p>실제 채용 회차 1건을 정해 주시면 그 회차의 명단·조직 구성으로 전 과정을 태워 봅니다. 지원자 100명 내외 규모를 권해 드립니다.</p>
+      <div class="out">희망 시한 · 2주 내</div>
+    </div>
+    <div class="card">
+      <span class="tag">DECISION 02</span>
+      <h3>개인정보 취급 범위</h3>
+      <p>지원자 성명·생년월일 등이 포함된 명단의 <b>보관 위치와 익명화 수준</b>을 사내 정책에 맞춰 정합니다. 현재는 개인정보 파일을 저장소 밖에 두고 있습니다.</p>
+      <div class="out">희망 시한 · 착수 전</div>
+    </div>
+    <div class="card">
+      <span class="tag">DECISION 03</span>
+      <h3>발송 채널 연동</h3>
+      <p>현재 알림은 시스템 안에서만 흐릅니다. 사내 메일·메신저 중 <b>어느 채널로 실제 발송</b>할지 정하면 연동합니다.</p>
+      <div class="out">희망 시한 · 착수 전</div>
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:6mm; gap:5mm;">
+    <div class="card fill">
+      <span class="tag">OUR COMMITMENT</span>
+      <p style="font-size:9.5pt;">
+        결정이 확정되면 <b>당일 회차 데이터 반입부터 시작</b>합니다.
+        시스템은 이미 동작하는 상태이므로 Pilot은 0에서 시작하지 않으며,
+        <b>실데이터로 규칙을 보정하는 단계</b>에 집중합니다.
+      </p>
+      <p style="font-size:9.5pt;">
+        중간 산출물과 측정 지표는 회차 진행에 맞춰 그때그때 공유드립니다.
+      </p>
+    </div>
+    <div class="card">
+      <span class="tag gray">CONTACT</span>
+      <table style="font-size:9pt;">
+        <tr><td style="width:28%; color:var(--ink3); border:none; padding-left:0;">제안자</td><td style="border:none;"><b>LG전자 박석우</b></td></tr>
+        <tr><td style="color:var(--ink3); border:none; padding-left:0;">과정</td><td style="border:none;">바이브코딩대학 AX 컨설턴트 양성과정</td></tr>
+        <tr><td style="color:var(--ink3); border:none; padding-left:0;">산출물</td><td style="border:none;">HR 면접일정 자동생성 AI Agent (7개 서비스 · 콘솔)</td></tr>
+        <tr><td style="color:var(--ink3); border:none; padding-left:0;">문서 버전</td><td style="border:none;">v1.0 · 2026. 07. 30</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="foot"><span>HR 면접일정 자동생성 AI Agent · 해커톤 결과 및 도입 제안</span><span class="no">14</span></div>
+</section>
