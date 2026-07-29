@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>면접 가능 시간 회신 · {{ invitee.name }}님</title>
+<style>
+  /* 외부 CDN 없이 인라인 — 폼 로딩 1초 이내 보장 */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 64px;
+    font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", "맑은 고딕", sans-serif;
+    background: #f4f5f7; color: #1c1e21; line-height: 1.5;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  .card {
+    background: #fff; border-radius: 12px; padding: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.12); margin-bottom: 16px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #6b7280; font-size: 14px; margin: 0 0 16px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; color: #4b5563; }
+  .meta b { color: #1c1e21; font-weight: 600; }
+  label { display: block; font-size: 14px; font-weight: 600; margin: 16px 0 6px; }
+  .hint { font-weight: 400; color: #6b7280; font-size: 12px; }
+  input[type=text], input[type=number], input[type=email], textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid #d1d5db;
+    border-radius: 8px; font-size: 14px; font-family: inherit; background: #fff;
+  }
+  textarea { min-height: 72px; resize: vertical; }
+  input:focus, textarea:focus { outline: 2px solid #2563eb; outline-offset: -1px; border-color: #2563eb; }
+
+  /* 요일 × 시간 슬롯 그리드 */
+  table.grid { width: 100%; border-collapse: separate; border-spacing: 6px; margin-top: 8px; }
+  table.grid th {
+    font-size: 13px; font-weight: 600; color: #4b5563; padding: 4px;
+  }
+  table.grid th.rowhead { text-align: right; width: 64px; white-space: nowrap; }
+  .slot {
+    display: block; width: 100%; padding: 12px 4px; border: 1px solid #d1d5db;
+    border-radius: 8px; background: #fff; cursor: pointer; font-size: 13px;
+    color: #6b7280; user-select: none; transition: background .1s, border-color .1s;
+  }
+  .slot:hover { border-color: #2563eb; }
+  .slot[aria-pressed="true"] { background: #2563eb; border-color: #2563eb; color: #fff; font-weight: 600; }
+  .gridbar { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .btn-mini {
+    padding: 6px 12px; border: 1px solid #d1d5db; background: #fff;
+    border-radius: 6px; font-size: 13px; cursor: pointer;
+  }
+  #count { font-size: 13px; color: #4b5563; margin-left: auto; }
+
+  button.submit {
+    width: 100%; padding: 14px; font-size: 16px; font-weight: 700; color: #fff;
+    background: #2563eb; border: 0; border-radius: 10px; cursor: pointer; margin-top: 20px;
+  }
+  button.submit:disabled { background: #9ca3af; cursor: not-allowed; }
+  .msg { padding: 12px 14px; border-radius: 8px; font-size: 14px; margin-top: 14px; display: none; }
+  .msg.err { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; display: block; }
+  .msg.okmsg { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; display: block; }
+  .banner { padding: 14px; border-radius: 8px; font-size: 14px; margin-bottom: 16px; }
+  .banner.done { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+  .banner.closed { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>면접 가능 시간 회신</h1>
+    <p class="sub">{{ invitee.name }}님 · {{ invitee.team }}{% if invitee.org %} · {{ invitee.org }}{% endif %}</p>
+    <div class="meta">
+      <span>회차 <b>{{ req.round_id }}</b></span>
+      <span>회신 마감 <b>{{ req.deadline.strftime('%Y-%m-%d %H:%M') }} UTC</b></span>
+    </div>
+  </div>
+
+  {% if closed %}
+    <div class="banner closed">이 요청은 마감되었습니다. 변경이 필요하면 HR 담당자에게 문의해 주세요.</div>
+  {% elif already_submitted %}
+    <div class="banner done">이미 응답을 제출하셨습니다. 아래는 제출하신 내용입니다.</div>
+  {% endif %}
+
+  <form id="respform" class="card" novalidate>
+    <label for="job_role">담당 직무 <span class="hint">(필수)</span></label>
+    <input type="text" id="job_role" name="job_role" maxlength="64" placeholder="예: 배터리 소재 연구"
+           value="{{ submitted_payload.job_role if submitted_payload else '' }}" required>
+
+    <label>가능한 시간대 <span class="hint">(필수 · 칸을 클릭해 토글, 요일 {{ days|length }} × 시간대 {{ hours|length }})</span></label>
+    <table class="grid" id="slotgrid">
+      <thead>
+        <tr>
+          <th class="rowhead"></th>
+          {% for d in days %}<th scope="col">{{ d }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for h in hours %}
+        <tr>
+          <th class="rowhead" scope="row">{{ h }}</th>
+          {% for d in days %}
+          <td>
+            <button type="button" class="slot" data-day="{{ d }}" data-hour="{{ h }}"
+                    aria-pressed="false" aria-label="{{ d }}요일 {{ h }}">{{ d }} {{ h }}</button>
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="gridbar">
+      <button type="button" class="btn-mini" id="selall">전체 선택</button>
+      <button type="button" class="btn-mini" id="clearall">전체 해제</button>
+      <span id="count">선택 0칸</span>
+    </div>
+
+    <label for="max_daily">하루 최대 면접 횟수 <span class="hint">(1~{{ max_slots }})</span></label>
+    <input type="number" id="max_daily" name="max_daily" min="1" max="{{ max_slots }}"
+           value="{{ submitted_payload.max_daily if submitted_payload else 6 }}">
+
+    <label for="backup_contact">백업 담당자 이메일 <span class="hint">(선택)</span></label>
+    <input type="email" id="backup_contact" name="backup_contact" placeholder="backup@company.com"
+           value="{{ submitted_payload.backup_contact or '' if submitted_payload else '' }}">
+
+    <label for="notes">특이사항 <span class="hint">(선택)</span></label>
+    <textarea id="notes" name="notes" maxlength="500" placeholder="예: 8/5 오전 학회 발표">{{ submitted_payload.notes or '' if submitted_payload else '' }}</textarea>
+
+    <button type="submit" class="submit" id="submitbtn">제출하기</button>
+    <div class="msg" id="msg" role="status"></div>
+  </form>
+</div>
+
+<script>
+(function () {
+  var TOKEN = {{ token|tojson }};
+  var LOCKED = {{ (already_submitted or closed)|tojson }};
+  var PRESELECTED = {{ (submitted_payload.available_slots if submitted_payload else [])|tojson }};
+
+  var grid = document.getElementById('slotgrid');
+  var slots = Array.prototype.slice.call(grid.querySelectorAll('.slot'));
+  var countEl = document.getElementById('count');
+  var msg = document.getElementById('msg');
+  var btn = document.getElementById('submitbtn');
+  var form = document.getElementById('respform');
+
+  function key(d, h) { return d + '|' + h; }
+  var preset = {};
+  PRESELECTED.forEach(function (s) { preset[key(s.day, s.hour)] = true; });
+
+  function selected() {
+    return slots.filter(function (s) { return s.getAttribute('aria-pressed') === 'true'; })
+                .map(function (s) { return { day: s.dataset.day, hour: s.dataset.hour }; });
+  }
+  function refresh() { countEl.textContent = '선택 ' + selected().length + '칸'; }
+  function setPressed(el, on) { el.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+
+  slots.forEach(function (s) {
+    if (preset[key(s.dataset.day, s.dataset.hour)]) setPressed(s, true);
+    s.addEventListener('click', function () {
+      if (LOCKED) return;
+      setPressed(s, s.getAttribute('aria-pressed') !== 'true');
+      refresh();
+    });
+  });
+  document.getElementById('selall').addEventListener('click', function () {
+    if (LOCKED) return;
+    slots.forEach(function (s) { setPressed(s, true); }); refresh();
+  });
+  document.getElementById('clearall').addEventListener('click', function () {
+    if (LOCKED) return;
+    slots.forEach(function (s) { setPressed(s, false); }); refresh();
+  });
+  refresh();
+
+  function show(text, cls) { msg.textContent = text; msg.className = 'msg ' + cls; }
+
+  if (LOCKED) {
+    btn.disabled = true;
+    btn.textContent = '{{ "마감됨" if closed else "제출 완료" }}';
+    form.querySelectorAll('input, textarea, .btn-mini').forEach(function (el) { el.disabled = true; });
+  }
+
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    if (LOCKED) return;
+
+    var picked = selected();
+    var role = document.getElementById('job_role').value.trim();
+    if (!role) { show('담당 직무를 입력해 주세요.', 'err'); return; }
+    if (picked.length === 0) { show('가능한 시간대를 1칸 이상 선택해 주세요.', 'err'); return; }
+
+    var backup = document.getElementById('backup_contact').value.trim();
+    var notes = document.getElementById('notes').value.trim();
+    var body = {
+      job_role: role,
+      available_slots: picked,
+      max_daily: parseInt(document.getElementById('max_daily').value, 10) || null,
+      backup_contact: backup || null,
+      notes: notes || null
+    };
+
+    btn.disabled = true;
+    btn.textContent = '제출 중…';
+    fetch('/form/' + encodeURIComponent(TOKEN) + '/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      return res.json().then(function (json) { return { ok: res.ok, json: json }; });
+    }).then(function (r) {
+      if (r.ok && r.json.data) {
+        show('제출이 완료되었습니다. 감사합니다! (' + r.json.data.slot_count + '칸 접수)', 'okmsg');
+        btn.textContent = '제출 완료';
+      } else {
+        var e = (r.json && r.json.error) || {};
+        show('제출 실패: ' + (e.message || '알 수 없는 오류'), 'err');
+        btn.disabled = false;
+        btn.textContent = '다시 제출하기';
+      }
+    }).catch(function () {
+      show('네트워크 오류로 제출하지 못했습니다. 잠시 후 다시 시도해 주세요.', 'err');
+      btn.disabled = false;
+      btn.textContent = '다시 제출하기';
+    });
+  });
+})();
+</script>
+</body>
+</html>

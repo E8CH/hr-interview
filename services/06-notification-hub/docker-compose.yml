@@ -1,0 +1,55 @@
+# 공통 계약 §11.4 — `docker-compose up` 하나로 로컬 실행
+#
+# 주의: PoC(해커톤) 기본 경로는 Docker 없이 uvicorn 직접 실행이다.
+#       이 파일은 프로덕션에 가까운 구성(PostgreSQL + Redis)을 검증할 때 쓴다.
+services:
+  notification-hub:
+    build: .
+    ports:
+      - "8006:8006"
+    environment:
+      SERVICE_PORT: "8006"
+      DATABASE_URL: postgresql://hruser:hrpass@postgres:5432/notif_db
+      REDIS_URL: redis://redis:6379/0
+      USE_MOCK: "true"          # 실제 발송을 원하면 false + SMTP 자격증명 주입
+      STORAGE_DIR: /app/storage
+      BASE_URL: http://localhost:8006
+      AUTH_ENABLED: "false"
+      LOG_LEVEL: INFO
+    volumes:
+      - notif_storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8006/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: hruser
+      POSTGRES_PASSWORD: hrpass
+      POSTGRES_DB: notif_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - notif_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hruser -d notif_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  notif_pgdata:
+  notif_storage:

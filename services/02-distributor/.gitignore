@@ -1,0 +1,5 @@
+# 엑셀 내보내기 산출물 (런타임 생성)
+storage/
+
+# PoC SQLite 파일
+dist_db.sqlite

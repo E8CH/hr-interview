@@ -1,0 +1,9 @@
+*.sqlite
+*.sqlite3
+storage/
+.coverage
+htmlcov/
+.pytest_cache/
+__pycache__/
+*.pyc
+.venv/

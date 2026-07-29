@@ -1,0 +1,7 @@
+*.sqlite
+*.sqlite-journal
+storage/
+.coverage
+.pytest_cache/
+__pycache__/
+*.pyc

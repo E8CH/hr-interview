@@ -1,0 +1,317 @@
+{
+  "version-manager": {
+    "port": 8001,
+    "status": "up",
+    "title": "Version Manager",
+    "paths": {
+      "/api/v1/versions/register": [
+        "POST"
+      ],
+      "/api/v1/versions/diff": [
+        "GET"
+      ],
+      "/api/v1/versions/{round_id}": [
+        "GET"
+      ],
+      "/api/v1/versions/verify/{round_id}": [
+        "POST"
+      ],
+      "/api/v1/versions/{round_id}/history": [
+        "GET"
+      ],
+      "/api/v1/versions/rollback": [
+        "POST"
+      ],
+      "/healthz": [
+        "GET"
+      ],
+      "/metrics": [
+        "GET"
+      ],
+      "/": [
+        "GET"
+      ]
+    }
+  },
+  "distributor": {
+    "port": 8002,
+    "status": "up",
+    "title": "Distributor",
+    "paths": {
+      "/api/v1/distribute/plan": [
+        "POST"
+      ],
+      "/api/v1/distribute/{plan_id}": [
+        "GET"
+      ],
+      "/api/v1/distribute/{plan_id}/approve": [
+        "POST"
+      ],
+      "/api/v1/distribute/{plan_id}/adjust": [
+        "POST"
+      ],
+      "/api/v1/distribute/{plan_id}/reject": [
+        "POST"
+      ],
+      "/api/v1/profiles": [
+        "GET"
+      ],
+      "/api/v1/profiles/{team_name}": [
+        "GET",
+        "PUT"
+      ],
+      "/api/v1/distribute/{plan_id}/export/{team_name}": [
+        "GET"
+      ],
+      "/healthz": [
+        "GET"
+      ],
+      "/metrics": [
+        "GET"
+      ],
+      "/": [
+        "GET"
+      ]
+    }
+  },
+  "response-collector": {
+    "port": 8003,
+    "status": "up",
+    "title": "Response Collector",
+    "paths": {
+      "/api/v1/requests": [
+        "POST"
+      ],
+      "/api/v1/requests/{request_id}": [
+        "GET"
+      ],
+      "/api/v1/requests/{request_id}/close": [
+        "POST"
+      ],
+      "/api/v1/responses/{round_id}": [
+        "GET"
+      ],
+      "/api/v1/patterns/organizations": [
+        "GET"
+      ],
+      "/api/v1/patterns/organizations/{org}": [
+        "GET"
+      ],
+      "/api/v1/reminders/trigger": [
+        "POST"
+      ],
+      "/api/v1/reminders/run-cycle": [
+        "POST"
+      ],
+      "/api/v1/reminders/rules": [
+        "GET"
+      ],
+      "/api/v1/reminders/schedule/{invitee_id}": [
+        "GET"
+      ],
+      "/form/{token}": [
+        "GET"
+      ],
+      "/form/{token}/submit": [
+        "POST"
+      ],
+      "/healthz": [
+        "GET"
+      ],
+      "/": [
+        "GET"
+      ],
+      "/metrics": [
+        "GET"
+      ]
+    }
+  },
+  "scheduler": {
+    "port": 8004,
+    "status": "up",
+    "title": "Scheduler",
+    "paths": {
+      "/api/v1/schedules/generate": [
+        "POST"
+      ],
+      "/api/v1/schedules/{schedule_id}": [
+        "GET"
+      ],
+      "/api/v1/schedules/{schedule_id}/heatmap": [
+        "GET"
+      ],
+      "/api/v1/schedules/{schedule_id}/by-team": [
+        "GET"
+      ],
+      "/api/v1/schedules/{schedule_id}/validate": [
+        "POST"
+      ],
+      "/api/v1/schedules/{schedule_id}/lock": [
+        "POST"
+      ],
+      "/api/v1/schedules/{schedule_id}/rules": [
+        "GET"
+      ],
+      "/api/v1/interviewers": [
+        "GET",
+        "POST"
+      ],
+      "/api/v1/interviewers/{interviewer_id}": [
+        "GET",
+        "PUT"
+      ],
+      "/healthz": [
+        "GET"
+      ],
+      "/metrics": [
+        "GET"
+      ],
+      "/": [
+        "GET"
+      ],
+      "/api/v1/rounds/{round_id}/readiness": [
+        "GET"
+      ]
+    }
+  },
+  "repair-engine": {
+    "port": 8005,
+    "status": "up",
+    "title": "Repair Engine",
+    "paths": {
+      "/api/v1/repair/noshow": [
+        "POST"
+      ],
+      "/api/v1/repair/cancel": [
+        "POST"
+      ],
+      "/api/v1/repair/plans/{event_id}": [
+        "GET"
+      ],
+      "/api/v1/repair/plans/{event_id}/select": [
+        "POST"
+      ],
+      "/api/v1/repair/locks/{schedule_id}": [
+        "GET"
+      ],
+      "/api/v1/repair/locks/upgrade": [
+        "POST"
+      ],
+      "/api/v1/repair/audit/{round_id}": [
+        "GET"
+      ],
+      "/healthz": [
+        "GET"
+      ],
+      "/metrics": [
+        "GET"
+      ],
+      "/": [
+        "GET"
+      ]
+    }
+  },
+  "notification-hub": {
+    "port": 8006,
+    "status": "up",
+    "title": "Notification Hub",
+    "paths": {
+      "/api/v1/notify/send": [
+        "POST"
+      ],
+      "/api/v1/notify/broadcast": [
+        "POST"
+      ],
+      "/api/v1/notify/history": [
+        "GET"
+      ],
+      "/api/v1/notify/history/{recipient}": [
+        "GET"
+      ],
+      "/api/v1/notify/dead-letters": [
+        "GET"
+      ],
+      "/api/v1/notify/process": [
+        "POST"
+      ],
+      "/api/v1/notify/templates": [
+        "GET"
+      ],
+      "/api/v1/notify/templates/{template_id}": [
+        "GET",
+        "PUT"
+      ],
+      "/api/v1/notify/templates/{template_id}/preview": [
+        "POST"
+      ],
+      "/api/v1/notify/channels": [
+        "GET",
+        "POST"
+      ],
+      "/api/v1/notify/channels/{channel_id}/toggle": [
+        "PUT"
+      ],
+      "/api/v1/notify/track/open/{notification_id}.png": [
+        "GET"
+      ],
+      "/api/v1/notify/events": [
+        "GET"
+      ],
+      "/api/v1/notify/events/inbound": [
+        "POST"
+      ],
+      "/healthz": [
+        "GET"
+      ],
+      "/": [
+        "GET"
+      ],
+      "/metrics": [
+        "GET"
+      ]
+    }
+  },
+  "audit-analytics": {
+    "port": 8007,
+    "status": "up",
+    "title": "Audit & Analytics",
+    "paths": {
+      "/api/v1/dashboard/kpi": [
+        "GET"
+      ],
+      "/api/v1/dashboard/organizations": [
+        "GET"
+      ],
+      "/api/v1/dashboard/risks": [
+        "GET"
+      ],
+      "/api/v1/reports/rounds/{round_id}": [
+        "GET"
+      ],
+      "/api/v1/reports/before-after": [
+        "GET"
+      ],
+      "/api/v1/audit/timeline": [
+        "GET"
+      ],
+      "/api/v1/audit/query": [
+        "POST"
+      ],
+      "/api/v1/audit/events": [
+        "POST"
+      ],
+      "/api/v1/audit/events/stats": [
+        "GET"
+      ],
+      "/healthz": [
+        "GET"
+      ],
+      "/metrics": [
+        "GET"
+      ],
+      "/": [
+        "GET"
+      ]
+    }
+  }
+}

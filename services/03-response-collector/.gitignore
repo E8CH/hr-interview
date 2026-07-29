@@ -1,0 +1,13 @@
+# 런타임 산출물 (PoC 로컬 모드)
+resp_db.sqlite
+resp_db.sqlite-journal
+storage/
+
+# 환경 · 캐시
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/

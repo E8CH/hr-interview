@@ -1,0 +1,5 @@
+# 런타임 생성물
+storage/
+*.sqlite
+.coverage
+htmlcov/

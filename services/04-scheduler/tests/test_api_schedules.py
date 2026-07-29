@@ -1,0 +1,223 @@
+"""시간표 API 통합 테스트 — 명세 완료 판정 체크리스트"""
+from __future__ import annotations
+
+import time
+
+import pytest
+
+from app.infrastructure.contracts import DAYS, HOURS
+
+
+def _generate(client, algorithm="v5", round_id="R2026-Q3-01", plan_id="plan-api"):
+    return client.post(
+        "/api/v1/schedules/generate",
+        json={"round_id": round_id, "plan_id": plan_id, "algorithm": algorithm},
+    )
+
+
+# --------------------------------------------------------------------------
+# 완료 판정 체크리스트
+# --------------------------------------------------------------------------
+def test_generate_responds_within_3_seconds(client):
+    started = time.perf_counter()
+    resp = _generate(client, "v5")
+    elapsed = time.perf_counter() - started
+
+    assert resp.status_code == 201
+    assert elapsed < 3.0
+    assert resp.json()["data"]["elapsed_ms"] < 3000
+
+
+def test_v4_overall_at_least_85(client):
+    data = _generate(client, "v4_hierarchical").json()["data"]
+    assert data["rule_compliance"]["overall"] >= 85.0
+
+
+def test_v5_coverage_90_and_overall_85(client):
+    data = _generate(client, "v5").json()["data"]
+    assert data["coverage_pct"] >= 90.0
+    assert data["rule_compliance"]["overall"] >= 85.0
+
+
+def test_lock_downgrade_returns_400(client, generated):
+    sid = generated["schedule_id"]
+    assert client.post(f"/api/v1/schedules/{sid}/lock", json={"lock_level": "CONFIRMED"}).status_code == 200
+
+    resp = client.post(f"/api/v1/schedules/{sid}/lock", json={"lock_level": "DRAFT"})
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "VALIDATION_FAILED"
+    assert resp.json()["data"] is None
+
+
+def test_lock_skip_step_returns_400(client, generated):
+    resp = client.post(
+        f"/api/v1/schedules/{generated['schedule_id']}/lock", json={"lock_level": "LOCKED"}
+    )
+    assert resp.status_code == 400
+
+
+# --------------------------------------------------------------------------
+# 생성 응답 형태
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("algorithm", ["v1", "v4", "v5"])
+def test_generate_response_shape(client, algorithm):
+    resp = _generate(client, algorithm)
+    body = resp.json()
+
+    assert resp.status_code == 201
+    assert body["error"] is None
+    data = body["data"]
+    for key in ("schedule_id", "total_assigned", "coverage_pct", "hard_violations", "rule_compliance"):
+        assert key in data
+    assert data["hard_violations"] == 0
+    assert set(data["rule_compliance"]) == {
+        "rule1_grad_balance",
+        "rule2_team_conflict",
+        "rule3_vertical_group",
+        "rule4_first_slot",
+        "overall",
+    }
+
+
+def test_generate_rejects_unknown_algorithm(client):
+    resp = _generate(client, "v99")
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+# --------------------------------------------------------------------------
+# 조회
+# --------------------------------------------------------------------------
+def test_get_schedule_returns_assignments(client, generated):
+    resp = client.get(f"/api/v1/schedules/{generated['schedule_id']}")
+    data = resp.json()["data"]
+
+    assert resp.status_code == 200
+    assert len(data["assignments"]) == generated["total_assigned"]
+    first = data["assignments"][0]
+    assert first["day"] in DAYS and first["hour"] in HOURS
+    assert first["lock_level"] == "DRAFT"
+
+
+def test_get_schedule_not_found(client):
+    resp = client.get("/api/v1/schedules/does-not-exist")
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_heatmap(client, generated):
+    data = client.get(f"/api/v1/schedules/{generated['schedule_id']}/heatmap").json()["data"]
+
+    assert data["days"] == DAYS
+    assert data["hours"] == HOURS
+    assert data["total"] == generated["total_assigned"]
+    assert sum(sum(row.values()) for row in data["grid"].values()) == generated["total_assigned"]
+    # 규칙2(HARD): 어떤 슬롯도 팀 수(5)를 넘지 않는다
+    assert data["peak"] <= 5
+
+
+def test_by_team(client, generated):
+    data = client.get(f"/api/v1/schedules/{generated['schedule_id']}/by-team").json()["data"]
+
+    assert sum(data["counts"].values()) == generated["total_assigned"]
+    for team, rows in data["teams"].items():
+        assert all(r["day"] in DAYS for r in rows)
+        # 팀 내 (요일, 시간) 조합은 유일해야 한다 — 규칙2
+        slots = [(r["day"], r["hour"]) for r in rows]
+        assert len(slots) == len(set(slots)), team
+
+
+def test_heatmap_not_found(client):
+    assert client.get("/api/v1/schedules/nope/heatmap").status_code == 404
+    assert client.get("/api/v1/schedules/nope/by-team").status_code == 404
+
+
+# --------------------------------------------------------------------------
+# 규칙 조회 · 검증
+# --------------------------------------------------------------------------
+def test_rules_endpoint_returns_score_and_detail(client, generated):
+    data = client.get(f"/api/v1/schedules/{generated['schedule_id']}/rules").json()["data"]
+
+    assert data["rule1_grad_balance"]["score"] == generated["rule_compliance"]["rule1_grad_balance"]
+    assert "ratios" in data["rule1_grad_balance"]["detail"]
+    assert data["overall"]["score"] == generated["rule_compliance"]["overall"]
+
+
+def test_rules_recompute_matches_stored(client, generated):
+    stored = client.get(f"/api/v1/schedules/{generated['schedule_id']}/rules").json()["data"]
+    live = client.get(
+        f"/api/v1/schedules/{generated['schedule_id']}/rules?recompute=true"
+    ).json()["data"]
+
+    assert stored["rule2_team_conflict"]["score"] == live["rule2_team_conflict"]["score"]
+
+
+def test_rules_not_found(client):
+    assert client.get("/api/v1/schedules/nope/rules").status_code == 404
+
+
+def test_validate_reports_zero_hard_violations(client, generated):
+    data = client.post(f"/api/v1/schedules/{generated['schedule_id']}/validate").json()["data"]
+
+    assert data["hard_violations"] == []
+    assert data["soft_penalty"] >= 0
+
+
+def test_validate_not_found(client):
+    assert client.post("/api/v1/schedules/nope/validate").status_code == 404
+
+
+# --------------------------------------------------------------------------
+# 락
+# --------------------------------------------------------------------------
+def test_full_lock_lifecycle(client):
+    sid = _generate(client, "v5", plan_id="lock-lifecycle").json()["data"]["schedule_id"]
+
+    step1 = client.post(f"/api/v1/schedules/{sid}/lock", json={"lock_level": "CONFIRMED"})
+    assert step1.status_code == 200
+    assert step1.json()["data"]["status"] == "confirmed"
+
+    step2 = client.post(f"/api/v1/schedules/{sid}/lock", json={"lock_level": "LOCKED"})
+    assert step2.status_code == 200
+    assert step2.json()["data"]["status"] == "locked"
+
+    assert client.post(f"/api/v1/schedules/{sid}/lock", json={"lock_level": "LOCKED"}).status_code == 400
+
+
+def test_partial_lock_keeps_schedule_in_draft(client):
+    data = _generate(client, "v5", plan_id="lock-partial").json()["data"]
+    sid = data["schedule_id"]
+    assignments = client.get(f"/api/v1/schedules/{sid}").json()["data"]["assignments"]
+    target = [assignments[0]["applicant_id"], assignments[1]["applicant_id"]]
+
+    resp = client.post(
+        f"/api/v1/schedules/{sid}/lock",
+        json={"lock_level": "CONFIRMED", "applicant_ids": target},
+    )
+    body = resp.json()["data"]
+
+    assert resp.status_code == 200
+    assert body["changed"] == 2
+    assert body["status"] == "draft"  # 나머지가 DRAFT이므로 스케줄 전체는 draft
+
+
+def test_lock_unknown_applicant_returns_400(client, generated):
+    resp = client.post(
+        f"/api/v1/schedules/{generated['schedule_id']}/lock",
+        json={"lock_level": "CONFIRMED", "applicant_ids": ["9999999"]},
+    )
+    assert resp.status_code == 400
+
+
+def test_lock_invalid_level_returns_400(client, generated):
+    resp = client.post(
+        f"/api/v1/schedules/{generated['schedule_id']}/lock", json={"lock_level": "ARCHIVED"}
+    )
+    assert resp.status_code == 400
+
+
+def test_lock_not_found(client):
+    assert (
+        client.post("/api/v1/schedules/nope/lock", json={"lock_level": "CONFIRMED"}).status_code
+        == 404
+    )

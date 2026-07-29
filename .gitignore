@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv-ui/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment
+.env
+.env.local
+!.env.example
+
+# Docker
+*.log
+
+# Database
+*.db
+*.sqlite
+
+# BMAD state
+.bmad-core/state/
+
+# 작업 부산물
+*.bak
+*.zip
+scratch_excel.txt
+
+# 지원자 개인정보(성명·생년월일·성별·국적·병역)가 담긴 실데이터.
+# 공개 저장소에 올리지 않는다. 아래 파일들은 전부 docs/취합파일.xlsx 와
+# docs/희망지원자_*.xlsx 의 동일 사본이다(md5 일치).
+# - 시나리오 테스트는 tools/fixtures/master_sample.xlsx(합성 데이터)로 동작한다.
+# - services/01, 02 의 유닛 테스트는 이 파일들이 로컬에 있어야 실행된다.
+docs/*.xlsx
+services/01-version-manager/tests/fixtures/*.xlsx
+services/02-distributor/data/*.xlsx
+services/02-distributor/tests/fixtures/*.xlsx

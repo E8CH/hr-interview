@@ -1,0 +1,303 @@
+"""스케줄 생성·조회·검증·락 오케스트레이션"""
+from __future__ import annotations
+
+import time
+from collections import defaultdict
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.domain.assignment import Assignment
+from app.domain.interviewer import Interviewer as InterviewerRow
+from app.domain.schedule import RuleCompliance, Schedule
+from app.domain.schemas import (
+    ApplicantIn,
+    GenerateConstraints,
+    GenerateRequest,
+    InterviewerIn,
+    PlanResult,
+)
+from app.errors import NotFoundError, ValidationFailed
+from app.infrastructure.contracts import DAYS, HOURS
+from app.infrastructure.response_client import applicant_source, availability_source
+from app.services import lock_manager, registry
+from app.services.constraint_checker import check_hard_constraints, soft_penalty
+from app.services.rule_evaluator import RULE_KEYS, RuleReport, rule_compliance
+
+METRICS = {
+    "schedules_generated_total": 0,
+    "assignments_total": 0,
+    "hard_violations_total": 0,
+    "lock_upgrades_total": 0,
+}
+
+
+# --------------------------------------------------------------------------
+# 면접관
+# --------------------------------------------------------------------------
+def row_to_interviewer(row: InterviewerRow) -> InterviewerIn:
+    return InterviewerIn(
+        interviewer_id=row.interviewer_id,
+        name=row.name or "",
+        team=row.team,
+        max_daily=row.max_daily or 6,
+        priority=row.priority or 2,
+        email=row.email or "",
+        availability=row.availability or {},
+    )
+
+
+def load_interviewers(db: Session, round_id: str) -> list[InterviewerIn]:
+    rows = db.scalars(select(InterviewerRow)).all()
+    if rows:
+        return [row_to_interviewer(r) for r in rows]
+    # DB가 비어 있으면 Service 03(또는 목)에서 가용성을 받아온다
+    return availability_source.fetch(round_id)
+
+
+def seed_interviewers(db: Session) -> int:
+    """PoC 부팅 시 면접관 테이블이 비어 있으면 목 데이터로 채운다"""
+    existing = db.scalar(select(InterviewerRow).limit(1))
+    if existing is not None:
+        return 0
+    from app.services import mock_data
+
+    rows = [
+        InterviewerRow(
+            interviewer_id=iv.interviewer_id,
+            name=iv.name,
+            team=iv.team,
+            max_daily=iv.max_daily,
+            priority=iv.priority,
+            email=iv.email,
+            availability=iv.availability,
+        )
+        for iv in mock_data.build_interviewers()
+    ]
+    db.add_all(rows)
+    db.commit()
+    return len(rows)
+
+
+# --------------------------------------------------------------------------
+# 생성
+# --------------------------------------------------------------------------
+def generate(db: Session, req: GenerateRequest) -> tuple[Schedule, RuleReport, list[dict], PlanResult]:
+    applicants: list[ApplicantIn] = applicant_source.fetch(req.round_id, req.plan_id)
+    if not applicants:
+        raise ValidationFailed("배치할 지원자가 없습니다", {"round_id": req.round_id})
+
+    interviewers = load_interviewers(db, req.round_id)
+    if not interviewers:
+        raise ValidationFailed("등록된 면접관이 없습니다", {"round_id": req.round_id})
+
+    started = time.perf_counter()
+    plan = registry.run(req.algorithm, applicants, interviewers, req.constraints)
+    elapsed_ms = (time.perf_counter() - started) * 1000
+
+    report = rule_compliance(
+        plan.assignments,
+        interviewers,
+        applicants,
+        grad_ratio_target=req.constraints.grad_ratio_target,
+        grad_ratio_tolerance=req.constraints.grad_ratio_tolerance,
+    )
+    violations = check_hard_constraints(plan.assignments, interviewers)
+    coverage = 100.0 * len(plan.assignments) / len(applicants)
+
+    schedule = Schedule(
+        round_id=req.round_id,
+        plan_id=req.plan_id,
+        status="draft",
+        algorithm=plan.algorithm,
+        total_assigned=len(plan.assignments),
+        total_applicants=len(applicants),
+        coverage_pct=round(coverage, 1),
+        hard_violations=len(violations),
+        overall_score=report.overall,
+        elapsed_ms=round(elapsed_ms, 2),
+        generated_by=req.generated_by,
+    )
+    db.add(schedule)
+    db.flush()
+
+    for planned in plan.assignments:
+        db.add(
+            Assignment(
+                schedule_id=schedule.schedule_id,
+                applicant_id=planned.applicant_id,
+                applicant_name=planned.applicant_name,
+                interviewer_id=planned.interviewer_id,
+                team=planned.team,
+                degree=planned.degree,
+                day=planned.day,
+                hour=planned.hour,
+                lock_level="DRAFT",
+                reason_tags=list(planned.reason_tags),
+            )
+        )
+
+    for key in RULE_KEYS:
+        db.add(
+            RuleCompliance(
+                schedule_id=schedule.schedule_id,
+                rule_name=key,
+                score=report.scores[key],
+                details=report.details.get(key, {}),
+            )
+        )
+    db.add(
+        RuleCompliance(
+            schedule_id=schedule.schedule_id,
+            rule_name="overall",
+            score=report.overall,
+            details={
+                "coverage_pct": round(coverage, 1),
+                "unassigned": [a.applicant_id for a in plan.unassigned],
+                "notes": _jsonable(plan.notes),
+                "elapsed_ms": round(elapsed_ms, 2),
+            },
+        )
+    )
+    db.commit()
+    db.refresh(schedule)
+
+    METRICS["schedules_generated_total"] += 1
+    METRICS["assignments_total"] += len(plan.assignments)
+    METRICS["hard_violations_total"] += len(violations)
+    return schedule, report, violations, plan
+
+
+def _jsonable(value):
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+# --------------------------------------------------------------------------
+# 조회
+# --------------------------------------------------------------------------
+def get_schedule(db: Session, schedule_id: str) -> Schedule:
+    schedule = db.get(Schedule, schedule_id)
+    if schedule is None:
+        raise NotFoundError(f"스케줄을 찾을 수 없습니다: {schedule_id}")
+    return schedule
+
+
+def list_assignments(db: Session, schedule_id: str) -> list[Assignment]:
+    return list(
+        db.scalars(
+            select(Assignment)
+            .where(Assignment.schedule_id == schedule_id)
+            .order_by(Assignment.day, Assignment.hour, Assignment.team)
+        ).all()
+    )
+
+
+def heatmap(assignments: list[Assignment]) -> dict:
+    grid = {day: {hour: 0 for hour in HOURS} for day in DAYS}
+    teams: dict[str, dict[str, list[str]]] = {day: {hour: [] for hour in HOURS} for day in DAYS}
+    for a in assignments:
+        if a.day in grid and a.hour in grid[a.day]:
+            grid[a.day][a.hour] += 1
+            teams[a.day][a.hour].append(a.team)
+    peak = max((c for row in grid.values() for c in row.values()), default=0)
+    return {
+        "days": DAYS,
+        "hours": HOURS,
+        "grid": grid,
+        "teams": teams,
+        "peak": peak,
+        "total": len(assignments),
+    }
+
+
+def by_team(assignments: list[Assignment]) -> dict:
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for a in sorted(assignments, key=lambda x: (x.team, DAYS.index(x.day) if x.day in DAYS else 9, x.hour)):
+        grouped[a.team].append(
+            {
+                "assignment_id": a.assignment_id,
+                "applicant_id": a.applicant_id,
+                "applicant_name": a.applicant_name,
+                "interviewer_id": a.interviewer_id,
+                "degree": a.degree,
+                "day": a.day,
+                "hour": a.hour,
+                "lock_level": a.lock_level,
+                "reason_tags": a.reason_tags,
+            }
+        )
+    return {
+        "teams": {team: rows for team, rows in sorted(grouped.items())},
+        "counts": {team: len(rows) for team, rows in sorted(grouped.items())},
+    }
+
+
+def stored_rules(db: Session, schedule_id: str) -> dict:
+    rows = db.scalars(
+        select(RuleCompliance).where(RuleCompliance.schedule_id == schedule_id)
+    ).all()
+    if not rows:
+        raise NotFoundError(f"규칙 준수율 기록이 없습니다: {schedule_id}")
+    return {
+        row.rule_name: {"score": row.score, "detail": row.details or {}}
+        for row in sorted(rows, key=lambda r: r.rule_name)
+    }
+
+
+# --------------------------------------------------------------------------
+# 검증 · 락
+# --------------------------------------------------------------------------
+def validate_schedule(db: Session, schedule_id: str) -> tuple[Schedule, list[dict], float]:
+    schedule = get_schedule(db, schedule_id)
+    assignments = list_assignments(db, schedule_id)
+    interviewers = load_interviewers(db, schedule.round_id)
+    violations = check_hard_constraints(assignments, interviewers)
+    report = rule_compliance(assignments, interviewers)
+    penalty = soft_penalty(report, assignments, interviewers)
+
+    schedule.hard_violations = len(violations)
+    db.commit()
+    return schedule, violations, penalty
+
+
+def lock(
+    db: Session, schedule_id: str, requested: str, applicant_ids: list[str] | None
+) -> tuple[Schedule, list[Assignment]]:
+    schedule = get_schedule(db, schedule_id)
+    assignments = list_assignments(db, schedule_id)
+    if not assignments:
+        raise ValidationFailed("배정이 없는 스케줄은 락할 수 없습니다", {"schedule_id": schedule_id})
+
+    try:
+        changed = lock_manager.apply_lock(assignments, requested, applicant_ids)
+    except lock_manager.LockTransitionError as exc:
+        raise ValidationFailed(
+            str(exc), {"current": exc.current, "requested": exc.requested}
+        ) from exc
+
+    schedule.status = lock_manager.schedule_status_for([a.lock_level for a in assignments])
+    db.commit()
+    METRICS["lock_upgrades_total"] += 1
+    return schedule, changed
+
+
+def schedule_payload(schedule: Schedule, report_scores: dict, violations: list[dict]) -> dict:
+    return {
+        "schedule_id": schedule.schedule_id,
+        "round_id": schedule.round_id,
+        "plan_id": schedule.plan_id,
+        "algorithm": schedule.algorithm,
+        "status": schedule.status,
+        "total_assigned": schedule.total_assigned,
+        "total_applicants": schedule.total_applicants,
+        "coverage_pct": schedule.coverage_pct,
+        "hard_violations": len(violations),
+        "elapsed_ms": schedule.elapsed_ms,
+        "rule_compliance": report_scores,
+    }

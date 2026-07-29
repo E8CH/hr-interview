@@ -1,0 +1,9 @@
+Service 05 — Repair Engine 스키마 마이그레이션 (Alembic)
+
+접속 URL 은 .env 의 DATABASE_URL 을 따른다 (env.py 가 app.config 에서 읽는다).
+SQLite(PoC) · PostgreSQL(프로덕션) 모두 동일한 명령으로 동작한다.
+
+  alembic upgrade head          # 스키마 생성 · 최신화
+  alembic downgrade base        # 전체 롤백
+  alembic current               # 현재 리비전
+  alembic revision --autogenerate -m "설명"   # 모델 변경 후 새 리비전

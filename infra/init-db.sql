@@ -1,0 +1,8 @@
+-- 7개 서비스별 DB 생성
+CREATE DATABASE version_db;
+CREATE DATABASE dist_db;
+CREATE DATABASE resp_db;
+CREATE DATABASE sched_db;
+CREATE DATABASE repair_db;
+CREATE DATABASE notif_db;
+CREATE DATABASE audit_db;

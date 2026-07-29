@@ -1,0 +1,140 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: hruser
+      POSTGRES_PASSWORD: hrpass
+      POSTGRES_DB: hr_root
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hruser"]
+      interval: 5s
+
+  version-manager:
+    build:
+      context: ../services/01-version-manager
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      DATABASE_URL: postgresql://hruser:hrpass@postgres:5432/version_db
+      REDIS_URL: redis://redis:6379/0
+      USE_MOCK: "false"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  distributor:
+    build:
+      context: ../services/02-distributor
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      DATABASE_URL: postgresql://hruser:hrpass@postgres:5432/dist_db
+      REDIS_URL: redis://redis:6379/0
+      USE_MOCK: "false"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  response-collector:
+    build:
+      context: ../services/03-response-collector
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      DATABASE_URL: postgresql://hruser:hrpass@postgres:5432/resp_db
+      REDIS_URL: redis://redis:6379/0
+      USE_MOCK: "false"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  scheduler:
+    build:
+      context: ../services/04-scheduler
+      dockerfile: Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      DATABASE_URL: postgresql://hruser:hrpass@postgres:5432/sched_db
+      REDIS_URL: redis://redis:6379/0
+      USE_MOCK: "false"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  repair-engine:
+    build:
+      context: ../services/05-repair-engine
+      dockerfile: Dockerfile
+    ports:
+      - "8005:8005"
+    environment:
+      DATABASE_URL: postgresql://hruser:hrpass@postgres:5432/repair_db
+      REDIS_URL: redis://redis:6379/0
+      USE_MOCK: "false"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  notification-hub:
+    build:
+      context: ../services/06-notification-hub
+      dockerfile: Dockerfile
+    ports:
+      - "8006:8006"
+    environment:
+      DATABASE_URL: postgresql://hruser:hrpass@postgres:5432/notif_db
+      REDIS_URL: redis://redis:6379/0
+      USE_MOCK: "false"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  audit-analytics:
+    build:
+      context: ../services/07-audit-analytics
+      dockerfile: Dockerfile
+    ports:
+      - "8007:8007"
+    environment:
+      DATABASE_URL: postgresql://hruser:hrpass@postgres:5432/audit_db
+      REDIS_URL: redis://redis:6379/0
+      USE_MOCK: "false"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
