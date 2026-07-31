@@ -9,6 +9,11 @@ from app.services import repair_service
 router = APIRouter(prefix="/api/v1/repair", tags=["repair"])
 
 
+@router.delete("/rounds/{round_id}", summary="회차 재편성 기록 비우기")
+def reset_round(round_id: str, session: Session = Depends(get_session)):
+    return ok(repair_service.reset_round(session, round_id))
+
+
 @router.post("/noshow", status_code=status.HTTP_202_ACCEPTED)
 def report_noshow(payload: NoshowRequest, response: Response,
                   session: Session = Depends(get_session)):

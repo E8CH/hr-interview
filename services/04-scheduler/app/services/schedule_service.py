@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.assignment import Assignment
 from app.domain.interviewer import Interviewer as InterviewerRow
+from app.domain.round_interviewer import RoundInterviewer
 from app.domain.schedule import RuleCompliance, Schedule
 from app.domain.schemas import (
     ApplicantIn,
@@ -295,6 +296,45 @@ def get_schedule(db: Session, schedule_id: str) -> Schedule:
     if schedule is None:
         raise NotFoundError(f"스케줄을 찾을 수 없습니다: {schedule_id}")
     return schedule
+
+
+def reset_round(db: Session, round_id: str) -> dict:
+    """그 회차의 시간표를 전부 지운다 (배정 · 규칙 점수까지).
+
+    1단계에서 지원자 명단을 다시 올리면 그 명단으로 짠 시간표는 무효다.
+    남겨 두면 콘솔 ③ 이 회차 목록의 최신 것을 집어 지운 명단의 시간표를
+    '지금 상태' 로 보여 준다. 회차별 면접관 선별도 함께 지운다 — 면접관
+    마스터(interviewers)는 회차와 무관하므로 건드리지 않는다.
+    """
+    schedule_ids = list(
+        db.scalars(select(Schedule.schedule_id).where(Schedule.round_id == round_id))
+    )
+    assignments = rules = schedules = 0
+    if schedule_ids:
+        assignments = (
+            db.query(Assignment).filter(Assignment.schedule_id.in_(schedule_ids))
+            .delete(synchronize_session=False)
+        )
+        rules = (
+            db.query(RuleCompliance).filter(RuleCompliance.schedule_id.in_(schedule_ids))
+            .delete(synchronize_session=False)
+        )
+        schedules = (
+            db.query(Schedule).filter(Schedule.round_id == round_id)
+            .delete(synchronize_session=False)
+        )
+    picked = (
+        db.query(RoundInterviewer).filter(RoundInterviewer.round_id == round_id)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {
+        "round_id": round_id,
+        "deleted_schedules": schedules,
+        "deleted_assignments": assignments,
+        "deleted_rules": rules,
+        "deleted_round_interviewers": picked,
+    }
 
 
 def list_schedules_for_round(db: Session, round_id: str) -> list[dict]:

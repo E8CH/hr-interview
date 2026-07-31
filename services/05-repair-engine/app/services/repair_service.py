@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 from app import events
 from app.domain.repair_plan import RepairChange, RepairPlan, SlotRef
 from app.domain.schedule import ScheduleAssignment, ScheduleSnapshot
-from app.infrastructure.db import (RepairEventRow, RepairPlanRow, SelectedPlanRow,
-                                   ScheduleSnapshotRow, SessionLocal)
+from app.infrastructure.db import (LockMapRow, RepairEventRow, RepairPlanRow,
+                                   SelectedPlanRow, ScheduleSnapshotRow, SessionLocal)
 from app.services import lock_service, plan_generator, scheduler_client
 from app.services.constraint_recheck import check_hard_constraints
 
@@ -309,6 +309,43 @@ def select_plan(session: Session, event_id: str, plan_id: str,
             "rebooked": rebooked, "deferred": len(deferred_ids),
             "hard_violations": 0,
             "reopened_slots": len(reopened_payload)}
+
+
+# --------------------------------------------------------------------------
+# 회차 비우기
+# --------------------------------------------------------------------------
+def reset_round(session: Session, round_id: str) -> dict:
+    """그 회차의 재편성 기록과 시간표 사본을 지운다.
+
+    1단계에서 명단을 다시 받으면 시간표(04)가 사라진다. 여기 남은 사본과
+    이벤트는 없어진 시간표를 가리키는 껍데기라, 두면 다음 회차 작업에서
+    옛 자리 배치가 되살아난다.
+    """
+    event_ids = list(session.scalars(
+        select(RepairEventRow.event_id).where(RepairEventRow.round_id == round_id)))
+    schedule_ids = list(session.scalars(
+        select(ScheduleSnapshotRow.schedule_id)
+        .where(ScheduleSnapshotRow.round_id == round_id)))
+    schedule_ids += list(session.scalars(
+        select(RepairEventRow.schedule_id).where(RepairEventRow.round_id == round_id)))
+
+    selections = plans = events_deleted = locks = 0
+    if event_ids:
+        selections = session.query(SelectedPlanRow).filter(
+            SelectedPlanRow.event_id.in_(event_ids)).delete(synchronize_session=False)
+        plans = session.query(RepairPlanRow).filter(
+            RepairPlanRow.event_id.in_(event_ids)).delete(synchronize_session=False)
+        events_deleted = session.query(RepairEventRow).filter(
+            RepairEventRow.round_id == round_id).delete(synchronize_session=False)
+    if schedule_ids:
+        locks = session.query(LockMapRow).filter(
+            LockMapRow.schedule_id.in_(set(schedule_ids))).delete(synchronize_session=False)
+    snapshots = session.query(ScheduleSnapshotRow).filter(
+        ScheduleSnapshotRow.round_id == round_id).delete(synchronize_session=False)
+    session.commit()
+    return {"round_id": round_id, "deleted_events": events_deleted,
+            "deleted_plans": plans, "deleted_selections": selections,
+            "deleted_snapshots": snapshots, "deleted_locks": locks}
 
 
 # --------------------------------------------------------------------------

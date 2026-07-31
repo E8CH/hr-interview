@@ -276,6 +276,38 @@ def reject_plan(session: Session, plan_id: str, reason: str) -> PlanSummary:
     return _plan_summary(plan, _team_counts(session, plan_id))
 
 
+def reset_round(session: Session, round_id: str) -> dict:
+    """그 회차의 배포안을 전부 지운다.
+
+    1단계에서 지원자 명단을 다시 올리면 그 명단으로 나눈 팀은 무효다. 남겨 두면
+    2단계가 옛 배포안을 되찾아 와(`round_plan_id`) 지운 명단의 팀 나눔으로
+    계속 진행하게 된다.
+    """
+    plan_ids = list(
+        session.scalars(
+            select(DistributionPlanORM.plan_id).where(
+                DistributionPlanORM.round_id == round_id
+            )
+        )
+    )
+    if not plan_ids:
+        return {"round_id": round_id, "deleted_plans": 0, "deleted_assignments": 0}
+
+    assignments = (
+        session.query(AssignmentReasonORM)
+        .filter(AssignmentReasonORM.plan_id.in_(plan_ids))
+        .delete(synchronize_session=False)
+    )
+    plans = (
+        session.query(DistributionPlanORM)
+        .filter(DistributionPlanORM.round_id == round_id)
+        .delete(synchronize_session=False)
+    )
+    session.commit()
+    return {"round_id": round_id, "deleted_plans": plans,
+            "deleted_assignments": assignments}
+
+
 def adjust_plan(
     session: Session, plan_id: str, moves: list[Move], actor: str | None = None
 ) -> PlanSummary:

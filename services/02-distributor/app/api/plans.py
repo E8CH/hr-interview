@@ -29,6 +29,11 @@ def list_round_plans(round_id: str, session: Session = Depends(db_session)):
     return {"data": plan_service.list_plans_for_round(session, round_id), "error": None}
 
 
+@router.delete("/rounds/{round_id}", summary="회차 배포안 비우기")
+def reset_round(round_id: str, session: Session = Depends(db_session)):
+    return {"data": plan_service.reset_round(session, round_id), "error": None}
+
+
 @router.get("/{plan_id}", summary="배포안 상세 조회")
 def get_plan(plan_id: str, session: Session = Depends(db_session)):
     return {"data": plan_service.get_plan_detail(session, plan_id), "error": None}

@@ -11,7 +11,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.domain.invitee import Invitee
+from app.domain.reminder import Reminder
 from app.domain.request import Request
+from app.domain.response import Response
 from app.infrastructure.db import get_db
 from app.schemas import ok
 
@@ -113,4 +115,50 @@ def get_availability_summary(round_id: str, db: Session = Depends(get_db)):
         "invited": sum(r["invited"] for r in rows),
         "responded": sum(r["responded"] for r in rows),
         "total_slots": sum(r["slots"] for r in rows),
+    })
+
+
+@router.delete("/{round_id}", summary="회차 회신 이력 비우기")
+def reset_round(round_id: str, db: Session = Depends(get_db)):
+    """1단계에서 명단을 다시 올릴 때 이 회차의 요청 · 회신을 함께 지운다.
+
+    지원자 명단이 바뀌면 그 명단으로 만든 뒤 단계는 전부 무효다. 남겨 두면
+    화면마다 다른 회차를 보고 있게 된다.
+    """
+    request_ids = [
+        r.request_id for r in db.query(Request).filter(Request.round_id == round_id).all()
+    ]
+    if not request_ids:
+        return ok({"round_id": round_id, "deleted_requests": 0,
+                   "deleted_invitees": 0, "deleted_responses": 0})
+
+    invitee_ids = [
+        i.invitee_id for i in db.query(Invitee)
+        .filter(Invitee.request_id.in_(request_ids)).all()
+    ]
+    responses = reminders = 0
+    if invitee_ids:
+        responses = (
+            db.query(Response).filter(Response.invitee_id.in_(invitee_ids))
+            .delete(synchronize_session=False)
+        )
+        reminders = (
+            db.query(Reminder).filter(Reminder.invitee_id.in_(invitee_ids))
+            .delete(synchronize_session=False)
+        )
+    invitees = (
+        db.query(Invitee).filter(Invitee.request_id.in_(request_ids))
+        .delete(synchronize_session=False)
+    )
+    requests = (
+        db.query(Request).filter(Request.round_id == round_id)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return ok({
+        "round_id": round_id,
+        "deleted_requests": requests,
+        "deleted_invitees": invitees,
+        "deleted_responses": responses,
+        "deleted_reminders": reminders,
     })

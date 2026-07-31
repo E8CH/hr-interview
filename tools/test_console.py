@@ -1070,9 +1070,78 @@ ROUND_STATE_KEYS = (
 )
 
 
-def reset_round_state() -> None:
+def reset_round_state(keep: tuple[str, ...] = ()) -> None:
+    """이 회차의 화면 상태를 버린다.
+
+    `keep` 은 지금 화면에 이미 그려진 입력칸을 위한 것이다 — 그린 뒤에 그 값을
+    지우면 Streamlit 이 다음 줄에서 놀란다.
+    """
     for key in ROUND_STATE_KEYS:
-        st.session_state.pop(key, None)
+        if key not in keep:
+            st.session_state.pop(key, None)
+
+
+def delete_json(url: str, timeout: float = 60.0):
+    try:
+        r = http().delete(url, timeout=timeout)
+    except Exception as e:
+        return None, str(e)
+    if r.status_code >= 300:
+        return None, f"status {r.status_code}: {error_text(r)}"
+    return unwrap(r), None
+
+
+def reset_round_downstream(rid: str, keep: tuple[str, ...] = ()) -> tuple[list[str], list[str]]:
+    """1단계 뒤의 모든 것을 지운다 — 배포안 · 회신 · 시간표 · 부서에 보낸 명단.
+
+    지원자 명단이 바뀌면 그 명단으로 만든 뒤 단계는 전부 무효다. 그런데 화면
+    상태만 지우면 서버에는 그대로 남아, 2단계가 옛 배포안을 되찾아 오고
+    (`round_plan_id`) ③ 은 회차 목록의 최신 시간표를 '지금 상태' 로 집어 든다.
+    지운 명단으로 계속 진행하게 되는 것이다.
+
+    면접관 마스터 명단은 회차와 무관하므로 건드리지 않는다.
+    """
+    done, failed = [], []
+    steps = (
+        ("배포안", f"{DISTRIBUTOR}/api/v1/distribute/rounds/{rid}",
+         ("deleted_plans", "개")),
+        # 회신이 0건이어도 보낸 조사 자체는 지워야 하므로 사람 수로 알린다
+        ("면접 가능 시간 조사", f"{COLLECTOR}/api/v1/rounds/{rid}",
+         ("deleted_invitees", "명분")),
+        ("시간표", f"{SCHEDULER}/api/v1/schedules/rounds/{rid}",
+         ("deleted_schedules", "개")),
+        ("자리 다시 잡기 기록", f"{REPAIR_ENGINE}/api/v1/repair/rounds/{rid}",
+         ("deleted_events", "건")),
+    )
+    for label, url, (field, unit) in steps:
+        data, err = delete_json(url)
+        if err:
+            failed.append(f"{label}({err})")
+        else:
+            done.append(f"{label} {(data or {}).get(field, 0)}{unit}")
+
+    path = handoff_path(rid)
+    if path.is_file():
+        try:
+            path.unlink()
+        except OSError as exc:
+            failed.append(f"부서에 보낸 명단({exc})")
+        else:
+            done.append("부서에 보낸 명단")
+
+    reset_round_state(keep)
+    clear_caches()
+    return done, failed
+
+
+def report_reset(done: list[str], failed: list[str]) -> None:
+    if done:
+        st.info("뒤 단계를 비웠습니다 — " + " · ".join(done))
+    if failed:
+        st.warning(
+            "다음은 지우지 못했습니다 — " + " · ".join(failed)
+            + ". 해당 서비스가 떠 있는지 확인해 주세요."
+        )
 
 
 def sync_round() -> None:
@@ -1111,7 +1180,10 @@ def render_versions() -> None:
     st.subheader("① 엑셀 파일 올리기")
     st.caption(
         "여기 올린 파일이 이번 회차의 전부가 됩니다. 올리기 → 맞춰 보기 → 확정까지가 "
-        "한 묶음이고, 2단계는 그 결과만 가지고 팀별로 나눕니다."
+        "한 묶음이고, 2단계는 그 결과만 가지고 팀별로 나눕니다. "
+        "**명단을 새로 올리거나 지우면 2단계 이후(팀 나눔 · 부서 회신 · 시간표 · "
+        "부서에 보낸 명단)는 함께 비워집니다** — 지난 명단으로 만든 결과가 남아 "
+        "있으면 그것이 계속 따라가기 때문입니다."
     )
     r1, r2 = st.columns([3, 2])
     replace = r1.checkbox(
@@ -1130,13 +1202,12 @@ def render_versions() -> None:
                 st.error(error_text(r))
             else:
                 data = unwrap(r) or {}
-                reset_round_state()
-                clear_caches()
+                done, failed = reset_round_downstream(round_id)
                 st.success(
                     f"파일 {data.get('deleted_versions')}개를 지웠습니다 — "
                     "이번 회차는 비어 있습니다."
                 )
-                st.rerun()
+                report_reset(done, failed)
 
     uploads = st.file_uploader(
         "지원자 엑셀 파일 (여러 개 한꺼번에 고를 수 있습니다)", type=["xlsx"],
@@ -1185,18 +1256,20 @@ def render_versions() -> None:
                     st.error(error_text(r))
                 else:
                     data = unwrap(r) or {}
-                    # 새로 올렸으니 앞선 대조·배포·시간표 결과는 모두 무효다
-                    reset_round_state()
+                    # 새로 올렸으니 앞선 대조·배포·시간표 결과는 모두 무효다.
+                    # 화면 상태만 지우면 2단계가 서버에 남은 옛 배포안을 다시
+                    # 집어 오므로, 서버까지 함께 비운다.
+                    done, failed = reset_round_downstream(round_id)
                     st.session_state["v_registered"] = [
                         v["version_id"] for v in data.get("registered", [])
                     ]
-                    clear_caches()
                     cleared = data.get("cleared") or {}
                     st.success(
                         f"파일 {data.get('count')}개를 올렸습니다"
                         + (f" · 먼저 올렸던 {cleared.get('deleted_versions')}개는 "
                            "지웠습니다" if cleared.get("deleted_versions") else "")
                     )
+                    report_reset(done, failed)
                     st.dataframe(
                         pd.DataFrame([
                             {
@@ -1257,6 +1330,10 @@ def render_versions() -> None:
         format_func=lambda vid: label[vid], key="v_compare_pick",
     )
 
+    st.caption(
+        "맞춰 보면 이번 회차의 확정 명단을 처음부터 다시 만드는 것이므로, "
+        "먼저 만들어 둔 배포안 · 부서 회신 · 시간표 · 부서에 보낸 명단은 함께 지웁니다."
+    )
     if st.button("🔍 맞춰 보기", type="primary", key="v_compare") and picked_ids:
         data, cerr = post_json(
             f"{VERSION_MANAGER}/api/v1/versions/compare", {"version_ids": picked_ids}
@@ -1264,8 +1341,13 @@ def render_versions() -> None:
         if cerr:
             st.error(cerr)
         else:
+            # 여기서부터 명단을 다시 정하므로 뒤 단계는 전부 무효다. 화면 상태만
+            # 지우면 2단계가 서버에 남은 옛 배포안을 되찾아 오므로 서버까지 비운다.
+            # 지금 화면에 이미 그려진 '맞춰 볼 파일' 은 그대로 둔다.
+            done, failed = reset_round_downstream(round_id, keep=("v_compare_pick",))
             st.session_state["v_compare_result"] = data
             st.session_state["v_selections"] = {}
+            report_reset(done, failed)
 
     result = st.session_state.get("v_compare_result")
     if not result:
