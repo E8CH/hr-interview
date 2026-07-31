@@ -13,6 +13,8 @@ TAGS = {
     "OVERFLOW_REASSIGN": "정원이 차서 차순위 팀으로",
     "DUPLICATE_REVIEW": "두 팀이 함께 볼 사람",
     "HR_MANUAL": "인사 담당자 재량",
+    "TEAM_INHERITED": "1단계에서 팀이 적어 낸 사람",
+    "ORG_UNMATCHED": "팀 조건과 안 맞지만 팀이 지목",
 }
 
 

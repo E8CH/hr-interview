@@ -17,6 +17,7 @@ def create_plan(body: CreatePlanRequest, session: Session = Depends(db_session))
         session,
         round_id=body.round_id,
         master_version_id=body.master_version_id,
+        mode=body.mode,
         allow_duplicate=body.allow_duplicate,
         duplicate_score_threshold=body.duplicate_score_threshold,
         created_by=body.created_by,

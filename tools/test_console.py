@@ -543,8 +543,32 @@ def team_pairs(block: dict) -> tuple[dict[str, str], bool]:
     return dict(draft), dict(draft) != dict(sent)
 
 
+def handoff_pairs_by_team(doc: dict) -> dict[str, dict[str, str]]:
+    """팀별로 제출된 짝 {팀: {면접자 → 담당자}}.
+
+    두 팀이 같이 보는 사람은 팀마다 담당자가 다르다. `handoff_pairs` 처럼 하나로
+    합치면 나중에 읽은 팀의 짝이 앞 팀 것을 덮어써서, 한 팀은 자기가 정한
+    담당자가 아닌 사람과 면접을 보게 된다 — 팀 구분을 살려 두는 쪽이 원본이다.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for team, block in (doc.get("teams") or {}).items():
+        live = {row["applicant_id"] for row in (block.get("applicants") or [])}
+        mine = {row["interviewer_id"] for row in (block.get("interviewers") or [])}
+        out[team] = {
+            applicant: interviewer
+            for applicant, interviewer in (
+                ((block.get("submitted") or {}).get("pairs") or {}).items()
+            )
+            if applicant in live and interviewer in mine
+        }
+    return out
+
+
 def handoff_pairs(doc: dict) -> dict[str, str]:
     """모든 팀의 제출을 하나로 합친다 (면접자 → 면접 담당자).
+
+    같이 보는 사람은 여기서 한 팀 것만 남으므로 담당자를 가리는 자리에는
+    `handoff_pairs_by_team` 을 쓴다. 이 함수는 '짝이 지어졌는가' 만 볼 때 쓴다.
 
     보낸 것만 센다 — 배정만 해 두고 아직 안 보낸 팀은 인사 담당자 시간표에
     들어가지 않는다.
@@ -1633,33 +1657,6 @@ def degree_full(value) -> str:
     return "미상"
 
 
-def team_rosters_from_versions(history: list[dict]) -> dict[str, list[dict]]:
-    """1번 메뉴에 등록된 희망지원자_{팀} 파일을 팀별 명단으로 읽어 온다."""
-    rosters: dict[str, list[dict]] = {}
-    for version in history:
-        if version.get("kind") != KIND_TEAM or not version.get("is_active"):
-            continue
-        team = version.get("team_name") or version.get("file_name") or "미상"
-        preview, err = fetch_json(
-            f"{VERSION_MANAGER}/api/v1/versions/by-id/{version['version_id']}/preview",
-            (("limit", 1000),),
-        )
-        if err or not preview:
-            continue
-        rosters[team] = [
-            {
-                "applicant_id": row.get(ID_HEADER, ""),
-                "name": row.get(NAME_HEADER, ""),
-                "team": team,
-                "degree": degree_label(row.get(DEGREE_HEADER)),
-                "degree_full": degree_full(row.get(DEGREE_HEADER)),
-            }
-            for row in preview.get("rows") or []
-            if row.get(NAME_HEADER)
-        ]
-    return rosters
-
-
 def team_rosters_from_plan(applicants: list[dict]) -> dict[str, list[dict]]:
     rosters: dict[str, list[dict]] = {}
     for row in applicants:
@@ -1671,45 +1668,6 @@ def team_rosters_from_plan(applicants: list[dict]) -> dict[str, list[dict]]:
             "degree_full": degree_full(row.get("degree_type")),
         })
     return rosters
-
-
-def roster_people(rosters: dict[str, list[dict]]) -> dict[str, dict]:
-    """명단을 '사람 → {팀들, 이름}' 으로 편다 (지원자 번호가 없으면 이름을 열쇠로)."""
-    out: dict[str, dict] = {}
-    for team, rows in (rosters or {}).items():
-        for row in rows:
-            key = str(row.get("applicant_id") or row.get("name") or "").strip()
-            if not key:
-                continue
-            person = out.setdefault(key, {"name": row.get("name") or key, "teams": set()})
-            person["teams"].add(team)
-    return out
-
-
-def roster_diff(left: dict[str, list[dict]], right: dict[str, list[dict]]) -> dict:
-    """두 팀별 명단이 어떻게 다른지 — 인원 · 중복 · 팀이 바뀐 사람."""
-    a, b = roster_people(left), roster_people(right)
-    common = set(a) & set(b)
-    moved = [
-        {
-            "name": a[key]["name"],
-            "왼쪽 팀": " · ".join(sorted(a[key]["teams"])),
-            "오른쪽 팀": " · ".join(sorted(b[key]["teams"])),
-        }
-        for key in sorted(common)
-        if a[key]["teams"] != b[key]["teams"]
-    ]
-    return {
-        "left_rows": sum(len(v) for v in (left or {}).values()),
-        "right_rows": sum(len(v) for v in (right or {}).values()),
-        "left_people": len(a),
-        "right_people": len(b),
-        "left_dup": sum(1 for v in a.values() if len(v["teams"]) > 1),
-        "right_dup": sum(1 for v in b.values() if len(v["teams"]) > 1),
-        "only_left": sorted(a[k]["name"] for k in set(a) - common),
-        "only_right": sorted(b[k]["name"] for k in set(b) - common),
-        "moved": moved,
-    }
 
 
 def split_map(rosters: dict[str, list[dict]]) -> tuple[dict[str, list[str]], dict[str, str]]:
@@ -1728,11 +1686,12 @@ def split_map(rosters: dict[str, list[dict]]) -> tuple[dict[str, list[str]], dic
 
 def team_moves(want: dict[str, list[str]], now: dict[str, list[str]],
                names: dict[str, str]) -> dict:
-    """2단계에서 나눈 팀에 배정 결과를 맞추려면 누구를 어디로 옮겨야 하는가.
+    """2단계에서 잡아 둔 차례와 지금 배정 결과가 어긋났으면 옮길 목록을 낸다.
 
-    부서에 나가는 명단도, 시간표도 배정 결과(플랜)의 팀을 따른다. 그래서 2단계에서
-    다른 나눔으로 차례를 잡아 두면 인사 담당자가 본 명단과 부서가 받는 명단이
-    달라진다 — 같은 83명인데 54명이 다른 팀으로 간 회차가 있었다.
+    부서에 나가는 명단도, 시간표도 배정 결과(플랜)의 팀을 따른다. 2단계에서 순서를
+    잡은 뒤에 배정을 다시 만들거나 사람을 옮기면, 인사 담당자가 확인하고 저장한
+    차례와 실제로 나갈 명단이 갈라진다 — 같은 83명인데 54명이 다른 팀으로 간
+    회차가 있었다.
 
     화면에서만 맞춰 보여 주면 더 나빠진다. 부서가 남의 팀 사람과 짝을 지으면
     스케줄러는 그 짝을 '지원자의 플랜 팀' 자리에 앉히므로(board.place 는
@@ -1763,7 +1722,7 @@ def render_team_gap(plan_id: str, gap: dict, key: str) -> bool:
     if not gap["moves"]:
         return False
     st.error(
-        f"**2단계에서 나눈 팀과 지금 배정 결과가 {len(gap['moves'])}명 다릅니다.** "
+        f"**2단계에서 잡아 둔 차례와 지금 배정 결과가 {len(gap['moves'])}명 다릅니다.** "
         "부서에 나가는 명단도 4단계 시간표도 배정 결과의 팀을 따르므로, 이대로 "
         "두면 2단계에서 보신 것과 다른 명단이 부서에 갑니다."
     )
@@ -1772,10 +1731,9 @@ def render_team_gap(plan_id: str, gap: dict, key: str) -> bool:
                      height=min(420, 40 + 35 * len(gap["rows"])))
         if gap["dup"]:
             st.caption(
-                f"두 팀이 함께 보겠다고 한 {len(gap['dup'])}명은 배정 결과가 한 사람을 "
-                "한 팀에만 담으므로 가나다순 앞선 팀 하나로만 갑니다 — "
+                f"두 팀이 함께 보는 {len(gap['dup'])}명은 옮기기로는 한 팀만 바뀝니다 — "
                 + " · ".join(gap["dup"])
-                + ". 두 팀이 다 보게 하려면 ① 에서 중복 허용으로 다시 나눠야 합니다."
+                + ". 2단계 ② 에서 차례를 다시 잡는 편이 깔끔합니다."
             )
         if gap["unknown"]:
             st.caption(f"배정 결과에 없는 {len(gap['unknown'])}명은 옮길 수 없습니다.")
@@ -1783,7 +1741,7 @@ def render_team_gap(plan_id: str, gap: dict, key: str) -> bool:
             "맞추면 팀 정원 · 학사 대학원 비율은 ① 이 계산한 값과 달라질 수 있습니다 — "
             "옮긴 사람에게는 HR_MANUAL 표가 붙습니다."
         )
-    if st.button("🔁 배정 결과를 2단계 나눔에 맞추기", type="primary", key=key,
+    if st.button("🔁 배정 결과를 2단계 차례에 맞추기", type="primary", key=key,
                  disabled=not plan_id):
         data, err = post_json(
             f"{DISTRIBUTOR}/api/v1/distribute/{plan_id}/adjust",
@@ -1980,17 +1938,17 @@ def render_roster_organizer(history: list[dict], plan_id: str,
     """팀별 명단(가로=팀 · 세로=가나다순) + 일자별 면접 순서표."""
     st.subheader("② 팀별 면접 순서 잡기")
     st.caption(
+        "① 에서 만든 배정 결과 그대로입니다 — 여기서 팀을 다시 고르지 않습니다. "
         "팀마다 지원자를 가나다순으로 세우고, [면접 순서 잡기]를 누르면 날짜마다 학력이 "
         "고르게 섞이도록 차례를 정해 하루 8명씩(30분 면접 + 5분 휴식) 나눕니다. "
         "하루 안에서는 박사 → 석사 → 학사 순으로 같은 학력끼리 붙여 놓습니다."
     )
 
-    sources = {}
-    if any(v.get("kind") == KIND_TEAM and v.get("is_active") for v in history):
-        sources["1단계에서 올린 팀별 명단"] = "versions"
-    if plan_id:
-        sources["방금 나눈 팀 배정 결과"] = "plan"
-    if not sources:
+    # 명단은 ① 이 만든 배정 결과 하나에서만 온다. 예전에는 여기서 '1단계 파일'
+    # 과 '배정 결과' 중 하나를 고르게 했는데, 파일 쪽을 골라 순서를 잡아도 부서에
+    # 나가는 명단과 4단계 시간표는 배정 결과를 따라서 둘이 갈라졌다. 1단계 나눔을
+    # 그대로 쓰고 싶으면 ① 의 [팀 배정하기] 가 그 일을 한다 — 고르는 자리는 거기다.
+    if not plan_id:
         st.info(
             "아직 팀이 나뉜 명단이 없습니다. 1단계에서 만든 확정 명단을 팀별로 나눈 뒤 "
             "바로 순서를 잡아 드립니다."
@@ -2001,8 +1959,8 @@ def render_roster_organizer(history: list[dict], plan_id: str,
                 f"{DISTRIBUTOR}/api/v1/distribute/plan",
                 {
                     "round_id": round_id, "master_version_id": master_id,
-                    "allow_duplicate": True, "duplicate_score_threshold": 0.8,
-                    "created_by": actor,
+                    "mode": "inherit", "allow_duplicate": True,
+                    "duplicate_score_threshold": 0.8, "created_by": actor,
                 },
                 timeout=180.0,
             )
@@ -2015,74 +1973,13 @@ def render_roster_organizer(history: list[dict], plan_id: str,
                 st.rerun()
         return
 
-    def pick_rosters(kind: str) -> tuple[dict, str | None]:
-        """고른 쪽 명단을 읽어 온다 — 올린 파일 그대로냐, 방금 계산한 결과냐."""
-        if kind == "versions":
-            return team_rosters_from_versions(history), None
-        applicants, err = fetch_json(
-            f"{DISTRIBUTOR}/api/v1/distribute/{plan_id}/applicants"
-        )
-        return (team_rosters_from_plan(applicants or []), err)
-
-    choice = st.radio("어느 명단으로 할까요", list(sources), horizontal=True,
-                      key="r_source")
-    st.caption(
-        "**1단계에서 올린 팀별 명단** — 각 팀이 직접 정해서 올린 `희망지원자_팀이름` "
-        "파일 그대로입니다. 부서가 이미 합의해 둔 배정을 손대지 않고 쓰고 싶을 때 "
-        "고릅니다. 두 팀이 같은 사람을 적어 냈으면 그 사람은 두 번 들어간 채로 "
-        "남습니다(중복면접).\n\n"
-        "**방금 나눈 팀 배정 결과** — 위 ① 에서 규칙대로 다시 계산한 배정입니다. "
-        "지망 순위 · 직무/전공 · 학사와 대학원 비율 · 팀 정원을 따져 한 사람을 원칙적으로 "
-        "한 팀에만 붙입니다. 그래서 사람 수는 같아도 팀이 바뀐 사람이 생길 수 있습니다.\n\n"
-        "어느 쪽을 고르든 **부서에 나가는 명단과 4단계 시간표는 ① 배정 결과의 팀을 "
-        "따릅니다.** 파일 쪽을 골랐다면 그 나눔을 배정 결과에 반영해야 여기서 보신 "
-        "명단이 그대로 나갑니다 — 다르면 아래에서 알려 드립니다."
+    applicants, err = fetch_json(
+        f"{DISTRIBUTOR}/api/v1/distribute/{plan_id}/applicants"
     )
-    rosters, err = pick_rosters(sources[choice])
     if err:
         st.error(err)
         return
-
-    # 여기서 고른 명단은 '보기' 가 아니라 앞으로 나갈 명단이다. 배정 결과와
-    # 다르면 3단계가 배정 결과대로 보내 버리므로, 고른 자리에서 바로 맞춘다.
-    if sources[choice] != "plan" and plan_id:
-        plan_rosters, perr = pick_rosters("plan")
-        if not perr:
-            want, names = split_map(rosters)
-            now, _ = split_map(plan_rosters)
-            render_team_gap(plan_id, team_moves(want, now, names), "r_align")
-
-    if len(sources) > 1:
-        other = next(k for k in sources if k != choice)
-        other_rosters, oerr = pick_rosters(sources[other])
-        if not oerr:
-            gap = roster_diff(rosters, other_rosters)
-            with st.expander(
-                f"두 명단은 어떻게 다른가 — 지금 고른 [{choice}] vs [{other}]"
-            ):
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric(f"{choice}", f"{gap['left_people']}명",
-                          f"{gap['left_rows']}건 · 중복 {gap['left_dup']}명")
-                m2.metric(f"{other}", f"{gap['right_people']}명",
-                          f"{gap['right_rows']}건 · 중복 {gap['right_dup']}명")
-                m3.metric("팀이 다른 사람", f"{len(gap['moved'])}명")
-                m4.metric("한쪽에만 있는 사람",
-                          f"{len(gap['only_left']) + len(gap['only_right'])}명")
-                st.caption(
-                    "건수는 명단에 적힌 줄 수, 인원은 사람 수입니다 — 둘이 다르면 같은 "
-                    "사람이 여러 팀에 들어가 있다는 뜻입니다."
-                    + (f" · [{choice}] 에만 있는 사람 {len(gap['only_left'])}명"
-                       f" · [{other}] 에만 있는 사람 {len(gap['only_right'])}명"
-                       if gap["only_left"] or gap["only_right"] else "")
-                )
-                if gap["moved"]:
-                    st.dataframe(
-                        pd.DataFrame(gap["moved"]).rename(
-                            columns={"왼쪽 팀": choice, "오른쪽 팀": other}),
-                        width="stretch", hide_index=True, height=300,
-                    )
-                else:
-                    st.info("두 명단의 팀 배정이 모두 같습니다.")
+    rosters = team_rosters_from_plan(applicants or [])
 
     rosters = {team: rows for team, rows in rosters.items() if rows}
     if not rosters:
@@ -2330,7 +2227,7 @@ def render_distribution() -> None:
     else:
         st.caption("1단계에서 확정 명단을 만들면 그 명단이 아래 기준 명단으로 잡힙니다.")
 
-    st.subheader("① 팀 배정하기")
+    st.subheader("① 팀별 명단 만들기")
     label = {
         v["version_id"]: f"{v.get('file_name') or '이름 없는 파일'} · "
                          f"{v.get('applicant_count')}명 · {str(v.get('created_at'))[:16]}"
@@ -2339,21 +2236,43 @@ def render_distribution() -> None:
     prefer = st.session_state.get("master_version_id")
     ids = list(label)
     index = ids.index(prefer) if prefer in ids else 0
-
-    c1, c2, c3 = st.columns([4, 1, 1])
-    master_id = c1.selectbox("기준이 되는 지원자 명단", ids, index=index,
+    master_id = st.selectbox("기준이 되는 지원자 명단", ids, index=index,
                              format_func=lambda v: label[v], key="d_master")
-    allow_dup = c2.checkbox("두 팀이 같이 보기 허용", value=True, key="d_dup",
-                            help="한 지원자를 두 팀이 함께 검토할 수 있게 합니다.")
-    threshold = c3.number_input("같이 볼 기준 점수", 0.0, 1.0, 0.8, 0.05, key="d_thr")
 
-    if st.button("🧮 팀 배정하기", type="primary", key="d_plan"):
+    # 두 길은 서로 배타적이다. 승계는 부서가 이미 나눈 명단을 그대로 옮기고,
+    # 재배치는 그 나눔을 버리고 점수로 다시 섞는다 — 어느 쪽이든 결과는 한 곳
+    # (배정 결과)에만 남아서, 부서에 나가는 명단도 4단계 시간표도 그것을 따른다.
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**1단계에서 나눈 대로**")
+        st.caption(
+            "취합파일의 `담당팀` 을 그대로 옮깁니다 — 각 팀이 `희망지원자_팀이름` 으로 "
+            "올린 명단이 곧 배정입니다. 두 팀이 같은 사람을 적어 냈으면 두 팀 다 "
+            "봅니다(중복면접). 정원도 학사·대학원 비율도 손대지 않습니다."
+        )
+        run_inherit = st.button("🧮 팀 배정하기", type="primary", key="d_plan",
+                                width="stretch")
+    with c2:
+        st.markdown("**규칙대로 새로 섞기**")
+        st.caption(
+            "1단계 나눔을 버리고 처음부터 다시 나눕니다. 지망 조직 · 직무 · 전공 · "
+            "학사와 대학원 비율 · 팀 정원을 따져 한 사람을 한 팀에 붙입니다."
+        )
+        threshold = st.number_input(
+            "같이 볼 기준 점수", 0.0, 1.0, 0.8, 0.05, key="d_thr",
+            help="1등 팀 점수 대비 2등 팀 점수의 비율입니다. 0.8 이면 2등 팀이 1등의 "
+                 "80% 이상일 때 두 팀이 함께 봅니다 — 낮출수록 중복면접이 늘어납니다.",
+        )
+        run_shuffle = st.button("🔀 명단 재배치", key="d_shuffle", width="stretch")
+
+    if run_inherit or run_shuffle:
         data, perr = post_json(
             f"{DISTRIBUTOR}/api/v1/distribute/plan",
             {
                 "round_id": round_id,
                 "master_version_id": master_id,
-                "allow_duplicate": allow_dup,
+                "mode": "inherit" if run_inherit else "auto",
+                "allow_duplicate": True,
                 "duplicate_score_threshold": float(threshold),
                 "created_by": actor,
             },
@@ -2366,6 +2285,15 @@ def render_distribution() -> None:
             st.session_state["plan_summary"] = data
             clear_caches()
             st.rerun()
+
+    made = st.session_state.get("plan_summary") or {}
+    if made.get("unknown_teams"):
+        st.warning(
+            "취합파일의 `담당팀` 에 모르는 팀 이름이 있었습니다 — "
+            + " · ".join(made["unknown_teams"])
+            + ". 그 이름만 적힌 지원자는 어느 팀에도 배정하지 않았습니다. "
+            "1단계 파일 이름이 `희망지원자_팀이름` 형식인지 확인해 주세요."
+        )
 
     plan_id = plan_field("d_plan_id")
     if plan_id:
@@ -2393,7 +2321,11 @@ def render_distribution() -> None:
     s4.metric("상태", say(summary.get("status"), STATUS_LABELS))
     st.caption(
         f"{str(summary.get('created_at') or '')[:16].replace('T', ' ')} · "
-        f"{summary.get('created_by') or '-'} 님이 만든 배정입니다."
+        f"{summary.get('created_by') or '-'} 님이 "
+        + ("**1단계에서 나눈 대로** 만든 배정입니다 — 취합파일의 `담당팀` 을 그대로 "
+           "옮겼습니다."
+           if summary.get("mode") == "inherit" else
+           "**규칙대로 새로 섞어** 만든 배정입니다 — 1단계 팀 나눔은 쓰지 않았습니다.")
     )
 
     team_counts = summary.get("team_counts") or {}
@@ -2405,6 +2337,12 @@ def render_distribution() -> None:
             counts["정원"] = [target.get(team) for team in counts.index]
         st.dataframe(counts, width="stretch")
         st.bar_chart(counts, height=280)
+        if summary.get("duplicate_count"):
+            st.caption(
+                f"'배정 인원' 은 그 팀이 주로 맡는 사람 수입니다 — 두 팀이 같이 보는 "
+                f"{summary['duplicate_count']}명은 상대 팀 쪽에는 세지 않았으므로, "
+                "아래 명단과 팀별 엑셀에는 그만큼 더 들어 있습니다."
+            )
 
     unassigned = summary.get("unassigned") or []
     if unassigned:
@@ -2424,7 +2362,10 @@ def render_distribution() -> None:
                                     key="d_team_f")
         shown = adf[adf["팀"].isin(pick_teams)] if teams else adf
         st.dataframe(shown, width="stretch", hide_index=True, height=460)
-        st.caption(f"{len(shown)} / {len(adf)}명 보는 중 (같이 보는 인원은 뺀 확정 명단)")
+        st.caption(
+            f"{len(shown)} / {len(adf)}자리 보는 중 — 두 팀이 같이 보는 사람은 "
+            "팀마다 한 줄씩, 두 줄로 들어 있습니다(면접도 두 번입니다)."
+        )
         st.download_button(
             "⬇ 확정 명단 CSV", shown.to_csv(index=False).encode("utf-8-sig"),
             file_name=f"확정명단_{round_id}.csv", mime="text/csv", key="d_csv",
@@ -2474,7 +2415,8 @@ def render_distribution() -> None:
                     st.error(merr)
                 else:
                     clear_caches()
-                    # 옮기면 '조정됨' 으로 돌아온다 — 오른쪽 확정 버튼도 바로 살린다
+                    # 아직 확정 전이면 '조정됨' 으로 돌아와 오른쪽 확정 버튼이 살아나고,
+                    # 이미 확정했으면 확정인 채로 남는다 (02 adjust_plan 이 그렇게 둔다).
                     approved = str(data.get("status") or "").lower() == "approved"
                     st.success(
                         f"옮겼습니다 — 지금 상태 {say(data.get('status'), STATUS_LABELS)}"
@@ -2482,6 +2424,11 @@ def render_distribution() -> None:
 
     with c2:
         st.markdown("**이대로 확정할까요**")
+        if not approved:
+            st.caption(
+                "확정해야 3단계에서 부서로 명단을 보낼 수 있습니다 — 확정 전에는 "
+                "배정이 더 바뀔 수 있기 때문입니다."
+            )
         # 확정한 배정은 다시 확정할 수도, 되돌릴 수도 없다 (서버가 409 로 막는다).
         # 눌리지 않게 해 두고, 대신 무엇을 하면 되는지 알려 준다.
         if approved:
@@ -2493,9 +2440,9 @@ def render_distribution() -> None:
                 + (f" · {who} 님" if who else "")
             )
             st.caption(
-                "확정한 뒤에는 다시 확정하거나 되돌릴 수 없습니다. 고치려면 왼쪽 "
-                "[사람 옮기기] 로 옮기거나(다시 ‘조정됨’ 이 되어 확정할 수 있습니다), "
-                "① 에서 새로 배정하세요."
+                "확정한 뒤에는 다시 확정하거나 되돌릴 수 없습니다. 왼쪽 [사람 옮기기] "
+                "로는 확정한 뒤에도 고칠 수 있고 확정 상태는 그대로 남습니다 — 아예 "
+                "다시 나누려면 ① 에서 새로 배정하세요."
             )
         if st.button("✅ 이대로 확정", type="primary", key="d_approve",
                      disabled=approved):
@@ -2927,12 +2874,26 @@ def render_send(selected: list[dict]) -> None:
     now, _ = split_map(team_rosters_from_plan(applicants))
     mismatch = render_team_gap(plan_id, team_moves(want, now, names), "c_align")
 
+    # 확정하지 않은 배정은 아직 고치는 중이라는 뜻이다. 그대로 내보내면 부서가 받은
+    # 명단과 그 뒤에 고친 배정이 갈라진다 — 팀 어긋남과 함께, 명단이 부서로 나가기
+    # 전에 통과해야 하는 두 개의 문이다.
+    summary, _ = (fetch_json(f"{DISTRIBUTOR}/api/v1/distribute/{plan_id}")
+                  if plan_id else (None, None))
+    approved = str((summary or {}).get("status") or "").lower() == "approved"
+
+    if not plan_id:
+        st.warning("2단계에서 팀별 명단을 먼저 만들어 주세요.")
+    elif not mismatch and not approved:
+        st.warning(
+            "**2단계 배정을 아직 확정하지 않았습니다.** 2단계 ④ 에서 [이대로 확정] 을 "
+            "누르면 보낼 수 있습니다 — 확정 전에는 배정이 더 바뀔 수 있어, 부서가 받아 "
+            "둔 명단과 나중 배정이 갈라집니다."
+        )
+
     c1, c2 = st.columns([1, 3])
     if c1.button("📤 명단 보내기", type="primary", key="c_publish",
-                 disabled=mismatch):
-        if not plan_id:
-            st.warning("2단계에서 팀별 명단을 먼저 만들어 주세요.")
-        elif not selected:
+                 disabled=mismatch or not approved or not plan_id):
+        if not selected:
             st.warning("현업 부서 화면에서 면접 담당자를 먼저 정해 주세요.")
         elif aerr:
             st.error(aerr)
@@ -3317,25 +3278,17 @@ def render_timetable(assignments: list[dict]) -> None:
         for row in (block.get("applicants") or [])
     }
 
-    # 두 팀 이상이 같은 사람을 보겠다고 적어 냈으면 그 사람은 '중복면접' 이다.
-    # 배정 결과는 한 사람을 한 팀에만 붙이고 시간표에도 한 줄로만 들어오므로,
-    # 시간표만 봐서는 알 수 없다 — 2단계와 같은 출처(1단계에 올라온 팀별 희망
-    # 명단)에서 가져와야 여기서도 같은 사람에게 같은 표가 붙는다.
-    version_history, _ = fetch_json(
-        f"{VERSION_MANAGER}/api/v1/versions/{round_id}/history"
-    )
+    # 두 팀이 같이 보는 사람은 시간표에 두 줄로 들어온다 — 자리가 둘이기 때문이다.
+    # 예전에는 배정 결과가 한 사람을 한 팀에만 붙여서 1단계 팀별 명단을 따로
+    # 읽어다 표를 달았는데, 이제는 시간표 자체가 답을 들고 있다. 실제로 두 번
+    # 잡힌 사람만 표시된다는 뜻이기도 하다 — 한쪽 팀이 짝을 못 지어 한 번만
+    # 잡혔으면 그 사람의 면접은 정말 한 번이다.
     by_applicant: dict[str, set] = {}
-    for team, rows in team_rosters_from_versions(version_history or []).items():
-        for row in rows:
-            key = row.get("applicant_id") or row.get("name")
-            if key:
-                by_applicant.setdefault(key, set()).add(team)
+    for row in assignments:
+        key = row.get("applicant_id") or row.get("applicant_name")
+        if key:
+            by_applicant.setdefault(key, set()).add(row.get("team") or "미상")
     duplicated = {key for key, owners in by_applicant.items() if len(owners) > 1}
-    # 이번 시간표에 들어온 사람만 표를 달 수 있다 (번호 · 이름 어느 쪽으로든 맞춘다)
-    duplicated &= (
-        {row.get("applicant_id") for row in assignments}
-        | {row.get("applicant_name") for row in assignments}
-    )
 
     def dup_key(item: dict) -> str:
         """이 사람이 중복면접이면 그 열쇠(번호 또는 이름)를, 아니면 빈 글자를 준다."""
@@ -3420,9 +3373,9 @@ def render_timetable(assignments: list[dict]) -> None:
         time_grid(teams, labels, cells)
     st.caption(
         "카드 색은 부서, 위쪽 띠줄은 학력(박사 · 석사 · 학사)입니다."
-        + (f" · 두 팀 이상이 함께 보려는 {len(duplicated)}명에는 '중복면접' 표를 "
-           "달았습니다 — 시간표에는 한 칸만 잡혀 있으니 나머지 팀과는 따로 "
-           "약속을 잡으셔야 합니다." if duplicated else "")
+        + (f" · 두 팀이 함께 보는 {len(duplicated)}명에는 '중복면접' 표를 달았습니다 "
+           "— 그 사람은 이 시간표에 팀마다 한 칸씩, 서로 다른 시각에 잡혀 "
+           "있습니다." if duplicated else "")
     )
     if duplicated:
         dup_rows = [row for row in assignments if dup_key(row)]
@@ -3468,19 +3421,30 @@ def render_timetable(assignments: list[dict]) -> None:
     )
 
 
-def schedule_vs_pairs(assignments: list[dict], pairs: dict[str, str]) -> tuple:
+def schedule_vs_pairs(assignments: list[dict], by_team: dict[str, dict[str, str]]) -> tuple:
     """이 시간표가 '지금' 부서가 보낸 짝으로 만든 것인지 견준다.
 
-    (짝이 바뀐 사람, 짝도 없이 들어간 사람, 짝은 있는데 못 들어간 사람)
+    (짝이 바뀐 자리, 짝도 없이 들어간 자리, 짝은 있는데 못 들어간 자리)
+
+    자리는 (팀, 지원자)다 — 두 팀이 같이 보는 사람은 자리가 둘이고 팀마다 담당자가
+    다르므로 지원자 번호만으로 견주면 한쪽이 늘 '짝이 바뀌었다' 로 나온다.
     """
-    placed = {row.get("applicant_id"): row.get("interviewer_id") for row in assignments}
-    changed = [a for a, i in placed.items() if a in pairs and pairs[a] != i]
-    stranger = [a for a in placed if a not in pairs]
-    missing = [a for a in pairs if a not in placed]
+    placed = {
+        (row.get("team"), row.get("applicant_id")): row.get("interviewer_id")
+        for row in assignments
+    }
+    wanted = {
+        (team, applicant): interviewer
+        for team, mine in (by_team or {}).items()
+        for applicant, interviewer in mine.items()
+    }
+    changed = [seat for seat, iv in placed.items() if seat in wanted and wanted[seat] != iv]
+    stranger = [seat for seat in placed if seat not in wanted]
+    missing = [seat for seat in wanted if seat not in placed]
     return changed, stranger, missing
 
 
-def render_schedule_body(sc_id: str, pairs: dict[str, str] | None = None) -> None:
+def render_schedule_body(sc_id: str, pairs: dict[str, dict[str, str]] | None = None) -> None:
     """시간표 상세 — 지표 · 분포 · 배정 목록 · 팀별 · 히트맵 · 규칙.
 
     pairs 를 주면 그 짝으로 만든 시간표가 맞는지 견줘서 먼저 알려 준다. 회차에는
@@ -3509,25 +3473,26 @@ def render_schedule_body(sc_id: str, pairs: dict[str, str] | None = None) -> Non
     # 이 시간표가 지금 부서가 보낸 짝으로 만든 것인지 먼저 밝힌다.
     if pairs is not None:
         changed, stranger, missing = schedule_vs_pairs(assignments, pairs)
+        seats = sum(len(mine) for mine in pairs.values())
         if changed or stranger:
             st.error(
-                f"**이 시간표는 지금 부서가 보낸 짝({len(pairs)}명)으로 만든 것이 "
+                f"**이 시간표는 지금 부서가 보낸 짝({seats}건)으로 만든 것이 "
                 "아닙니다.** "
-                + (f"부서가 정한 담당자와 다르게 들어간 사람 {len(changed)}명 · "
+                + (f"부서가 정한 담당자와 다르게 들어간 자리 {len(changed)}건 · "
                    if changed else "")
-                + (f"짝도 없이 들어간 사람 {len(stranger)}명 · " if stranger else "")
+                + (f"짝도 없이 들어간 자리 {len(stranger)}건 · " if stranger else "")
                 + "위 ① 에서 '시간표 만들기' 를 다시 눌러 주세요 — 그래야 ② 의 "
                   "'면접 못 보는 사람' 과 이 시간표가 같은 명단을 봅니다."
             )
         elif missing:
-            # 짝은 지켰는데 못 들어간 사람 = 그 담당자의 가능한 시간이 모자란 것
+            # 짝은 지켰는데 못 들어간 자리 = 그 담당자의 가능한 시간이 모자란 것
             st.warning(
-                f"부서에서 보낸 짝 {len(pairs)}명 중 {len(pairs) - len(missing)}명만 "
-                f"들어갔습니다 — {len(missing)}명은 담당자의 가능한 시간이 모자라 넣지 "
+                f"부서에서 보낸 짝 {seats}건 중 {seats - len(missing)}건만 "
+                f"들어갔습니다 — {len(missing)}건은 담당자의 가능한 시간이 모자라 넣지 "
                 "못했습니다. 3단계에서 그 담당자의 가능한 시간을 더 받아 주세요."
             )
-        elif pairs:
-            st.success(f"부서가 보낸 짝 {len(pairs)}명 그대로 만든 시간표입니다.")
+        elif seats:
+            st.success(f"부서가 보낸 짝 {seats}건 그대로 만든 시간표입니다.")
 
     if not assignments:
         st.warning("시간표에 들어간 사람이 없습니다.")
@@ -3707,7 +3672,9 @@ def render_excluded(selected: list[dict], plan_id: str) -> None:
     st.subheader("② 면접 못 보는 사람")
     doc = load_handoff(round_id)
     teams_doc = doc.get("teams") or {}
-    pairs = handoff_pairs(doc)
+    # 짝은 팀마다 따로 센다 — 같이 보는 사람은 한 팀에서만 짝이 지어졌을 수 있고,
+    # 그때 나머지 한 팀에서는 여전히 '면접 못 보는 사람' 이다.
+    by_team = handoff_pairs_by_team(doc)
     if not teams_doc:
         st.info("3단계에서 명단을 보내고 부서가 짝을 지으면 여기에 남는 사람이 보입니다.")
         return
@@ -3715,13 +3682,14 @@ def render_excluded(selected: list[dict], plan_id: str) -> None:
     out_ap, out_iv, stale = [], [], []
     for team, block in sorted(teams_doc.items()):
         used = set(((block.get("submitted") or {}).get("pairs") or {}).values())
+        paired = by_team.get(team) or {}
         out_ap += [{**row, "team": team} for row in (block.get("applicants") or [])
-                   if row["applicant_id"] not in pairs]
+                   if row["applicant_id"] not in paired]
         out_iv += [{**row, "team": team} for row in (block.get("interviewers") or [])
                    if row["interviewer_id"] not in used]
         # 부서가 보낸 뒤에 명단이나 담당자가 바뀌어 무효가 된 짝
         stale += [team for a in ((block.get("submitted") or {}).get("pairs") or {})
-                  if a not in pairs]
+                  if a not in paired]
     total_ap = sum(len(b.get("applicants") or []) for b in teams_doc.values())
     total_iv = sum(len(b.get("interviewers") or []) for b in teams_doc.values())
 
@@ -3813,9 +3781,16 @@ def render_scheduling() -> None:
         f"이번 회차에 정한 면접 담당자 {len(picked)}명"
         + (" — 정해 둔 사람이 없으면 등록된 담당자 전체로 짭니다." if not picked else "")
     )
+    sent_by_team = handoff_pairs_by_team(load_handoff(round_id))
     sent = handoff_pairs(load_handoff(round_id))
+    seats = sum(len(mine) for mine in sent_by_team.values())
     if sent:
-        st.caption(f"부서에서 짝을 지어 보낸 {len(sent)}명으로 만듭니다 — 부서가 정한 담당자는 그대로 둡니다.")
+        st.caption(
+            f"부서에서 짝을 지어 보낸 {seats}건으로 만듭니다 — 부서가 정한 담당자는 "
+            "그대로 둡니다."
+            + (f" (두 팀이 같이 보는 {seats - len(sent)}명은 면접이 두 번입니다.)"
+               if seats > len(sent) else "")
+        )
     else:
         st.info("부서에서 아직 짝을 보내지 않았습니다. 부서 화면의 '② 면접자 담당자 매칭'을 마쳐야 시간표를 만들 수 있습니다.")
 
@@ -3832,6 +3807,7 @@ def render_scheduling() -> None:
                     "round_id": round_id, "plan_id": plan_id,
                     "algorithm": algorithm, "generated_by": actor,
                     "pairs": sent,
+                    "pairs_by_team": sent_by_team,
                 },
                 timeout=180.0,
             )
@@ -3897,7 +3873,7 @@ def render_scheduling() -> None:
             st.success("확정했습니다. 이제 이 시간표는 함부로 바뀌지 않습니다.")
     a3.caption("확정해 두면 나중에 일정이 바뀌어도 이 배정은 그대로 유지됩니다.")
 
-    render_schedule_body(sc_id, pairs=sent)
+    render_schedule_body(sc_id, pairs=sent_by_team)
 
 
 def dept_todo(team: str, block: dict, doc: dict, selected: list[dict]) -> list[tuple]:
@@ -4230,11 +4206,12 @@ def render_team_view() -> None:
             for _, name, degree in sorted(left, key=lambda x: x[1])
         ], cols=5)
 
-    all_pairs = handoff_pairs(doc)
+    # 같이 보는 사람은 팀마다 한 자리씩이므로 짝도 팀마다 센다
+    paired = sum(len(mine) for mine in handoff_pairs_by_team(doc).values())
     total_ap = sum(len(b.get("applicants") or []) for b in teams_doc.values())
     st.caption(
         f"우리 팀 {len(saved)}/{len(applicants)}명 · 전체 회차로는 "
-        f"{len(all_pairs)}/{total_ap}명에게 담당자가 정해졌습니다 — 짝이 없는 사람은 "
+        f"{paired}/{total_ap}명에게 담당자가 정해졌습니다 — 짝이 없는 사람은 "
         "인사 담당자 시간표에서 '면접 못 보는 사람'으로 다시 보여 드립니다."
     )
 
@@ -4576,10 +4553,14 @@ def render_scenario() -> None:
             # 맨 위에 올라가, 4단계 ③ 이 그걸 보여 주며 ② 와 다른 말을 한다.
             body = {"round_id": sc_round, "plan_id": plan_id, "algorithm": "v5",
                     "generated_by": sc_actor}
-            sc_pairs = handoff_pairs(load_handoff(sc_round))
+            sc_doc = load_handoff(sc_round)
+            sc_pairs = handoff_pairs(sc_doc)
+            sc_by_team = handoff_pairs_by_team(sc_doc)
             if sc_pairs:
                 body["pairs"] = sc_pairs
-                add(f"  부서가 보낸 짝 {len(sc_pairs)}명으로 만듭니다")
+                body["pairs_by_team"] = sc_by_team
+                seats = sum(len(mine) for mine in sc_by_team.values())
+                add(f"  부서가 보낸 짝 {seats}건으로 만듭니다")
             data, err = post_json(
                 f"{SCHEDULER}/api/v1/schedules/generate", body, timeout=180.0,
             )

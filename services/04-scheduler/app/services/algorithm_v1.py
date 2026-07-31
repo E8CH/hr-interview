@@ -25,6 +25,7 @@ def run(
         interviewers,
         max_daily_default=constraints.max_daily_default,
         pinned=constraints.pairs,
+        pinned_by_team=constraints.pairs_by_team,
     )
 
     ordered = sorted(applicants, key=lambda a: (-a.priority_score, a.applicant_id))

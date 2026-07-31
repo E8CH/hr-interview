@@ -31,6 +31,7 @@ def run(
         interviewers,
         max_daily_default=constraints.max_daily_default,
         pinned=constraints.pairs,
+        pinned_by_team=constraints.pairs_by_team,
     )
 
     by_team = hierarchical.group_by_team(applicants)

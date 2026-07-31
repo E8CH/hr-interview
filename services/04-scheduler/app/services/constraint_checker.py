@@ -3,6 +3,7 @@
 하드 제약 (하나라도 걸리면 RULE_VIOLATED 이벤트 발행)
   TEAM_CONFLICT          같은 팀 동시간 중복 (규칙2, HARD)
   INTERVIEWER_CONFLICT   면접관 동시간 중복
+  APPLICANT_CONFLICT     지원자 동시간 중복 (두 팀이 같이 보는 사람)
   DAILY_LIMIT_EXCEEDED   면접관 1일 타임 한도 초과 (max_daily / 8타임 상한)
   AVAILABILITY_VIOLATION 응답한 가용 시간대 밖 배정
   UNKNOWN_SLOT           정의되지 않은 요일/시간대
@@ -39,6 +40,8 @@ def check_hard_constraints(
 
     team_slots: dict[tuple[str, str, str], list[str]] = defaultdict(list)
     iv_slots: dict[tuple[str, str, str], list[str]] = defaultdict(list)
+    # 같이 보는 사람은 자리가 둘이다 — 그 둘이 같은 시각이면 사람이 쪼개져야 한다
+    applicant_slots: dict[tuple[str, str, str], list[str]] = defaultdict(list)
     iv_day: Counter = Counter()
 
     for a in items:
@@ -62,6 +65,7 @@ def check_hard_constraints(
 
         team_slots[(team, day, hour)].append(applicant_id)
         iv_slots[(iv_id, day, hour)].append(applicant_id)
+        applicant_slots[(applicant_id, day, hour)].append(team)
         iv_day[(iv_id, day)] += 1
 
         meta = ivs.get(iv_id)
@@ -113,6 +117,19 @@ def check_hard_constraints(
                     "hour": hour,
                     "applicant_ids": applicant_ids,
                     "message": f"{iv_id} {day} {hour} 중복 배정 {len(applicant_ids)}건",
+                }
+            )
+
+    for (applicant_id, day, hour), teams in sorted(applicant_slots.items()):
+        if len(teams) > 1:
+            violations.append(
+                {
+                    "code": "APPLICANT_CONFLICT",
+                    "applicant_id": applicant_id,
+                    "day": day,
+                    "hour": hour,
+                    "teams": teams,
+                    "message": f"{applicant_id} {day} {hour} 두 곳 동시 면접 ({', '.join(teams)})",
                 }
             )
 

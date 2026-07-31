@@ -1,7 +1,7 @@
 """공통 도메인 타입 — 모든 서비스가 참조"""
 from typing import Literal
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # 리터럴 타입
 RoundId = str
@@ -29,6 +29,9 @@ class Applicant(BaseModel):
     advisor: str | None = None
     prev_applications: int = 0
     doc_result: str
+    #: 1단계에서 이 사람을 적어 낸 팀들 (취합파일 '담당팀' 컬럼). 두 팀이 같이
+    #: 적어 냈으면 둘 다 들어 있다. 비어 있으면 아무 팀도 지목하지 않은 사람이다.
+    assigned_teams: list[str] = Field(default_factory=list)
 
 
 class Interviewer(BaseModel):

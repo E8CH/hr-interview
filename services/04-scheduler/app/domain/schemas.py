@@ -76,6 +76,10 @@ class GenerateConstraints(BaseModel):
     # 부서가 확정한 짝 (지원자 사번 → 담당자 사번). 여기 있는 지원자는
     # 이 담당자에게만 붙는다. 시간표는 시간만 정한다.
     pairs: dict[str, str] = Field(default_factory=dict)
+    # 팀별 짝 {팀: {지원자 사번: 담당자 사번}}. 두 팀이 같이 보는 사람은 팀마다
+    # 담당자가 다르므로 지원자 사번 하나로는 담을 수 없다 — 그 팀 자리에는
+    # 여기 적힌 담당자를 쓰고, 팀이 여기 없으면 위 pairs 로 되돌아간다.
+    pairs_by_team: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 class GenerateRequest(BaseModel):
@@ -87,6 +91,9 @@ class GenerateRequest(BaseModel):
     # None = 짝 개념 없이 예전처럼 자유 배정(테스트 · 이전 호출자용).
     # {} = 부서가 아직 아무도 매칭하지 않았다 → 배치할 사람이 없다.
     pairs: dict[str, str] | None = None
+    # 팀별 짝 {팀: {지원자: 담당자}} — 두 팀이 같이 보는 사람 때문에 필요하다.
+    # 주면 그 팀 자리는 여기를 따르고, 여기 없는 팀만 pairs 를 본다.
+    pairs_by_team: dict[str, dict[str, str]] | None = None
 
     @field_validator("algorithm")
     @classmethod

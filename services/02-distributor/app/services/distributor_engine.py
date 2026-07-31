@@ -8,6 +8,10 @@
    4-2. 학위비율(대학원 목표 비율) 편차를 줄이는 스왑 패스 → `GRAD_BALANCE`
 5. 1위 대비 2위 점수 비율이 임계값 이상이면 중복 배포 (`DUPLICATE_REVIEW`)
 6. 모든 배정에 최소 2개 태그 보장
+
+`distribute()` 는 위 파이프라인(=명단 재배치)이고, `inherit()` 는 1단계에서 팀이
+직접 적어 낸 '담당팀' 을 그대로 옮기는 길이다. 기본은 승계 — 부서가 이미 나눈
+명단이 있으면 그게 정답이고, 재배치는 그걸 버리겠다고 고를 때만 돈다.
 """
 from __future__ import annotations
 
@@ -22,6 +26,7 @@ from app.services.scorer import (
     is_graduate,
     passes_prefilter,
     score_against_all,
+    score_candidate,
 )
 
 #: 규칙 1 (SOFT) — 대학원 비율 목표 ±20%p
@@ -34,6 +39,12 @@ GRAD_SWAP_SCORE_BUDGET = 6.0
 GRAD_SWAP_MAX_ITER = 200
 
 MIN_TAGS = 2
+
+#: 점수로 고른 자리가 아니라 1단계 명단을 그대로 옮긴 배정이라는 표시
+INHERIT_TAG = "TEAM_INHERITED"
+
+#: 그 팀의 조직 조건에는 안 맞는데 팀이 직접 적어 냈다 — 승계에서만 나온다
+ORG_UNMATCHED_TAG = "ORG_UNMATCHED"
 
 
 @dataclass
@@ -80,6 +91,8 @@ class DistributionResult:
     duplicate_count: int
     unassigned: list[str]
     filtered_count: int
+    #: 승계 배정에서 '담당팀' 에 적혀 있었지만 팀 프로필에 없던 이름 (오타·폐지된 팀)
+    unknown_teams: list[str] = field(default_factory=list)
 
 
 def filter_applicants(applicants: list[Applicant]) -> list[Applicant]:
@@ -336,4 +349,85 @@ def distribute(
         duplicate_count=duplicate_count,
         unassigned=unassigned,
         filtered_count=len(targets),
+    )
+
+
+def inherit(
+    applicants: list[Applicant], profiles: list[TeamProfile]
+) -> DistributionResult:
+    """1단계 '담당팀' 을 그대로 배정으로 옮긴다 — 점수로 다시 나누지 않는다.
+
+    부서가 이미 "이 사람은 우리가 본다" 고 적어 낸 명단이다. 정원도 학위비율도
+    건드리지 않는 게 맞다 — 여기서 손대는 순간 부서가 본 명단과 배정이 갈라진다.
+    두 팀이 같은 사람을 적어 냈으면 그대로 두 자리로 남긴다(중복면접).
+
+    점수와 태그는 화면이 근거를 보여 줄 수 있게 같이 계산하지만, 배정을 바꾸지는
+    않는다. 조직 조건에 안 맞는 사람도 팀이 골랐으면 그 팀에 남는다 —
+    `ORG_UNMATCHED` 로 표시만 해 둔다.
+
+    걸러 내는 건 1차서류·R&D 사전필터뿐이다(`filtered_count`). 담당팀이 비었거나
+    아는 팀이 하나도 없으면 배정하지 않고 `unassigned` 로 올린다.
+    """
+    targets = filter_applicants(applicants)
+    known = {p.team_name: p for p in profiles}
+
+    assignments: list[Assignment] = []
+    members: dict[str, list[str]] = {team: [] for team in known}
+    unassigned: list[str] = []
+    unknown_teams: list[str] = []
+    duplicate_count = 0
+
+    for applicant in targets:
+        teams = []
+        for team in applicant.assigned_teams:
+            if team in known:
+                teams.append(team)
+            elif team not in unknown_teams:
+                unknown_teams.append(team)
+        if not teams:
+            unassigned.append(applicant.applicant_id)
+            continue
+
+        scored: list[tuple[str, float, list[str]]] = []
+        for team in teams:
+            score, tags = score_candidate(applicant, known[team])
+            if score <= INELIGIBLE_SCORE:
+                score, tags = 0.0, [ORG_UNMATCHED_TAG]
+            scored.append((team, score, tags))
+        # 점수 높은 팀이 주 팀 — 같은 점수면 담당팀에 적힌 순서를 지킨다
+        scored.sort(key=lambda row: -row[1])
+
+        primary_team, primary_score, primary_tags = scored[0]
+        members[primary_team].append(applicant.applicant_id)
+        assignments.append(
+            Assignment(
+                applicant_id=applicant.applicant_id,
+                team_name=primary_team,
+                score=primary_score,
+                tags=_ensure_min_tags([*primary_tags, INHERIT_TAG]),
+                is_duplicate=False,
+                primary_team=None,
+            )
+        )
+        for team, score, tags in scored[1:]:
+            duplicate_count += 1
+            assignments.append(
+                Assignment(
+                    applicant_id=applicant.applicant_id,
+                    team_name=team,
+                    score=score,
+                    tags=_ensure_min_tags([*tags, INHERIT_TAG, "DUPLICATE_REVIEW"]),
+                    is_duplicate=True,
+                    primary_team=primary_team,
+                )
+            )
+
+    return DistributionResult(
+        assignments=assignments,
+        team_counts={team: len(ids) for team, ids in sorted(members.items())},
+        total_applicants=len(targets) - len(unassigned),
+        duplicate_count=duplicate_count,
+        unassigned=unassigned,
+        filtered_count=len(targets),
+        unknown_teams=sorted(unknown_teams),
     )

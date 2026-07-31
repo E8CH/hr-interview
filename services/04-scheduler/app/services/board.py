@@ -6,6 +6,11 @@ place()는 아래를 모두 만족할 때만 성공하므로 하드 위반이 0�
   2) 면접관 시간 충돌 금지 → (interviewer, day, hour) 유일
   3) 일일 타임 한도 초과 금지 → min(max_daily, MAX_SLOTS_PER_DAY)
   4) 면접관 가용성 밖 배정 금지
+  5) 지원자 시간 충돌 금지 → (applicant, day, hour) 유일
+
+5)는 두 팀이 같이 보는 사람 때문에 생겼다. 그런 사람은 02에서 자리가 둘로 오므로
+같은 사람이 같은 시각에 두 팀 면접장에 앉는 시간표가 나올 수 있었다 — 팀도 면접관도
+서로 다르니 1)·2)로는 걸리지 않는다.
 """
 from __future__ import annotations
 
@@ -23,11 +28,18 @@ class Board:
         interviewers: list[InterviewerIn],
         max_daily_default: int = 6,
         pinned: dict[str, str] | None = None,
+        pinned_by_team: dict[str, dict[str, str]] | None = None,
     ) -> None:
         self.max_daily_default = max_daily_default
         # 부서가 확정해 보낸 짝 (지원자 → 면접 담당자). 이 사람들은 담당자를
         # 고르지 않고 정해진 사람에게만 붙인다 — 시간(요일·시각)만 찾는다.
         self.pinned: dict[str, str] = dict(pinned or {})
+        # 팀별 짝. 두 팀이 같이 보는 사람은 팀마다 담당자가 다르므로 지원자
+        # 번호만으로는 한쪽을 덮어써 버린다 — 팀 자리를 먼저 보고, 그 팀 것이
+        # 없을 때만 위 pinned 로 되돌아간다.
+        self.pinned_by_team: dict[str, dict[str, str]] = {
+            team: dict(pairs) for team, pairs in (pinned_by_team or {}).items()
+        }
         self.by_team: dict[str, list[InterviewerIn]] = defaultdict(list)
         self.by_id: dict[str, InterviewerIn] = {}
         for iv in interviewers:
@@ -36,6 +48,8 @@ class Board:
 
         self.team_slot: dict[tuple[str, str, str], str] = {}
         self.iv_slot: dict[tuple[str, str, str], str] = {}
+        # 같이 보는 사람이 같은 시각에 두 팀에 앉지 않게 — 값은 앉힌 팀 이름
+        self.applicant_slot: dict[tuple[str, str, str], str] = {}
         self.iv_day: Counter = Counter()
         self.iv_total: Counter = Counter()
         self.day_count: Counter = Counter()
@@ -50,6 +64,13 @@ class Board:
 
     def team_slot_free(self, team: str, day: str, hour: str) -> bool:
         return (team, day, hour) not in self.team_slot
+
+    def applicant_slot_free(self, applicant_id: str | None, day: str, hour: str) -> bool:
+        """그 사람이 이 시각에 이미 다른 면접에 잡혀 있지 않은가.
+
+        두 팀이 같이 보기로 한 사람만 해당한다 — 자리가 둘이니 시각은 달라야 한다.
+        """
+        return not applicant_id or (applicant_id, day, hour) not in self.applicant_slot
 
     def _adjacent(self, interviewer_id: str, day: str, hour: str) -> bool:
         """그 사람이 바로 앞 · 뒤 시간에 이미 면접이 있는가.
@@ -72,6 +93,15 @@ class Board:
             and self.iv_day[(iv.interviewer_id, day)] < self._daily_cap(iv)
         )
 
+    def pinned_for(self, team: str, applicant_id: str | None) -> str | None:
+        """이 자리(팀 × 지원자)에 부서가 정해 보낸 담당자 — 없으면 None."""
+        if not applicant_id:
+            return None
+        mine = self.pinned_by_team.get(team)
+        if mine is not None:
+            return mine.get(applicant_id)
+        return self.pinned.get(applicant_id)
+
     def find_interviewer(
         self, team: str, day: str, hour: str, applicant_id: str | None = None
     ) -> InterviewerIn | None:
@@ -89,10 +119,13 @@ class Board:
 
         priority=1(리더)을 뒤로 미뤄 v1에서 관측된 '리더 90% 부하'를 방지한다.
         """
-        pinned_id = self.pinned.get(applicant_id) if applicant_id else None
+        pinned_id = self.pinned_for(team, applicant_id)
         if pinned_id is not None:
             iv = self.by_id.get(pinned_id)
-            if iv is None or not self._fits(iv, day, hour):
+            # 남의 팀 담당자면 이 자리는 비운다. 두 팀이 같이 보는 사람은 팀별
+            # 짝이 없으면 한쪽 팀 담당자로 뭉개지는데, 그 사람을 상대 팀
+            # 면접장에 세우면 팀 명단과 시간표가 어긋난다.
+            if iv is None or iv.team != team or not self._fits(iv, day, hour):
                 return None
             return iv
 
@@ -113,6 +146,7 @@ class Board:
     def can_place(self, team: str, day: str, hour: str, applicant_id: str | None = None) -> bool:
         return (
             self.team_slot_free(team, day, hour)
+            and self.applicant_slot_free(applicant_id, day, hour)
             and self.find_interviewer(team, day, hour, applicant_id) is not None
         )
 
@@ -123,6 +157,8 @@ class Board:
         if day not in DAYS or hour not in HOURS:
             return None
         if not self.team_slot_free(applicant.team, day, hour):
+            return None
+        if not self.applicant_slot_free(applicant.applicant_id, day, hour):
             return None
         iv = self.find_interviewer(applicant.team, day, hour, applicant.applicant_id)
         if iv is None:
@@ -140,6 +176,7 @@ class Board:
         )
         self.team_slot[(applicant.team, day, hour)] = applicant.applicant_id
         self.iv_slot[(iv.interviewer_id, day, hour)] = applicant.applicant_id
+        self.applicant_slot[(applicant.applicant_id, day, hour)] = applicant.team
         self.iv_day[(iv.interviewer_id, day)] += 1
         self.iv_total[iv.interviewer_id] += 1
         self.day_count[day] += 1

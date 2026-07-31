@@ -18,7 +18,9 @@ from sqlalchemy import (
     Integer,
     String,
     create_engine,
+    inspect,
     select,
+    text,
 )
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -71,6 +73,10 @@ class DistributionPlanORM(Base):
     master_version_id: Mapped[str] = mapped_column(String(64), nullable=False)
     total_applicants: Mapped[int] = mapped_column(Integer, default=0)
     duplicate_count: Mapped[int] = mapped_column(Integer, default=0)
+    #: 이 배정안을 무엇으로 만들었는지 — "inherit"(1단계 담당팀 승계) 또는
+    #: "auto"(점수로 새로 섞은 명단 재배치). 화면이 이 값으로 출처를 밝힌다.
+    #: 컬럼이 생기기 전에 만든 배정안은 NULL 이고, 그때는 전부 재배치였다.
+    mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -129,9 +135,34 @@ def db_session() -> Iterator[Session]:
         session.close()
 
 
+def _add_missing_columns() -> None:
+    """이미 만들어 둔 SQLite 파일에 모델에만 있는 컬럼을 덧붙인다.
+
+    create_all 은 없는 테이블만 만들지 컬럼은 못 늘린다. PoC 는 DB 파일을 지우지
+    않고도 새 컬럼(예: distribution_plans.mode)이 붙도록 여기서 채워 넣는다.
+    값을 채울 수 없는 필수 컬럼은 건드리지 않는다 — 사람이 손대야 한다.
+    """
+    engine = get_engine()
+    inspector = inspect(engine)
+    present = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        for name, table in Base.metadata.tables.items():
+            if name not in present:
+                continue
+            have = {c["name"] for c in inspector.get_columns(name)}
+            for column in (c for c in table.columns if c.name not in have):
+                if not column.nullable:
+                    continue
+                conn.execute(text(
+                    f'ALTER TABLE "{name}" ADD COLUMN "{column.name}" '
+                    f'{column.type.compile(engine.dialect)}'
+                ))
+
+
 def init_db() -> None:
     """테이블 생성 + 5개 팀 프로필 시딩 (멱등)."""
     Base.metadata.create_all(get_engine())
+    _add_missing_columns()
     with new_session() as session:
         existing = set(session.scalars(select(TeamProfileORM.team_name)).all())
         for profile in seed_profiles():

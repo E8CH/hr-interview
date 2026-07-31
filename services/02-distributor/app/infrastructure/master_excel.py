@@ -35,6 +35,10 @@ COLUMN_MAP = {
 
 REQUIRED_COLUMNS = ("지원자 번호", "1지망_조직", "1지망_직무", "R&D/N-R&D", "1차서류 결과")
 
+#: 01(병합)이 팀별 배포본에서 읽어 새겨 둔 팀 나눔. 한 사람을 두 팀이 적어 냈으면
+#: 쉼표로 이어 붙어 있다. 필수는 아니다 — 이 컬럼이 없던 시절의 취합파일도 읽는다.
+TEAM_COLUMN = "담당팀"
+
 
 class MasterFileError(Exception):
     """취합파일 구조가 예상과 다름."""
@@ -52,6 +56,19 @@ def _to_float(value) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _split_teams(value) -> list[str]:
+    """'AI솔루션팀, 전극기술팀' → ['AI솔루션팀', '전극기술팀'] (순서·중복 정리)."""
+    text = _clean(value)
+    if not text:
+        return []
+    out: list[str] = []
+    for piece in text.split(","):
+        team = piece.strip()
+        if team and team not in out:
+            out.append(team)
+    return out
 
 
 def _to_int(value) -> int:
@@ -113,6 +130,13 @@ def load_master_excel(source: str | Path | bytes) -> list[Applicant]:
                 return None
             return row[position]
 
+        team_col = index.get(TEAM_COLUMN)
+        teams = (
+            _split_teams(row[team_col])
+            if team_col is not None and team_col < len(row)
+            else []
+        )
+
         applicants.append(
             Applicant(
                 applicant_id=applicant_id,
@@ -128,6 +152,7 @@ def load_master_excel(source: str | Path | bytes) -> list[Applicant]:
                 advisor=_clean(cell("advisor")),
                 prev_applications=_to_int(cell("prev_applications")),
                 doc_result=_clean(cell("doc_result")) or "",
+                assigned_teams=teams,
             )
         )
 

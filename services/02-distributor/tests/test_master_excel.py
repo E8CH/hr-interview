@@ -4,6 +4,7 @@ from openpyxl import Workbook
 
 from app.infrastructure.master_excel import (
     COLUMN_MAP,
+    TEAM_COLUMN,
     MasterFileError,
     load_master_excel,
     load_team_roster,
@@ -111,6 +112,31 @@ def test_no_header_row_raises(tmp_path):
     workbook.save(tmp_path / "onerow.xlsx")
     with pytest.raises(MasterFileError, match="데이터가 없습니다"):
         load_master_excel(tmp_path / "onerow.xlsx")
+
+
+def test_team_column_is_split_on_comma(tmp_path):
+    """01이 새겨 둔 '담당팀' — 두 팀이 같이 적어 냈으면 쉼표로 이어져 있다."""
+    header = HEADERS + [TEAM_COLUMN]
+    rows = [
+        _row("500") + ["AI솔루션팀, 전극기술팀"],
+        _row("501") + ["미래혁신팀"],
+        _row("502") + [None],
+        _row("503") + ["AI솔루션팀,,  AI솔루션팀 , 전극기술팀"],
+    ]
+    path = _write(tmp_path / "teams.xlsx", header, rows)
+    teams = {a.applicant_id: a.assigned_teams for a in load_master_excel(path)}
+
+    assert teams["500"] == ["AI솔루션팀", "전극기술팀"]
+    assert teams["501"] == ["미래혁신팀"]
+    assert teams["502"] == []
+    # 빈 조각·중복·앞뒤 공백은 정리한다
+    assert teams["503"] == ["AI솔루션팀", "전극기술팀"]
+
+
+def test_team_column_is_optional(tmp_path):
+    """담당팀이 생기기 전 취합파일도 그대로 읽힌다."""
+    path = _write(tmp_path / "old.xlsx", HEADERS, [_row("510")])
+    assert load_master_excel(path)[0].assigned_teams == []
 
 
 def test_team_roster_skips_header_and_blanks(tmp_path):

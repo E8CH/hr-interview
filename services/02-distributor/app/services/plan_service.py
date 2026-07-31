@@ -7,7 +7,14 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.domain.plan import Assignment, Move, PlanSummary
+from app.domain.plan import (
+    MODE_AUTO,
+    MODE_INHERIT,
+    Assignment,
+    Move,
+    PlanMode,
+    PlanSummary,
+)
 from app.events import publish_adjusted, publish_approved, publish_plan_created, is_halted
 from app.infrastructure.db import (
     AssignmentReasonORM,
@@ -16,7 +23,7 @@ from app.infrastructure.db import (
     utcnow,
 )
 from app.infrastructure.version_client import MasterNotFound, VersionClient
-from app.services.distributor_engine import distribute
+from app.services.distributor_engine import distribute, inherit
 
 
 class ServiceError(Exception):
@@ -34,6 +41,8 @@ def _plan_summary(plan: DistributionPlanORM, team_counts: dict[str, int]) -> Pla
         plan_id=plan.plan_id,
         round_id=plan.round_id,
         status=plan.status,
+        # mode 가 생기기 전 배정안은 NULL — 그때는 전부 재배치였다
+        mode=plan.mode or MODE_AUTO,
         master_version_id=plan.master_version_id,
         total_applicants=plan.total_applicants,
         team_counts=team_counts,
@@ -82,6 +91,7 @@ def list_plans_for_round(session: Session, round_id: str) -> list[dict]:
             "plan_id": row.plan_id,
             "round_id": row.round_id,
             "status": row.status,
+            "mode": row.mode or MODE_AUTO,
             "total_applicants": row.total_applicants,
             "duplicate_count": row.duplicate_count,
             "created_by": row.created_by,
@@ -95,12 +105,18 @@ def create_plan(
     session: Session,
     round_id: str,
     master_version_id: str,
+    mode: PlanMode = MODE_AUTO,
     allow_duplicate: bool = True,
     duplicate_score_threshold: float = 0.8,
     created_by: str | None = None,
     client: VersionClient | None = None,
 ) -> PlanSummary:
-    """배포 파이프라인 실행 후 배포안을 저장하고 이벤트를 발행한다."""
+    """배포 파이프라인 실행 후 배포안을 저장하고 이벤트를 발행한다.
+
+    `mode="inherit"` 이면 1단계에서 팀이 적어 낸 '담당팀' 을 그대로 옮기고,
+    `mode="auto"` 면 점수로 5팀에 새로 섞는다(명단 재배치). 중복 허용·기준 점수는
+    재배치에서만 쓰인다 — 승계에서는 팀이 적어 낸 만큼이 그대로 중복이다.
+    """
     if is_halted(round_id):
         raise ServiceError(
             "INTEGRITY_VIOLATION",
@@ -118,18 +134,29 @@ def create_plan(
     except MasterNotFound as exc:
         raise ServiceError("NOT_FOUND", str(exc), status_code=404) from exc
 
-    result = distribute(
-        applicants,
-        profiles,
-        allow_duplicate=allow_duplicate,
-        duplicate_score_threshold=duplicate_score_threshold,
-    )
+    if mode == MODE_INHERIT:
+        if not any(a.assigned_teams for a in applicants):
+            raise ServiceError(
+                "VALIDATION_FAILED",
+                "취합파일에 '담당팀' 이 비어 있습니다 — 1단계에서 팀별 명단을 함께 "
+                "올려 다시 합치거나, [명단 재배치] 로 새로 나눠 주세요",
+                status_code=400,
+            )
+        result = inherit(applicants, profiles)
+    else:
+        result = distribute(
+            applicants,
+            profiles,
+            allow_duplicate=allow_duplicate,
+            duplicate_score_threshold=duplicate_score_threshold,
+        )
     elapsed = time.perf_counter() - started
 
     plan = DistributionPlanORM(
         plan_id=str(uuid4()),
         round_id=round_id,
         status="draft",
+        mode=mode,
         master_version_id=master_version_id,
         total_applicants=result.total_applicants,
         duplicate_count=result.duplicate_count,
@@ -160,6 +187,7 @@ def create_plan(
     summary.elapsed_seconds = round(elapsed, 3)
     summary.unassigned = result.unassigned
     summary.filtered_count = result.filtered_count
+    summary.unknown_teams = result.unknown_teams
 
     publish_plan_created(
         round_id=round_id,
@@ -199,6 +227,8 @@ def get_plan_detail(session: Session, plan_id: str) -> dict:
         "plan_id": plan.plan_id,
         "round_id": plan.round_id,
         "status": plan.status,
+        # 이 명단을 무엇으로 만들었는지 — 화면이 출처를 밝힌다
+        "mode": plan.mode or MODE_AUTO,
         "master_version_id": plan.master_version_id,
         "total_applicants": plan.total_applicants,
         "duplicate_count": plan.duplicate_count,
@@ -214,7 +244,13 @@ def get_plan_detail(session: Session, plan_id: str) -> dict:
 
 
 def get_plan_applicants(session: Session, plan_id: str) -> list[dict]:
-    """확정 명단(중복 배정 제외) — 04(스케줄러)가 이걸 그대로 배정에 쓴다.
+    """확정 명단 — 04(스케줄러)가 이걸 그대로 배정에 쓴다.
+
+    두 팀이 같이 보기로 한 사람은 자리가 둘이므로 **행도 둘** 나간다. 예전에는
+    여기서 중복 자리를 빼고 내려줬는데, 그러면 팀에 나가는 엑셀(export)과 부서가
+    받는 명단에는 그 사람이 있는데 시간표에는 한 팀에만 잡혀서, 나머지 한 팀은
+    면접 볼 사람이 시간표에 없었다. 자리가 둘이면 면접도 두 번이다.
+    `is_duplicate`/`primary_team` 으로 어느 쪽이 주 팀인지 구분한다.
 
     snapshot 에 마스터 원본 행이 통째로 들어 있으므로 학위·학점·타겟랩까지
     같이 내려준다. 04가 규칙1(학위 균형) 계산에 degree_type 이 필요하다.
@@ -222,11 +258,13 @@ def get_plan_applicants(session: Session, plan_id: str) -> list[dict]:
     get_plan(session, plan_id)  # 없는 plan_id 면 404
     rows = session.scalars(
         select(AssignmentReasonORM)
-        .where(
-            AssignmentReasonORM.plan_id == plan_id,
-            AssignmentReasonORM.is_duplicate.is_(False),
+        .where(AssignmentReasonORM.plan_id == plan_id)
+        .order_by(
+            AssignmentReasonORM.team_name,
+            # 주 팀 자리를 먼저 — 같은 사람의 두 행 중 어느 쪽이 기준인지 고정된다
+            AssignmentReasonORM.is_duplicate,
+            AssignmentReasonORM.score.desc(),
         )
-        .order_by(AssignmentReasonORM.team_name, AssignmentReasonORM.score.desc())
     ).all()
     out: list[dict] = []
     for row in rows:
@@ -243,6 +281,9 @@ def get_plan_applicants(session: Session, plan_id: str) -> list[dict]:
                 "target_lab": snapshot.get("target_lab"),
                 "score": row.score,
                 "reason_tags": list(row.tags or []),
+                # 같이 보는 자리인지 · 그때 주 팀은 어디인지
+                "is_duplicate": row.is_duplicate,
+                "primary_team": row.primary_team,
             }
         )
     return out
@@ -317,7 +358,13 @@ def reset_round(session: Session, round_id: str) -> dict:
 def adjust_plan(
     session: Session, plan_id: str, moves: list[Move], actor: str | None = None
 ) -> PlanSummary:
-    """HR 수동 조정 — 배정 팀 변경 후 HR_MANUAL 태그 부착."""
+    """HR 수동 조정 — 배정 팀 변경 후 HR_MANUAL 태그 부착.
+
+    두 팀이 같이 보는 사람은 행이 둘이다. `from` 으로 지목한 그 행 하나만 옮기므로
+    나머지 자리는 그대로 남는다 — 같이 보기를 풀려는 게 아니라 한쪽 팀만 바꾸는
+    조정이다. 이미 그 사람이 있는 팀으로는 옮기지 않는다(한 팀이 같은 사람을 두 번
+    보게 된다). 주 팀 자리를 옮기면 같이 보는 자리의 `primary_team` 도 따라간다.
+    """
     plan = get_plan(session, plan_id)
     if plan.status == "rejected":
         raise ServiceError("VALIDATION_FAILED", "반려된 배포안은 조정할 수 없습니다", status_code=409)
@@ -330,21 +377,31 @@ def adjust_plan(
     for move in moves:
         if move.to not in valid_teams:
             raise ServiceError("VALIDATION_FAILED", f"알 수 없는 팀: {move.to}", status_code=400)
-        row = session.scalars(
+        seats = session.scalars(
             select(AssignmentReasonORM).where(
                 AssignmentReasonORM.plan_id == plan_id,
                 AssignmentReasonORM.applicant_id == move.applicant_id,
-                AssignmentReasonORM.team_name == move.from_,
-                AssignmentReasonORM.is_duplicate.is_(False),
             )
-        ).first()
+        ).all()
+        row = next((s for s in seats if s.team_name == move.from_), None)
         if row is None:
             raise ServiceError(
                 "NOT_FOUND",
                 f"배정 없음: applicant_id={move.applicant_id}, team={move.from_}",
                 status_code=404,
             )
+        if any(s is not row and s.team_name == move.to for s in seats):
+            raise ServiceError(
+                "VALIDATION_FAILED",
+                f"{move.to} 은 이미 applicant_id={move.applicant_id} 를 보고 있습니다",
+                status_code=409,
+            )
         row.team_name = move.to
+        if not row.is_duplicate:
+            # 주 팀이 바뀌었으니 같이 보는 자리가 가리키는 이름도 바뀐다
+            for other in seats:
+                if other is not row and other.primary_team == move.from_:
+                    other.primary_team = move.to
         tags = list(row.tags or [])
         if "HR_MANUAL" not in tags:
             tags.append("HR_MANUAL")

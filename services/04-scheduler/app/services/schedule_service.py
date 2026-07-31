@@ -190,15 +190,28 @@ def generate(db: Session, req: GenerateRequest) -> tuple[Schedule, RuleReport, l
     if req.pairs is not None:
         known = {iv.interviewer_id for iv in interviewers}
         pairs = {a: i for a, i in req.pairs.items() if i in known}
-        candidates = [a for a in applicants if a.applicant_id in pairs]
-        unmatched = [a for a in applicants if a.applicant_id not in pairs]
+        # 두 팀이 같이 보는 사람은 자리가 둘이고 팀마다 담당자가 다르다 —
+        # 지원자 번호 하나로 묶으면 한 팀의 짝이 다른 팀 것에 덮인다.
+        by_team = {
+            team: {a: i for a, i in (mine or {}).items() if i in known}
+            for team, mine in (req.pairs_by_team or {}).items()
+        }
+
+        def _paired(seat: ApplicantIn) -> bool:
+            mine = by_team.get(seat.team)
+            return seat.applicant_id in (pairs if mine is None else mine)
+
+        candidates = [a for a in applicants if _paired(a)]
+        unmatched = [a for a in applicants if not _paired(a)]
         if not candidates:
             raise ValidationFailed(
                 "부서에서 담당자를 정해 보낸 지원자가 없습니다. "
                 "부서 화면의 '② 면접자 담당자 매칭'을 먼저 마쳐야 합니다.",
                 {"round_id": req.round_id, "지원자": len(applicants)},
             )
-        constraints = req.constraints.model_copy(update={"pairs": pairs})
+        constraints = req.constraints.model_copy(
+            update={"pairs": pairs, "pairs_by_team": by_team}
+        )
 
     started = time.perf_counter()
     plan = registry.run(req.algorithm, candidates, interviewers, constraints)

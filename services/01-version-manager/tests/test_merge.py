@@ -259,6 +259,81 @@ def test_compare_reports_master_as_mergeable(client, sample_bytes, sample_round_
     assert compared["mergeable_version_ids"] == [master["version_id"]]
 
 
+# ------------------------------------------------------------------ 담당팀 컬럼
+
+def _merge_with_teams(client, sample_bytes, round_id, *, first=10, second=(5, 15)):
+    """마스터 + 팀별 배포본 두 개를 올리고 병합한다 (겹치는 구간이 중복면접이 된다)."""
+    table = read_table(sample_bytes)
+    master = _register(client, "취합파일.xlsx", sample_bytes, round_id)
+    _register(client, "희망지원자_AI솔루션팀.xlsx",
+              write_table(table, table.rows[:first]), round_id)
+    _register(client, "희망지원자_전극기술팀.xlsx",
+              write_table(table, table.rows[second[0]:second[1]]), round_id)
+
+    r = client.post("/api/v1/versions/merge", json={
+        "round_id": round_id,
+        "base_version_id": master["version_id"],
+        "version_ids": [master["version_id"]],
+        "actor": "pytest",
+    })
+    assert r.status_code == 201, r.text
+    return table, r.json()["data"]
+
+
+def _preview_teams(client, version_id, limit=500) -> dict[str, str]:
+    preview = client.get(
+        f"/api/v1/versions/by-id/{version_id}/preview", params={"limit": limit}
+    ).json()["data"]
+    assert "담당팀" in preview["columns"]
+    return {row["지원자 번호"]: row["담당팀"] for row in preview["rows"]}
+
+
+def test_merge_writes_team_column_from_distribution_files(
+    client, sample_bytes, sample_round_id
+):
+    """팀 이름은 파일명에만 있다 — 병합이 그것을 취합본에 새겨야 뒤 단계가 읽는다."""
+    table, merged = _merge_with_teams(client, sample_bytes, sample_round_id)
+    teams = _preview_teams(client, merged["version_id"])
+    ids = table.ids()
+
+    assert teams[ids[0]] == "AI솔루션팀"          # 첫 파일에만 든 사람
+    assert teams[ids[12]] == "전극기술팀"          # 둘째 파일에만 든 사람
+    assert teams[ids[-1]] == ""                   # 아무 팀도 적어 내지 않은 사람
+    assert merged["team_column"] == "담당팀"
+    assert merged["teamed_count"] == 15
+    assert len(merged["teamless"]) == len(ids) - 15
+
+
+def test_merge_joins_two_teams_with_comma(client, sample_bytes, sample_round_id):
+    """두 팀이 같이 보겠다고 적어 낸 사람은 한 칸에 쉼표로 남는다."""
+    table, merged = _merge_with_teams(client, sample_bytes, sample_round_id)
+    teams = _preview_teams(client, merged["version_id"])
+
+    shared = table.ids()[5:10]
+    assert all(teams[aid] == "AI솔루션팀, 전극기술팀" for aid in shared)
+    assert merged["team_duplicate_count"] == len(shared)
+
+
+def test_merge_overwrites_existing_team_column(client, sample_bytes, sample_round_id):
+    """이미 담당팀이 든 취합본을 다시 기준으로 삼아도 컬럼이 늘지 않는다."""
+    _table, first = _merge_with_teams(client, sample_bytes, sample_round_id)
+
+    again = client.post("/api/v1/versions/merge", json={
+        "round_id": sample_round_id,
+        "base_version_id": first["version_id"],
+        "version_ids": [first["version_id"]],
+        "actor": "pytest",
+    })
+    assert again.status_code == 201, again.text
+    second = again.json()["data"]
+
+    columns = client.get(
+        f"/api/v1/versions/by-id/{second['version_id']}/preview", params={"limit": 1}
+    ).json()["data"]["columns"]
+    assert columns.count("담당팀") == 1
+    assert second["teamed_count"] == first["teamed_count"]
+
+
 # ------------------------------------------------------------------ 회차 초기화
 
 def test_reset_round_clears_history(client, sample_bytes, sample_round_id):

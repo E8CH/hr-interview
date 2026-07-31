@@ -9,8 +9,10 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domain.models import Version
@@ -31,6 +33,11 @@ KIND_TEAM = svc.KIND_TEAM
 
 # 배포본 파일명 규칙: 희망지원자_{팀}.xlsx
 _TEAM_FILE = re.compile(r"희망지원자[_\-\s]*(?P<team>.+)$")
+
+#: 취합본에 새기는 팀 나눔 컬럼. 두 팀 이상이 같은 사람을 적어 냈으면 쉼표로 잇는다.
+#: 02(배포)가 같은 이름으로 읽어 배정을 만든다 — 이름을 바꾸면 양쪽을 함께 고쳐야 한다.
+TEAM_HEADER = "담당팀"
+TEAM_SEPARATOR = ", "
 
 # 값이 어긋나도 알릴 필요가 없는 컬럼 (파일마다 관례적으로 달라지는 것들)
 IGNORED_COLUMNS = {"", "순번", "No", "no"}
@@ -176,6 +183,60 @@ def _compare_masters(
     return conflicts, only_in, identical
 
 
+def team_assignment_map(session: Session, round_id: str) -> dict[str, list[str]]:
+    """지원자 번호 → 그 사람을 적어 낸 팀들 (팀 이름 가나다순).
+
+    팀별 배포본은 팀 이름이 파일명에만 있고 헤더는 마스터와 한 글자도 다르지 않다.
+    그래서 병합할 때 여기서 읽어 취합본에 새겨 두지 않으면, 부서가 나눈 팀은
+    1단계를 지나는 순간 사라진다 — 그 공백 때문에 2단계에서 본 명단과 부서가
+    받는 명단이 갈라졌다.
+    """
+    versions = session.scalars(
+        select(Version).where(
+            Version.round_id == round_id,
+            Version.kind == KIND_TEAM,
+            Version.is_active.is_(True),
+        )
+    ).all()
+
+    out: dict[str, list[str]] = {}
+    for version in sorted(versions, key=lambda v: v.team_name or v.file_name or ""):
+        team = (version.team_name or "").strip()
+        if not team:
+            continue
+        for applicant_id in version.applicant_ids or []:
+            teams = out.setdefault(norm(applicant_id), [])
+            if team not in teams:
+                teams.append(team)
+    return out
+
+
+def _write_team_column(
+    base: SheetTable, rows: list[list], teams_of: dict[str, list[str]]
+) -> tuple[SheetTable, list[list]]:
+    """행마다 '담당팀' 을 채운다 — 컬럼이 이미 있으면 덮고, 없으면 뒤에 붙인다.
+
+    덮어쓰는 쪽이 중요하다. 한 번 병합한 취합본을 다시 기준으로 삼는 경우가 있어
+    붙이기만 하면 같은 이름의 컬럼이 늘어나고, 뒤엣것은 아무도 읽지 않는다.
+    """
+    header = list(base.header)
+    columns = {norm(name): index for index, name in enumerate(header) if norm(name)}
+    target = columns.get(TEAM_HEADER)
+    if target is None:
+        target = len(header)
+        header.append(TEAM_HEADER)
+
+    width = len(header)
+    filled: list[list] = []
+    for row in rows:
+        padded = list(row)[:width]
+        padded += [None] * (width - len(padded))
+        applicant_id = norm(row[base.id_col]) if base.id_col < len(row) else ""
+        padded[target] = TEAM_SEPARATOR.join(teams_of.get(applicant_id, []))
+        filled.append(padded)
+    return replace(base, header=header), filled
+
+
 def _project(row: list, source: SheetTable, base: SheetTable) -> list:
     """다른 파일의 행을 기준 파일의 컬럼 순서에 맞춰 옮겨 담는다."""
     if source is base:
@@ -250,7 +311,14 @@ def merge_versions(
         used[chosen] += 1
         merged_rows.append(_project(maps[chosen][aid], tables[chosen], base))
 
-    data = write_table(base, merged_rows)
+    # 팀 나눔을 취합본에 새긴다 — 이 컬럼이 이후 모든 단계의 팀 기준이 된다
+    teams_of = team_assignment_map(session, round_id)
+    merged_ids = [
+        norm(row[base.id_col]) for row in merged_rows if base.id_col < len(row)
+    ]
+    out_table, merged_rows = _write_team_column(base, merged_rows, teams_of)
+
+    data = write_table(out_table, merged_rows)
     name = file_name or f"취합_최종_{round_id}.xlsx"
     version = svc.register_version(
         session,
@@ -270,6 +338,13 @@ def merge_versions(
         "unresolved": unresolved,
         "source_version_ids": ids,
         "created_at": version.created_at,
+        # 새겨 넣은 팀 나눔 — 화면이 "몇 명에게 팀이 붙었는지" 를 바로 보여 준다
+        "team_column": TEAM_HEADER,
+        "teamed_count": sum(1 for aid in merged_ids if teams_of.get(aid)),
+        "team_duplicate_count": sum(
+            1 for aid in merged_ids if len(teams_of.get(aid) or []) > 1
+        ),
+        "teamless": [aid for aid in merged_ids if not teams_of.get(aid)],
     }
 
 
