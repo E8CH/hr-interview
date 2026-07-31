@@ -2654,6 +2654,7 @@ def render_interviewer_generator() -> None:
 
     data = unwrap(r) or {}
     clear_caches()
+    st.session_state.pop("i_team_f", None)   # 팀 이름이 바뀌었을 수 있다
     message = (f"{data.get('parsed')}명을 등록했습니다 (새로 {data.get('created')}명 · "
                f"고침 {data.get('updated')}명)")
     if auto_select:
@@ -2716,6 +2717,9 @@ def render_interviewers() -> None:
                 else:
                     data = unwrap(r) or {}
                     clear_caches()
+                    # 새 명단의 팀 이름은 예전과 다를 수 있다. 아래 '팀 골라 보기'
+                    # 에 남아 있던 옛 팀을 지워, 새 명단 전체가 보이게 한다.
+                    st.session_state.pop("i_team_f", None)
                     st.success(
                         f"{data.get('parsed')}명을 등록했습니다 "
                         f"(새로 {data.get('created')}명 · 고침 {data.get('updated')}명) "
@@ -2769,6 +2773,16 @@ def render_interviewers() -> None:
             "이메일": row.get("email") or "",
             "사번": row["interviewer_id"],
         })
+
+    # 고른 팀에 아무도 없으면 표가 빈 칸 하나 없이 만들어져, 아래에서 '면접 참여'
+    # 칸을 찾다 화면이 죽는다. 명단을 새로 올려 팀 이름이 바뀌었을 때 그렇게 된다.
+    if not rows:
+        st.info(
+            "고른 팀에 담당자가 없습니다 — 위 ‘팀 골라 보기’ 에서 팀을 하나 이상 "
+            "골라 주세요."
+            + (f" 지금 명단에 있는 팀: {' · '.join(teams)}" if teams else "")
+        )
+        return
 
     st.caption(
         "‘가능 시간’ 은 오전(09·10·11시) · 오후(14·15·16시) 두 덩어리로 고릅니다. "
