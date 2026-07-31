@@ -1622,6 +1622,92 @@ def roster_diff(left: dict[str, list[dict]], right: dict[str, list[dict]]) -> di
     }
 
 
+def split_map(rosters: dict[str, list[dict]]) -> tuple[dict[str, list[str]], dict[str, str]]:
+    """팀별 명단을 '사람 → 속한 팀들' 과 '사람 → 이름' 으로 편다."""
+    where: dict[str, list[str]] = {}
+    names: dict[str, str] = {}
+    for team in sorted(rosters or {}):
+        for row in rosters[team] or []:
+            key = str(row.get("applicant_id") or row.get("name") or "").strip()
+            if not key:
+                continue
+            where.setdefault(key, []).append(team)
+            names.setdefault(key, row.get("name") or key)
+    return where, names
+
+
+def team_moves(want: dict[str, list[str]], now: dict[str, list[str]],
+               names: dict[str, str]) -> dict:
+    """2단계에서 나눈 팀에 배정 결과를 맞추려면 누구를 어디로 옮겨야 하는가.
+
+    부서에 나가는 명단도, 시간표도 배정 결과(플랜)의 팀을 따른다. 그래서 2단계에서
+    다른 나눔으로 차례를 잡아 두면 인사 담당자가 본 명단과 부서가 받는 명단이
+    달라진다 — 같은 83명인데 54명이 다른 팀으로 간 회차가 있었다.
+
+    화면에서만 맞춰 보여 주면 더 나빠진다. 부서가 남의 팀 사람과 짝을 지으면
+    스케줄러는 그 짝을 '지원자의 플랜 팀' 자리에 앉히므로(board.place 는
+    applicant.team 으로 자리를 잡는다) 같은 팀 동시간 중복 금지가 엉뚱한 팀에
+    걸린다. 팀 나눔은 한 군데 — 배정 결과 — 에서만 정해져야 한다.
+    """
+    moves, rows = [], []
+    for key in sorted(want):
+        mine, here = want[key], now.get(key)
+        if not here or set(here) & set(mine):
+            continue        # 아직 배정 결과에 없거나, 이미 그 팀들 중 하나에 있다
+        moves.append({"applicant_id": key, "from": here[0], "to": mine[0],
+                      "reason": "인사 담당자가 2단계에서 정한 팀"})
+        rows.append({"성명": names.get(key, key), "지금 배정 결과": here[0],
+                     "2단계에서 나눈 팀": mine[0]})
+    return {
+        "moves": moves,
+        "rows": rows,
+        # 2단계 나눔에서 두 팀이 함께 보겠다고 한 사람 — 배정 결과는 한 팀만
+        # 담으므로 조정으로는 두 팀에 넣을 수 없다. 숨기지 않고 이름을 알린다.
+        "dup": sorted(names.get(k, k) for k, v in want.items() if len(v) > 1),
+        "unknown": sorted(names.get(k, k) for k in want if k not in now),
+    }
+
+
+def render_team_gap(plan_id: str, gap: dict, key: str) -> bool:
+    """팀 나눔이 어긋났으면 그 사실과 맞추는 버튼을 보인다 (어긋났으면 True)."""
+    if not gap["moves"]:
+        return False
+    st.error(
+        f"**2단계에서 나눈 팀과 지금 배정 결과가 {len(gap['moves'])}명 다릅니다.** "
+        "부서에 나가는 명단도 4단계 시간표도 배정 결과의 팀을 따르므로, 이대로 "
+        "두면 2단계에서 보신 것과 다른 명단이 부서에 갑니다."
+    )
+    with st.expander(f"팀이 다른 {len(gap['moves'])}명 보기"):
+        st.dataframe(pd.DataFrame(gap["rows"]), width="stretch", hide_index=True,
+                     height=min(420, 40 + 35 * len(gap["rows"])))
+        if gap["dup"]:
+            st.caption(
+                f"두 팀이 함께 보겠다고 한 {len(gap['dup'])}명은 배정 결과가 한 사람을 "
+                "한 팀에만 담으므로 가나다순 앞선 팀 하나로만 갑니다 — "
+                + " · ".join(gap["dup"])
+                + ". 두 팀이 다 보게 하려면 ① 에서 중복 허용으로 다시 나눠야 합니다."
+            )
+        if gap["unknown"]:
+            st.caption(f"배정 결과에 없는 {len(gap['unknown'])}명은 옮길 수 없습니다.")
+        st.caption(
+            "맞추면 팀 정원 · 학사 대학원 비율은 ① 이 계산한 값과 달라질 수 있습니다 — "
+            "옮긴 사람에게는 HR_MANUAL 표가 붙습니다."
+        )
+    if st.button("🔁 배정 결과를 2단계 나눔에 맞추기", type="primary", key=key,
+                 disabled=not plan_id):
+        data, err = post_json(
+            f"{DISTRIBUTOR}/api/v1/distribute/{plan_id}/adjust",
+            {"moves": gap["moves"], "actor": actor}, timeout=120.0,
+        )
+        if err:
+            st.error(err)
+        else:
+            clear_caches()
+            st.success(f"{len(gap['moves'])}명을 2단계에서 정한 팀으로 옮겼습니다.")
+            st.rerun()
+    return True
+
+
 HOUR_ORDER = ["09시", "10시", "11시", "12시", "13시",
               "14시", "15시", "16시", "17시", "18시"]
 
@@ -1856,12 +1942,24 @@ def render_roster_organizer(history: list[dict], plan_id: str,
         "남습니다(중복면접).\n\n"
         "**방금 나눈 팀 배정 결과** — 위 ① 에서 규칙대로 다시 계산한 배정입니다. "
         "지망 순위 · 직무/전공 · 학사와 대학원 비율 · 팀 정원을 따져 한 사람을 원칙적으로 "
-        "한 팀에만 붙입니다. 그래서 사람 수는 같아도 팀이 바뀐 사람이 생길 수 있습니다."
+        "한 팀에만 붙입니다. 그래서 사람 수는 같아도 팀이 바뀐 사람이 생길 수 있습니다.\n\n"
+        "어느 쪽을 고르든 **부서에 나가는 명단과 4단계 시간표는 ① 배정 결과의 팀을 "
+        "따릅니다.** 파일 쪽을 골랐다면 그 나눔을 배정 결과에 반영해야 여기서 보신 "
+        "명단이 그대로 나갑니다 — 다르면 아래에서 알려 드립니다."
     )
     rosters, err = pick_rosters(sources[choice])
     if err:
         st.error(err)
         return
+
+    # 여기서 고른 명단은 '보기' 가 아니라 앞으로 나갈 명단이다. 배정 결과와
+    # 다르면 3단계가 배정 결과대로 보내 버리므로, 고른 자리에서 바로 맞춘다.
+    if sources[choice] != "plan" and plan_id:
+        plan_rosters, perr = pick_rosters("plan")
+        if not perr:
+            want, names = split_map(rosters)
+            now, _ = split_map(plan_rosters)
+            render_team_gap(plan_id, team_moves(want, now, names), "r_align")
 
     if len(sources) > 1:
         other = next(k for k in sources if k != choice)
@@ -2686,19 +2784,26 @@ def render_send(selected: list[dict]) -> None:
     plan_id = round_plan_id()
     doc = load_handoff(round_id)
 
+    # 보내는 명단의 팀은 배정 결과가 정한다. 2단계에서 다른 나눔으로 차례를 잡아
+    # 뒀으면 인사 담당자가 본 명단과 부서가 받는 명단이 달라지므로, 맞추기 전에는
+    # 내보내지 않는다.
+    applicants, aerr = plan_applicants(plan_id) if plan_id else ([], None)
+    want, names = split_map(doc.get("order") or {})
+    now, _ = split_map(team_rosters_from_plan(applicants))
+    mismatch = render_team_gap(plan_id, team_moves(want, now, names), "c_align")
+
     c1, c2 = st.columns([1, 3])
-    if c1.button("📤 명단 보내기", type="primary", key="c_publish"):
+    if c1.button("📤 명단 보내기", type="primary", key="c_publish",
+                 disabled=mismatch):
         if not plan_id:
             st.warning("2단계에서 팀별 명단을 먼저 만들어 주세요.")
         elif not selected:
             st.warning("현업 부서 화면에서 면접 담당자를 먼저 정해 주세요.")
+        elif aerr:
+            st.error(aerr)
         else:
-            applicants, aerr = plan_applicants(plan_id)
-            if aerr:
-                st.error(aerr)
-            else:
-                doc = publish_handoff(round_id, plan_id, applicants, selected, actor)
-                st.success(f"{len(doc.get('teams') or {})}개 팀에 명단을 보냈습니다.")
+            doc = publish_handoff(round_id, plan_id, applicants, selected, actor)
+            st.success(f"{len(doc.get('teams') or {})}개 팀에 명단을 보냈습니다.")
     c2.caption(f"마지막으로 보낸 시각 {str(doc.get('sent_at'))[:16] or '-'}")
 
     teams = doc.get("teams") or {}
