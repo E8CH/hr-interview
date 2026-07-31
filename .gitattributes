@@ -1,0 +1,4 @@
+# 컨테이너 안에서 실행되는 셸 스크립트는 반드시 LF 여야 한다.
+# CRLF 로 체크아웃되면 리눅스에서 shebang 이 깨져 "no such file or directory" 가 난다.
+*.sh text eol=lf
+Dockerfile text eol=lf

@@ -1,0 +1,12 @@
+# Streamlit 콘솔 전용 — 로컬의 .venv-ui 에 해당한다.
+#
+# 서비스 쪽(requirements.txt)과 한 환경에 담을 수 없다:
+#   fastapi 0.115.0 은 starlette<0.39 를, streamlit 1.60.0 은 starlette>=0.40 을 요구한다.
+# 로컬이 venv 를 둘로 나눠 쓰는 이유가 이것이고, 컨테이너도 같은 방식을 따른다.
+#
+# 버전은 로컬 .venv-ui 에서 실제로 동작 중인 것을 그대로 고정했다.
+# 콘솔이 st.button(width=...) 같은 최신 API 를 쓰므로 streamlit 을 내리지 말 것.
+streamlit==1.60.0
+httpx==0.28.1
+pandas==3.0.5
+openpyxl==3.1.5

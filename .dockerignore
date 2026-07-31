@@ -1,0 +1,47 @@
+# ─────────────────────────────────────────────────────────────
+# 지원자 개인정보(성명·생년월일·성별·국적·병역)가 담긴 실데이터.
+# .gitignore 와 같은 정책으로, 이미지에도 절대 굽지 않는다.
+# 이게 빠져도 각 서비스는 USE_MOCK=true 기본값으로 합성 데이터를 만든다.
+# ─────────────────────────────────────────────────────────────
+docs/
+data/
+services/*/data/
+services/*/tests/fixtures/
+# 경로를 하나 놓쳐도 새지 않도록 엑셀은 전부 막고, 합성 샘플만 되살린다
+**/*.xlsx
+!tools/fixtures/*.xlsx
+**/*.mp4
+
+# 로컬에서 만들어진 DB·업로드 파일 — 컨테이너는 /data 볼륨을 쓴다.
+# 이 DB 들에는 실제 지원자 데이터가 들어 있으므로 반드시 하위 경로까지 막는다
+# (services/01-version-manager/version_db.sqlite 등).
+**/*.sqlite
+**/*.db
+**/storage/
+
+# 파이썬 부산물
+.venv/
+.venv-ui/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+**/.pytest_cache/
+.coverage
+htmlcov/
+
+# 런타임에 필요 없는 것
+.git/
+.gitignore
+bmad/
+shared/_bmad/
+shared/_bmad-output/
+integration-tests/
+**/tests/
+**/migrations/
+*.zip
+*.bak
+*.log
+scratch_excel.txt
+docker-compose*.yml
+*.ps1
