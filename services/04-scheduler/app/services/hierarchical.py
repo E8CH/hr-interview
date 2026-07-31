@@ -201,7 +201,7 @@ def fallback_place(
         best_slot: tuple[str, str] | None = None
         for day in DAYS:
             for hour in HOURS:
-                if not board.can_place(applicant.team, day, hour):
+                if not board.can_place(applicant.team, day, hour, applicant.applicant_id):
                     continue
                 cost = 0.0
                 if board.would_break_contiguity(applicant.team, day, hour):

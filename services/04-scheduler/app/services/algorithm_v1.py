@@ -21,7 +21,11 @@ def run(
     constraints: GenerateConstraints | None = None,
 ) -> PlanResult:
     constraints = constraints or GenerateConstraints()
-    board = Board(interviewers, max_daily_default=constraints.max_daily_default)
+    board = Board(
+        interviewers,
+        max_daily_default=constraints.max_daily_default,
+        pinned=constraints.pairs,
+    )
 
     ordered = sorted(applicants, key=lambda a: (-a.priority_score, a.applicant_id))
     unassigned: list[ApplicantIn] = []

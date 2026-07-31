@@ -27,7 +27,11 @@ def run(
 ) -> PlanResult:
     constraints = constraints or GenerateConstraints()
     target = constraints.grad_ratio_target
-    board = Board(interviewers, max_daily_default=constraints.max_daily_default)
+    board = Board(
+        interviewers,
+        max_daily_default=constraints.max_daily_default,
+        pinned=constraints.pairs,
+    )
 
     by_team = hierarchical.group_by_team(applicants)
     sizes = {team: len(members) for team, members in by_team.items()}

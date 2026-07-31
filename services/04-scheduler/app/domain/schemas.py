@@ -73,6 +73,9 @@ class GenerateConstraints(BaseModel):
     grad_ratio_target: float = 0.30
     grad_ratio_tolerance: float = 0.20
     max_daily_default: int = 6
+    # 부서가 확정한 짝 (지원자 사번 → 담당자 사번). 여기 있는 지원자는
+    # 이 담당자에게만 붙는다. 시간표는 시간만 정한다.
+    pairs: dict[str, str] = Field(default_factory=dict)
 
 
 class GenerateRequest(BaseModel):
@@ -81,6 +84,9 @@ class GenerateRequest(BaseModel):
     algorithm: str = "v5"
     constraints: GenerateConstraints = Field(default_factory=GenerateConstraints)
     generated_by: str = "system"
+    # None = 짝 개념 없이 예전처럼 자유 배정(테스트 · 이전 호출자용).
+    # {} = 부서가 아직 아무도 매칭하지 않았다 → 배치할 사람이 없다.
+    pairs: dict[str, str] | None = None
 
     @field_validator("algorithm")
     @classmethod

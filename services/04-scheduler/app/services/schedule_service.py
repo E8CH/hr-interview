@@ -181,9 +181,28 @@ def generate(db: Session, req: GenerateRequest) -> tuple[Schedule, RuleReport, l
     if not interviewers:
         raise ValidationFailed("등록된 면접관이 없습니다", {"round_id": req.round_id})
 
+    # 부서가 정한 짝이 시간표의 입력이다. 짝이 없는 지원자는 시간표에 넣지
+    # 않는다 — 넣어 버리면 '면접 못 보는 사람' 명단과 시간표가 어긋난다.
+    candidates = applicants
+    unmatched: list[ApplicantIn] = []
+    constraints = req.constraints
+    if req.pairs is not None:
+        known = {iv.interviewer_id for iv in interviewers}
+        pairs = {a: i for a, i in req.pairs.items() if i in known}
+        candidates = [a for a in applicants if a.applicant_id in pairs]
+        unmatched = [a for a in applicants if a.applicant_id not in pairs]
+        if not candidates:
+            raise ValidationFailed(
+                "부서에서 담당자를 정해 보낸 지원자가 없습니다. "
+                "부서 화면의 '② 면접자 담당자 매칭'을 먼저 마쳐야 합니다.",
+                {"round_id": req.round_id, "지원자": len(applicants)},
+            )
+        constraints = req.constraints.model_copy(update={"pairs": pairs})
+
     started = time.perf_counter()
-    plan = registry.run(req.algorithm, applicants, interviewers, req.constraints)
+    plan = registry.run(req.algorithm, candidates, interviewers, constraints)
     elapsed_ms = (time.perf_counter() - started) * 1000
+    plan.unassigned = list(plan.unassigned) + unmatched
 
     report = rule_compliance(
         plan.assignments,

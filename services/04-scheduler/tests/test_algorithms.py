@@ -176,6 +176,54 @@ def test_constraints_are_honored(applicants, interviewers):
     assert len(plan.assignments) > 0
 
 
+def _round_robin_pairs(applicants, interviewers) -> dict[str, str]:
+    """지원자마다 자기 팀 담당자를 돌아가며 하나씩 붙인 짝 — 부서 매칭 흉내"""
+    by_team: dict[str, list] = {}
+    for iv in interviewers:
+        by_team.setdefault(iv.team, []).append(iv)
+    pairs = {}
+    seen: dict[str, int] = {}
+    for a in applicants:
+        team = by_team.get(a.team) or []
+        if not team:
+            continue
+        n = seen.get(a.team, 0)
+        pairs[a.applicant_id] = team[n % len(team)].interviewer_id
+        seen[a.team] = n + 1
+    return pairs
+
+
+@pytest.mark.parametrize("algorithm", ALL_ALGORITHMS)
+def test_pinned_pairs_are_never_overridden(algorithm, applicants, interviewers):
+    """부서가 정한 짝은 시간표가 바꾸지 않는다.
+
+    이 연결이 끊겨 있던 동안, 부서가 19명을 짝지어 보내도 시간표는 그중 2명만
+    남기고 17명을 다른 담당자에게 넘겨 버렸다. 시간표가 정하는 것은 시간뿐이다.
+    """
+    pairs = _round_robin_pairs(applicants, interviewers)
+    constraints = GenerateConstraints(pairs=pairs)
+    plan = registry.run(algorithm, applicants, interviewers, constraints)
+
+    wrong = [a for a in plan.assignments if a.interviewer_id != pairs[a.applicant_id]]
+    assert wrong == [], f"{algorithm}: 짝이 바뀐 배정 {wrong[:3]}"
+    assert check_hard_constraints(plan.assignments, interviewers) == []
+
+
+def test_pinned_applicant_is_dropped_when_own_interviewer_is_full(interviewers):
+    """정해진 담당자가 못 보면 다른 사람을 대신 세우지 않고 그 사람을 뺀다"""
+    iv = next(i for i in interviewers if i.team == "전극기술팀")
+    crowd = [
+        ApplicantIn(applicant_id=f"P{i:03d}", name=f"과밀{i}", team=iv.team, degree="학사")
+        for i in range(40)
+    ]
+    pairs = {a.applicant_id: iv.interviewer_id for a in crowd}
+    plan = algorithm_v5.run(crowd, interviewers, GenerateConstraints(pairs=pairs))
+
+    assert {a.interviewer_id for a in plan.assignments} == {iv.interviewer_id}
+    assert len(plan.assignments) < len(crowd)
+    assert len(plan.unassigned) == len(crowd) - len(plan.assignments)
+
+
 def test_registry_rejects_unknown_algorithm(applicants, interviewers):
     with pytest.raises(registry.UnknownAlgorithmError):
         registry.run("v99", applicants, interviewers)

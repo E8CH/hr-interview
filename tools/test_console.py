@@ -3072,7 +3072,7 @@ def render_timetable(assignments: list[dict]) -> None:
     )
 
 
-def render_schedule_body(sc_id: str) -> None:
+def render_schedule_body(sc_id: str, expected: int | None = None) -> None:
     """시간표 상세 — 지표 · 분포 · 배정 목록 · 팀별 · 히트맵 · 규칙."""
     sched, err = fetch_json(f"{SCHEDULER}/api/v1/schedules/{sc_id}")
     if err:
@@ -3090,6 +3090,16 @@ def render_schedule_body(sc_id: str) -> None:
         f"{str(sched.get('generated_at'))[:16]} 에 만든 시간표 · 상태 "
         f"{say(sched.get('status'), STATUS_LABELS)}"
     )
+
+    # 부서가 보낸 짝만 시간표에 들어간다. 그런데도 모자라면 담당자의 가능한
+    # 시간이 부족한 것이므로, 숫자만 보고 헤매지 않게 여기서 말해 준다.
+    assigned = sched.get("total_assigned") or 0
+    if expected is not None and assigned < expected:
+        st.warning(
+            f"부서에서 보낸 짝 {expected}명 중 {assigned}명만 들어갔습니다 — "
+            f"{expected - assigned}명은 담당자의 가능한 시간이 모자라 넣지 못했습니다. "
+            "3단계에서 그 담당자의 가능한 시간을 더 받아 주세요."
+        )
 
     assignments = sched.get("assignments") or []
     if not assignments:
@@ -3263,7 +3273,7 @@ def render_schedule_body(sc_id: str) -> None:
 
 def render_excluded(selected: list[dict], plan_id: str) -> None:
     """4번·부서 뷰어에서 선택되지 않은 사람 — 면접자와 담당자 양쪽을 다시 세운다."""
-    st.subheader("② 면접 못 보는 사람 — 아직 짝이 없는 사람")
+    st.subheader("② 면접 못 보는 사람")
     doc = load_handoff(round_id)
     teams_doc = doc.get("teams") or {}
     pairs = handoff_pairs(doc)
@@ -3335,7 +3345,7 @@ def render_excluded(selected: list[dict], plan_id: str) -> None:
                 file_name=f"열외인원_{round_id}.xlsx", mime=XLSX_MIME, key="s_out_xlsx",
             )
         st.caption("이 사람들은 시간표에 들어가지 않습니다 — 현업 부서 화면에서 "
-                   "짝을 지어 주면 사라집니다.")
+                   "짝을 지어 주면 사라집니다. 시간표는 여기서 남은 사람을 빼고 만듭니다.")
 
 
 def render_scheduling() -> None:
@@ -3361,16 +3371,25 @@ def render_scheduling() -> None:
         f"이번 회차에 정한 면접 담당자 {len(picked)}명"
         + (" — 정해 둔 사람이 없으면 등록된 담당자 전체로 짭니다." if not picked else "")
     )
+    sent = handoff_pairs(load_handoff(round_id))
+    if sent:
+        st.caption(f"부서에서 짝을 지어 보낸 {len(sent)}명으로 만듭니다 — 부서가 정한 담당자는 그대로 둡니다.")
+    else:
+        st.info("부서에서 아직 짝을 보내지 않았습니다. 부서 화면의 '② 면접자 담당자 매칭'을 마쳐야 시간표를 만들 수 있습니다.")
 
     if run:
         if not plan_id:
             st.warning("먼저 2단계에서 팀별 명단을 나눠 주세요.")
         else:
+            # 부서가 확정해 보낸 짝을 그대로 넘긴다. 시간표는 이 짝을 지키고,
+            # 짝이 없는 사람은 넣지 않는다 — ②의 명단과 ③의 시간표가
+            # 같은 근거를 보게 하려는 것이다.
             data, err = post_json(
                 f"{SCHEDULER}/api/v1/schedules/generate",
                 {
                     "round_id": round_id, "plan_id": plan_id,
                     "algorithm": algorithm, "generated_by": actor,
+                    "pairs": sent,
                 },
                 timeout=180.0,
             )
@@ -3428,7 +3447,7 @@ def render_scheduling() -> None:
             st.success("확정했습니다. 이제 이 시간표는 함부로 바뀌지 않습니다.")
     a3.caption("확정해 두면 나중에 일정이 바뀌어도 이 배정은 그대로 유지됩니다.")
 
-    render_schedule_body(sc_id)
+    render_schedule_body(sc_id, expected=len(sent) or None)
 
 
 def dept_todo(team: str, block: dict, doc: dict, selected: list[dict]) -> list[tuple]:

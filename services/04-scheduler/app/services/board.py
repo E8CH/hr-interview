@@ -18,11 +18,21 @@ MAX_SLOTS_PER_DAY = 8  # 명세의 "8타임 초과" 하드 상한
 
 
 class Board:
-    def __init__(self, interviewers: list[InterviewerIn], max_daily_default: int = 6) -> None:
+    def __init__(
+        self,
+        interviewers: list[InterviewerIn],
+        max_daily_default: int = 6,
+        pinned: dict[str, str] | None = None,
+    ) -> None:
         self.max_daily_default = max_daily_default
+        # 부서가 확정해 보낸 짝 (지원자 → 면접 담당자). 이 사람들은 담당자를
+        # 고르지 않고 정해진 사람에게만 붙인다 — 시간(요일·시각)만 찾는다.
+        self.pinned: dict[str, str] = dict(pinned or {})
         self.by_team: dict[str, list[InterviewerIn]] = defaultdict(list)
+        self.by_id: dict[str, InterviewerIn] = {}
         for iv in interviewers:
             self.by_team[iv.team].append(iv)
+            self.by_id[iv.interviewer_id] = iv
 
         self.team_slot: dict[tuple[str, str, str], str] = {}
         self.iv_slot: dict[tuple[str, str, str], str] = {}
@@ -55,8 +65,21 @@ class Board:
             if 0 <= near < len(band)
         )
 
-    def find_interviewer(self, team: str, day: str, hour: str) -> InterviewerIn | None:
+    def _fits(self, iv: InterviewerIn, day: str, hour: str) -> bool:
+        return (
+            iv.is_available(day, hour)
+            and (iv.interviewer_id, day, hour) not in self.iv_slot
+            and self.iv_day[(iv.interviewer_id, day)] < self._daily_cap(iv)
+        )
+
+    def find_interviewer(
+        self, team: str, day: str, hour: str, applicant_id: str | None = None
+    ) -> InterviewerIn | None:
         """해당 슬롯을 맡을 수 있는 면접관 중 붙여 앉힐 수 있는 사람을 먼저.
+
+        부서가 짝을 정해 보낸 지원자는 담당자를 고르지 않는다. 정해진 그 사람이
+        이 시간에 안 되면 다른 사람을 대신 세우는 게 아니라 그냥 이 시간을
+        포기한다 — 부서의 결정을 시간표가 뒤집지 않게 하려는 것이다.
 
         면접관 입장에서는 09시 한 건 보고 세 시간 비웠다가 15시에 또 한 건 보는
         것보다 연달아 보는 편이 낫다. 그래서 앞 · 뒤 시간에 이미 면접이 있는
@@ -66,13 +89,14 @@ class Board:
 
         priority=1(리더)을 뒤로 미뤄 v1에서 관측된 '리더 90% 부하'를 방지한다.
         """
-        candidates = [
-            iv
-            for iv in self.by_team.get(team, [])
-            if iv.is_available(day, hour)
-            and (iv.interviewer_id, day, hour) not in self.iv_slot
-            and self.iv_day[(iv.interviewer_id, day)] < self._daily_cap(iv)
-        ]
+        pinned_id = self.pinned.get(applicant_id) if applicant_id else None
+        if pinned_id is not None:
+            iv = self.by_id.get(pinned_id)
+            if iv is None or not self._fits(iv, day, hour):
+                return None
+            return iv
+
+        candidates = [iv for iv in self.by_team.get(team, []) if self._fits(iv, day, hour)]
         if not candidates:
             return None
         return min(
@@ -86,8 +110,11 @@ class Board:
             ),
         )
 
-    def can_place(self, team: str, day: str, hour: str) -> bool:
-        return self.team_slot_free(team, day, hour) and self.find_interviewer(team, day, hour) is not None
+    def can_place(self, team: str, day: str, hour: str, applicant_id: str | None = None) -> bool:
+        return (
+            self.team_slot_free(team, day, hour)
+            and self.find_interviewer(team, day, hour, applicant_id) is not None
+        )
 
     # -- 배치 -------------------------------------------------------------
     def place(
@@ -97,7 +124,7 @@ class Board:
             return None
         if not self.team_slot_free(applicant.team, day, hour):
             return None
-        iv = self.find_interviewer(applicant.team, day, hour)
+        iv = self.find_interviewer(applicant.team, day, hour, applicant.applicant_id)
         if iv is None:
             return None
 

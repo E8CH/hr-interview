@@ -86,6 +86,57 @@ def test_generate_rejects_unknown_algorithm(client):
 
 
 # --------------------------------------------------------------------------
+# 부서 매칭 종속
+# --------------------------------------------------------------------------
+def test_generate_only_schedules_matched_applicants(client):
+    """짝을 보내면 그 사람들만 시간표에 들어간다 — 나머지는 '면접 못 보는 사람'.
+
+    화면 ②의 '면접 못 보는 사람'과 ③의 '시간표에 들어간 사람'이 같은 근거를
+    보게 하려는 것이다. 예전에는 시간표가 짝을 무시하고 전원을 배정해서
+    ②는 67명이 못 본다고 하는데 ③은 83/83 이 들어갔다고 했다.
+    """
+    full = _generate(client, "v5", round_id="R2026-Q3-PAIR-A").json()["data"]
+    every = client.get(f"/api/v1/schedules/{full['schedule_id']}").json()["data"]
+    pairs = {
+        a["applicant_id"]: a["interviewer_id"]
+        for a in every["assignments"][:12]
+    }
+
+    resp = client.post(
+        "/api/v1/schedules/generate",
+        json={
+            "round_id": "R2026-Q3-PAIR-B", "plan_id": "plan-pairs",
+            "algorithm": "v5", "pairs": pairs,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()["data"]
+
+    # 배정된 사람 수는 짝 수를 넘지 않고, 모수는 회차 전체 그대로다
+    assert data["total_assigned"] <= len(pairs)
+    assert data["total_applicants"] == full["total_applicants"]
+    assert data["hard_violations"] == 0
+
+    got = client.get(f"/api/v1/schedules/{data['schedule_id']}").json()["data"]
+    for a in got["assignments"]:
+        assert a["applicant_id"] in pairs
+        assert a["interviewer_id"] == pairs[a["applicant_id"]]
+
+
+def test_generate_refuses_when_nothing_is_matched(client):
+    """부서가 아직 아무도 짝짓지 않았으면 시간표를 만들지 않는다"""
+    resp = client.post(
+        "/api/v1/schedules/generate",
+        json={
+            "round_id": "R2026-Q3-01", "plan_id": "plan-empty-pairs",
+            "algorithm": "v5", "pairs": {},
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+# --------------------------------------------------------------------------
 # 조회
 # --------------------------------------------------------------------------
 def test_get_schedule_returns_assignments(client, generated):
