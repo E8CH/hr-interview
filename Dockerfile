@@ -39,8 +39,10 @@ COPY docker/start-all.sh /usr/local/bin/start-all.sh
 RUN chmod +x /usr/local/bin/start-all.sh
 
 # DB·업로드 파일 자리. Railway 볼륨을 여기에 붙인다.
+# VOLUME 지시어는 쓰지 않는다 — Railway 빌더가 거부한다
+# ("docker VOLUME is not supported, use Railway Volumes").
+# 마운트는 Railway 쪽에서 /data 로 걸고, 여기서는 디렉터리만 만들어 둔다.
 RUN mkdir -p /data/db /data/storage
-VOLUME ["/data"]
 
 # 외부로 나가는 것은 콘솔 하나뿐. 8001~8007 은 컨테이너 내부 전용이다.
 EXPOSE 8501
