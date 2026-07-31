@@ -1,5 +1,17 @@
 # Railway 배포 가이드
 
+**배포 주소: https://hr-interview-production-62ec.up.railway.app**
+
+| 항목 | 값 |
+|---|---|
+| 프로젝트 | `reliable-rebirth` (`625272fd-bec1-4cf4-830b-1b2ff14ef120`) |
+| 서비스 | `hr-interview` |
+| 환경 | `production` |
+| 연결된 레포 | `E8CH/hr-interview` (`main` 브랜치 push 하면 자동 배포) |
+| 볼륨 | `hr-interview-volume` → `/data` (5GB) |
+
+---
+
 서비스 7개와 Streamlit 콘솔을 **한 컨테이너**에 담아 Railway 서비스 1개로 띄운다.
 
 로컬(`start_all.ps1`)과 같은 모양을 유지하는 것이 이 구성의 목적이다.
@@ -20,14 +32,34 @@
 
 ---
 
-## 순서
+## 평소 배포
 
-### 1. Railway 프로젝트 만들기
+**이미 다 연결돼 있다. `main`에 push 하면 Railway가 알아서 다시 빌드·배포한다.**
+
+```bash
+git push origin main
+```
+
+진행 상황은 이렇게 본다.
+
+```bash
+railway status                       # 배포 상태 (BUILDING/DEPLOYING/SUCCESS/FAILED)
+railway logs --build --lines 200     # 빌드가 실패했을 때
+railway logs --deployment --lines 200  # 뜬 다음 로그
+```
+
+배포가 끝나면 위 주소로 들어간다. 열리는 화면은 로컬 `http://localhost:8501`과
+같은 콘솔이다. 이후 사용법은 [README_사용자가이드.md](README_사용자가이드.md)와 동일하다.
+
+---
+
+## 처음부터 다시 만들 때
+
+### 1. 프로젝트 연결
 
 ```bash
 railway login
-railway init
-railway link      # 기존 프로젝트에 붙일 때
+railway link --project <프로젝트ID> --environment production
 ```
 
 또는 웹에서 **New Project → Deploy from GitHub repo**로 `E8CH/hr-interview`를 고른다.
@@ -35,25 +67,22 @@ railway link      # 기존 프로젝트에 붙일 때
 
 ### 2. 볼륨 붙이기 (중요)
 
-Railway 대시보드에서 서비스에 **Volume**을 추가하고 마운트 경로를 이렇게 준다.
+```bash
+railway volume --service <서비스ID> --environment <환경ID> add --mount-path /data
+```
 
-```
-/data
-```
+`--service`는 **이름이 아니라 ID**를 줘야 한다. 이름을 주면 CLI가 패닉으로 죽는다
+(`volume.rs: called Option::unwrap() on a None value`). ID는 `railway status --json`
+에서 얻는다. 대시보드에서 **Volume** 추가로 해도 같다.
 
 **이걸 빼면 재배포할 때마다 지원자 명단·시간표가 전부 사라진다.** SQLite 파일은
 `/data/db/`에, 업로드된 엑셀은 `/data/storage/<서비스이름>/`에 쌓인다.
 
-### 3. 배포
+### 3. 공개 주소 만들기
 
 ```bash
-railway up
+railway domain --service hr-interview
 ```
-
-빌드가 끝나면 **Settings → Networking → Generate Domain**으로 공개 주소를 만든다.
-열리는 화면은 로컬 `http://localhost:8501`과 같은 콘솔이다.
-
-이후 사용법은 [README_사용자가이드.md](README_사용자가이드.md)와 동일하다.
 
 ---
 
@@ -75,29 +104,30 @@ railway up
 
 ---
 
-## 확인한 것과 확인하지 못한 것
+## 실제 배포에서 확인한 것
 
-작업한 PC에 Docker가 없어서 **컨테이너를 실제로 빌드·구동해 보지는 못했다.**
-대신 컨테이너와 같은 조건을 로컬에서 재현해 다음을 확인했다.
+첫 배포(`063c1d2`)에서 다음을 확인했다.
 
-확인된 것
+- 이미지 빌드 성공 (venv 2개, 리눅스 휠로 `pip install` 완료)
+- 서비스 7개 전부 기동. 엔트리포인트가 `7/7 준비 완료 (2초)`를 찍고, 로그에
+  `Uvicorn running on http://127.0.0.1:8001`~`8007`과 `Application startup complete.`가
+  7개 모두 올라온다. Traceback 없음
+- 콘솔이 Railway가 주입한 `$PORT`(8080)에 뜬다
+- 공개 주소가 응답한다 — `/_stcore/health` → 200, `/` → 200
 
-- 서비스 7개 전부 컨테이너와 같은 환경변수(절대경로 `DATABASE_URL`, 서비스별
-  `STORAGE_DIR`)로 startup을 통과하고 `/healthz`가 200을 준다
-- 그 경로에 SQLite 파일과 테이블이 실제로 만들어진다
-- `shared/` import가 7개 서비스 모두에서 성공한다 (감사 이벤트 포워딩이 살아 있다)
-- 콘솔이 엔트리포인트와 같은 streamlit 옵션으로 뜨고, Railway 헬스체크 경로인
-  `/_stcore/health`가 200을 준다
-- 서비스용·콘솔용 의존성이 각자 충돌 없이 해결된다
-
-확인하지 못한 것
-
-- **리눅스에서의 첫 구동.** 지금까지 Windows에서만 돌던 코드다. 파일명 대소문자
-  구분처럼 리눅스에서만 드러나는 문제가 남아 있을 수 있다
-- 이미지 빌드 자체 (`pip install`이 리눅스 휠로 잘 끝나는지)
-
-첫 배포에서 문제가 나면 Railway 로그의 `[entrypoint]` 줄부터 보면 된다.
+배포에서 문제가 나면 Railway 로그의 `[entrypoint]` 줄부터 보면 된다.
 어느 서비스가 안 떴는지 `n/7` 형태로 찍는다.
+
+### 처음 배포가 실패했던 이유 (기록)
+
+`Dockerfile`의 `VOLUME ["/data"]` 한 줄 때문에 빌드가 시작조차 못 했다.
+
+```
+dockerfile invalid: docker VOLUME at Line 43 is not supported, use Railway Volumes
+```
+
+이 에러는 `railway logs --build`에만 찍히고 배포 화면에는 안 보인다.
+지시어를 지우고 Railway 볼륨으로 붙여서 해결했다.
 
 ---
 
@@ -117,5 +147,9 @@ Service 03의 `FORM_BASE_URL` 기본값이 `http://localhost:8003`이다. 로컬
 
 **서비스별 로그가 한 스트림에 섞인다.**
 로컬은 창 8개로 나뉘어 보이지만 여기서는 한 곳에 모인다.
+
+**주소가 공개돼 있다.** Railway 도메인에는 로그인이 없다. 주소를 아는 사람은
+누구나 콘솔에 들어온다. 실제 지원자 데이터를 올릴 거라면 그 전에 접근 제한을
+붙여야 한다.
 
 **`--reload`가 없다.** 배포본이므로 코드를 고치면 재배포해야 반영된다.
