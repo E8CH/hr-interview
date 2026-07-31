@@ -38,6 +38,9 @@ htmlcov/
 *.zip
 scratch_excel.txt
 
+# watchdog.ps1 이 자기 PID 를 적어 두는 곳(중복 실행 방지용). 기기마다 다르다.
+.watchdog.pid
+
 # 지원자 개인정보(성명·생년월일·성별·국적·병역)가 담긴 실데이터.
 # 공개 저장소에 올리지 않는다. 아래 파일들은 전부 docs/취합파일.xlsx 와
 # docs/희망지원자_*.xlsx 의 동일 사본이다(md5 일치).

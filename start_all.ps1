@@ -25,7 +25,7 @@ $services = @(
 )
 
 Write-Host ""
-Write-Host "[1/3] Opening 7 service windows..." -ForegroundColor Yellow
+Write-Host "[1/4] Opening 7 service windows..." -ForegroundColor Yellow
 
 foreach ($svc in $services) {
     $svcPath = Join-Path $root ("services\" + $svc.name)
@@ -42,7 +42,7 @@ foreach ($svc in $services) {
 }
 
 Write-Host ""
-Write-Host "[2/3] Health check (max 40s)..." -ForegroundColor Yellow
+Write-Host "[2/4] Health check (max 40s)..." -ForegroundColor Yellow
 
 $elapsed = 0
 $allUp = $false
@@ -73,7 +73,7 @@ else {
 }
 
 Write-Host ""
-Write-Host "[3/3] Streamlit..." -ForegroundColor Yellow
+Write-Host "[3/4] Streamlit..." -ForegroundColor Yellow
 
 if (Test-Path $venvUiPython) {
     $uiCmd = "`$Host.UI.RawUI.WindowTitle='Streamlit :8501'; chcp 65001 | Out-Null; Set-Location '$root'; & '$venvUiPython' -m streamlit run tools\test_console.py; Read-Host"
@@ -82,6 +82,19 @@ if (Test-Path $venvUiPython) {
 }
 else {
     Write-Host "  .venv-ui missing - skip Streamlit" -ForegroundColor Yellow
+}
+
+# 죽은 서비스를 다시 띄우는 감시 창. 컨테이너의 start-all.sh 와 같은 역할이다.
+Write-Host ""
+Write-Host "[4/4] Watchdog..." -ForegroundColor Yellow
+
+$watchdog = Join-Path $root "watchdog.ps1"
+if (Test-Path $watchdog) {
+    Start-Process powershell -ArgumentList "-NoExit","-ExecutionPolicy","Bypass","-File",$watchdog | Out-Null
+    Write-Host "  Watchdog started - dead services are restarted automatically" -ForegroundColor Green
+}
+else {
+    Write-Host "  watchdog.ps1 missing - skip" -ForegroundColor Yellow
 }
 
 Write-Host ""

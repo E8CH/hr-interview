@@ -92,6 +92,14 @@ if (Test-Path $venvUiPython) {
     Write-Host "  Streamlit http://localhost:8501" -ForegroundColor Green
 }
 
+# [4/4] 감시 창 - 여기서는 --reload 없이 띄웠으므로 되살릴 때도 맞춘다
+Write-Host "[4/4] Watchdog..." -ForegroundColor Yellow
+$watchdog = Join-Path $root "watchdog.ps1"
+if (Test-Path $watchdog) {
+    Start-Process powershell -ArgumentList "-NoExit","-ExecutionPolicy","Bypass","-File",$watchdog,"-NoReload" | Out-Null
+    Write-Host "  Watchdog started (-NoReload)" -ForegroundColor Green
+}
+
 $total = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 1)
 Write-Host ""
 Write-Host ("Total: {0}s" -f $total) -ForegroundColor Cyan

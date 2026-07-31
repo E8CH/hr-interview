@@ -57,7 +57,18 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 | 그냥 빨리 켜고 싶을 때 | `.\start_all_fast.ps1` |
 | 시연 직전, 가장 빠르게 | `.\start_all_ultra.ps1` |
 
-검은 창이 8개 뜬다(서비스 7개 + 화면 1개). **이 창들은 끄지 말고 그대로 둔다.**
+검은 창이 9개 뜬다(서비스 7개 + 화면 1개 + `Watchdog` 창 1개).
+**이 창들은 끄지 말고 그대로 둔다.**
+
+`Watchdog` 창은 10초마다 서비스가 살아 있는지 확인하다가, 죽은 것이 있으면
+**그 서비스만** 다시 띄운다. 되살릴 때 이런 줄이 찍힌다.
+
+```
+[14:22:10] 04-scheduler (:8004) 응답 없음 - 재시작 #1
+```
+
+죽은 창은 `Press Enter to close` 상태로 남겨 둔다. 왜 죽었는지 봐야 하기 때문이다.
+새로 뜬 창은 제목 줄에 `[watchdog 재시작]`이 붙는다.
 
 기동이 끝나면 `All services OK` 또는 `All 7 ports OPEN`이 보인다.
 브라우저가 자동으로 열리지 않으면 직접 주소창에 입력한다:
@@ -193,7 +204,11 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 .\stop_all.ps1
 ```
 
-검은 창 8개를 하나씩 닫을 필요 없이 한 번에 정리된다.
+검은 창을 하나씩 닫을 필요 없이 한 번에 정리된다.
+감시(`Watchdog`)를 **먼저** 끄고 서비스를 내리므로, 내린 서비스가 다시 살아나지 않는다.
+
+> 창을 손으로 하나씩 닫으면 감시가 남아서 계속 되살린다.
+> 끌 때는 반드시 `.\stop_all.ps1`을 쓴다.
 
 ---
 
