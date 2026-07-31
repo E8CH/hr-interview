@@ -1827,6 +1827,7 @@ def slot_labels(start: str, count: int, minutes: int, rest: int) -> list[str]:
 
 SCHED_HOURS = AM_HOURS + PM_HOURS   # 스케줄러가 쓰는 하루 여섯 칸
 LUNCH_UNTIL = "13:00"               # 오후 칸은 아무리 일러도 이 시각부터
+SCHED_DAYS_PER_TEAM = 3             # 스케줄러가 한 팀을 몰아 보는 날 수
 
 
 def hour_clock(timing: dict) -> dict[str, str]:
@@ -2233,9 +2234,17 @@ def render_roster_organizer(history: list[dict], plan_id: str,
     )
     if int(per_day) > len(SCHED_HOURS):
         st.warning(
-            f"4단계 시간표는 한 팀당 하루 {len(SCHED_HOURS)}칸(오전 3 · 오후 3)까지만 "
-            f"씁니다 — 하루 {int(per_day)}명으로 잡으면 이 순서표와 4단계 시간표의 "
-            "날짜가 어긋납니다."
+            f"4단계 시간표는 한 팀당 하루 {len(SCHED_HOURS)}칸까지만 씁니다 — "
+            f"하루 {int(per_day)}명으로 잡으면 뒤의 {int(per_day) - len(SCHED_HOURS)}명은 "
+            "다음 날로 밀려, 이 순서표와 4단계 시간표의 날짜가 어긋납니다."
+        )
+        st.caption(
+            "왜 6칸인가: 담당자에게 가능한 때를 물을 때 하루를 "
+            f"오전({' · '.join(AM_HOURS)}) · 오후({' · '.join(PM_HOURS)}) 두 덩어리로만 "
+            "받습니다. 그래서 아무도 시간을 비우지 않아도 하루에 쓸 수 있는 칸은 "
+            f"{len(SCHED_HOURS)}개가 끝입니다 (특정 담당자가 바빠서가 아니라, "
+            "받아 둔 가능 시간의 칸 수가 그만큼입니다). 더 넣으시려면 담당자 조사 "
+            "시간대를 늘리거나, 하루 인원을 6명 이하로 낮춰 주세요."
         )
     team_cols = [c for c in table.columns if c != "구분"]
     degree_by_name = {
@@ -3258,9 +3267,26 @@ def render_timetable(assignments: list[dict]) -> None:
             "(담당자가 고른 오전 · 오후를 지키려는 것입니다) · "
             "왼쪽이 시간, 위가 팀입니다."
             + (f" 하루 {timing['per_day']}명으로 잡으셨지만 시간표는 한 팀당 하루 "
-               f"{len(SCHED_HOURS)}칸까지만 씁니다."
+               f"{len(SCHED_HOURS)}칸까지만 씁니다 — 담당자 가능 시간을 "
+               f"오전({' · '.join(AM_HOURS)}) · 오후({' · '.join(PM_HOURS)}) 두 "
+               "덩어리로만 받아 두었기 때문입니다."
                if timing["per_day"] > len(SCHED_HOURS) else "")
         )
+        with st.expander("빈 칸이 왜 생기나요 · 왜 중간 시간에만 잡힌 팀이 있나요"):
+            st.markdown(
+                f"- 한 팀은 되도록 **{SCHED_DAYS_PER_TEAM}일 안에** 몰아서 봅니다 "
+                f"(한 팀 {SCHED_DAYS_PER_TEAM}일 × 하루 {len(SCHED_HOURS)}칸 = "
+                f"{SCHED_DAYS_PER_TEAM * len(SCHED_HOURS)}명). 그래서 그 며칠은 꽉 "
+                "차고 나머지 요일은 비어 보입니다.\n"
+                f"- {SCHED_DAYS_PER_TEAM * len(SCHED_HOURS)}명을 넘긴 인원은 다른 "
+                "요일에 한두 명씩 끼워 넣습니다. 이때 **첫 타임(09시 · 14시)은 "
+                "되도록 새로 열지 않으므로** 중간 시간(10시 · 11시 · 15시 · 16시)에만 "
+                "한 명 놓인 요일이 생깁니다.\n"
+                "- 특정 담당자가 그 시간에만 된다는 뜻은 아닙니다. 가능 시간을 "
+                "적지 않은 담당자는 모두 되는 것으로 보고 배정합니다.\n"
+                "- 빈 칸을 줄이시려면 2단계에서 팀당 인원을 고르게 맞추시거나, "
+                "담당자 조사 시간대를 늘려 주세요."
+            )
     else:
         c1, c2, c3, c4 = st.columns(4)
         start = c1.text_input("몇 시부터", value="09:00", key="t_start")
@@ -3291,13 +3317,32 @@ def render_timetable(assignments: list[dict]) -> None:
         for row in (block.get("applicants") or [])
     }
 
-    # 두 팀 이상이 같은 사람을 보겠다고 하면 그 사람은 '중복면접' 이다
+    # 두 팀 이상이 같은 사람을 보겠다고 적어 냈으면 그 사람은 '중복면접' 이다.
+    # 배정 결과는 한 사람을 한 팀에만 붙이고 시간표에도 한 줄로만 들어오므로,
+    # 시간표만 봐서는 알 수 없다 — 2단계와 같은 출처(1단계에 올라온 팀별 희망
+    # 명단)에서 가져와야 여기서도 같은 사람에게 같은 표가 붙는다.
+    version_history, _ = fetch_json(
+        f"{VERSION_MANAGER}/api/v1/versions/{round_id}/history"
+    )
     by_applicant: dict[str, set] = {}
-    for row in assignments:
-        by_applicant.setdefault(row.get("applicant_id"), set()).add(
-            row.get("team") or "미상"
-        )
-    duplicated = {aid for aid, ts in by_applicant.items() if len(ts) > 1}
+    for team, rows in team_rosters_from_versions(version_history or []).items():
+        for row in rows:
+            key = row.get("applicant_id") or row.get("name")
+            if key:
+                by_applicant.setdefault(key, set()).add(team)
+    duplicated = {key for key, owners in by_applicant.items() if len(owners) > 1}
+    # 이번 시간표에 들어온 사람만 표를 달 수 있다 (번호 · 이름 어느 쪽으로든 맞춘다)
+    duplicated &= (
+        {row.get("applicant_id") for row in assignments}
+        | {row.get("applicant_name") for row in assignments}
+    )
+
+    def dup_key(item: dict) -> str:
+        """이 사람이 중복면접이면 그 열쇠(번호 또는 이름)를, 아니면 빈 글자를 준다."""
+        for key in (item.get("applicant_id"), item.get("applicant_name")):
+            if key and key in duplicated:
+                return key
+        return ""
 
     # (팀, 요일) 별로 모아 시간대 순으로 줄을 세운다
     buckets: dict[tuple[str, str], list[dict]] = {}
@@ -3370,30 +3415,39 @@ def render_timetable(assignments: list[dict]) -> None:
                     f"담당 {names.get(iid, iid)}" + (" ★확정" if fixed else ""),
                     tone="fix" if fixed else "",
                     team=team, degree=degree,
-                    badge="중복면접" if aid in duplicated else "",
+                    badge="중복면접" if dup_key(item) else "",
                 )
         time_grid(teams, labels, cells)
     st.caption(
         "카드 색은 부서, 위쪽 띠줄은 학력(박사 · 석사 · 학사)입니다."
         + (f" · 두 팀 이상이 함께 보려는 {len(duplicated)}명에는 '중복면접' 표를 "
-           "달았습니다." if duplicated else "")
+           "달았습니다 — 시간표에는 한 칸만 잡혀 있으니 나머지 팀과는 따로 "
+           "약속을 잡으셔야 합니다." if duplicated else "")
     )
     if duplicated:
+        dup_rows = [row for row in assignments if dup_key(row)]
         with st.expander(f"⚠ 중복면접 {len(duplicated)}명 — 어느 팀들이 겹쳤는지"):
             st.dataframe(
                 pd.DataFrame([
                     {
-                        "지원자": next(
-                            (r.get("applicant_name") or aid) for r in assignments
-                            if r.get("applicant_id") == aid
-                        ),
-                        "지원자 번호": aid,
-                        "겹친 팀": ", ".join(sorted(by_applicant[aid])),
-                        "면접 횟수": len(by_applicant[aid]),
+                        "지원자": row.get("applicant_name") or row.get("applicant_id"),
+                        "지원자 번호": row.get("applicant_id"),
+                        "함께 보려는 팀": ", ".join(sorted(by_applicant[dup_key(row)])),
+                        "이 시간표에서 만나는 팀": row.get("team") or "-",
+                        "언제": f"{row.get('day') or '-'} "
+                                f"{clock.get(str(row.get('hour')), row.get('hour') or '-')}",
                     }
-                    for aid in sorted(duplicated)
+                    for row in sorted(
+                        dup_rows,
+                        key=lambda r: (r.get("applicant_name") or ""),
+                    )
                 ]),
                 width="stretch", hide_index=True,
+            )
+            st.caption(
+                "1단계에 올라온 팀별 희망 명단에서 두 팀 이상이 함께 적어 낸 "
+                "사람들입니다. 배정은 한 팀에만 붙으므로 시간표에도 한 칸만 "
+                "잡혀 있습니다 — 나머지 팀도 보시려면 따로 자리를 잡아 주세요."
             )
     with st.expander("표로 보기"):
         st.dataframe(table, width="stretch", hide_index=True,
