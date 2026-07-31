@@ -362,11 +362,17 @@ def save_handoff(rid: str, doc: dict) -> None:
     )
 
 
-def save_order(rid: str, sequence: dict[str, list[dict]]) -> dict:
+def save_order(rid: str, sequence: dict[str, list[dict]],
+               timing: dict | None = None) -> dict:
     """HR 가 2단계에서 잡은 면접 차례를 회차 문서에 적어 둔다.
 
     부서 화면은 이 순번을 보고 카드를 세우므로, 여기 적힌 순서가 곧 '인사
     담당자가 정해 보낸 초안 순서' 다.
+
+    차례와 함께 그 차례를 만든 면접 진행 조건(시작 시각 · 한 사람당 분 · 쉬는
+    시간 · 하루 인원)도 남긴다. 부서 화면과 4단계 시간표가 이 조건을 다시 읽어
+    같은 시각을 가리키게 하려는 것이다 — 여기 없으면 화면마다 09:00/30분/5분
+    기본값으로 제각각 그린다.
     """
     doc = load_handoff(rid)
     doc["order"] = {
@@ -377,8 +383,26 @@ def save_order(rid: str, sequence: dict[str, list[dict]]) -> dict:
         for team, rows in (sequence or {}).items()
     }
     doc["order_at"] = datetime.now().isoformat(timespec="seconds")
+    if timing:
+        doc["timing"] = {
+            "start": str(timing.get("start") or "09:00"),
+            "minutes": int(timing.get("minutes") or SLOT_MINUTES),
+            "rest": int(timing.get("rest") or BREAK_MINUTES),
+            "per_day": int(timing.get("per_day") or SLOTS_PER_DAY),
+        }
     save_handoff(rid, doc)
     return doc
+
+
+def round_timing(doc: dict) -> dict:
+    """그 회차의 면접 진행 조건 — 2단계에서 정한 값, 아직 없으면 기본값."""
+    saved = (doc or {}).get("timing") or {}
+    return {
+        "start": str(saved.get("start") or "09:00"),
+        "minutes": int(saved.get("minutes") or SLOT_MINUTES),
+        "rest": int(saved.get("rest") or BREAK_MINUTES),
+        "per_day": int(saved.get("per_day") or SLOTS_PER_DAY),
+    }
 
 
 def order_lookup(doc: dict, team: str) -> dict[str, dict]:
@@ -403,6 +427,9 @@ def publish_handoff(rid: str, plan_id: str, applicants: list[dict],
     doc["plan_id"] = plan_id
     doc["sent_at"] = datetime.now().isoformat(timespec="seconds")
     doc["sent_by"] = by
+    timing = round_timing(doc)
+    per_day = timing["per_day"]
+    labels = slot_labels(timing["start"], per_day, timing["minutes"], timing["rest"])
     teams = doc.setdefault("teams", {})
     names = sorted({(row.get("team") or "미상") for row in applicants}
                    | {(row.get("team") or "미상") for row in interviewers})
@@ -416,13 +443,21 @@ def publish_handoff(rid: str, plan_id: str, applicants: list[dict],
             return (seq.get(str(row.get("applicant_id") or ""))
                     or seq.get(str(row.get("name") or "")) or {})
 
-        # 차례표에 있던 사람이 앞, 그 뒤에 차례표에 없던 사람 — 순번은 1..N 로 다시 매긴다.
-        # (2단계에서 고른 명단과 지금 보내는 배정 결과가 달라 빠진 사람이 있을 수 있다)
-        ordered_rows = sorted(
-            enumerate(mine),
-            key=lambda pair: (slot(pair[1]).get("order") is None,
-                              slot(pair[1]).get("order") or 0, pair[0]),
-        )
+        # 2단계 차례표가 이 팀 명단을 남김없이 덮을 때만 그 차례를 그대로 쓴다.
+        # 한 사람이라도 빠져 있으면 그 차례표는 지금과 다른 팀 나눔에서 만든
+        # 것이다 — 빠진 사람을 뒤에 몰아 붙이면 학력 묶음이 그 자리에서 깨지므로
+        # (석사가 흩어지는 원인이었다) 2단계와 같은 알고리즘으로 다시 잡는다.
+        planned = bool(mine) and all(slot(row) for row in mine)
+        if planned:
+            ordered_rows = sorted(mine, key=lambda r: (slot(r).get("order") or 0,
+                                                       r.get("name") or ""))
+        else:
+            ordered_rows = order_for_interview(
+                [dict(row, order=None,
+                      degree_full=degree_full(row.get("degree_type")))
+                 for row in mine],
+                balance=True, per_day=per_day,
+            )
         block["applicants"] = [
             {
                 "applicant_id": row["applicant_id"],
@@ -430,12 +465,14 @@ def publish_handoff(rid: str, plan_id: str, applicants: list[dict],
                 "degree_type": row.get("degree_type"),
                 "major_final": row.get("major_final"),
                 "order": number,
-                "order_day": slot(row).get("day"),
-                "order_time": slot(row).get("time"),
+                "order_day": (slot(row).get("day") if planned
+                              else (number - 1) // per_day + 1),
+                "order_time": (slot(row).get("time") if planned
+                               else labels[(number - 1) % per_day]),
             }
-            for number, (_index, row) in enumerate(ordered_rows, start=1)
+            for number, row in enumerate(ordered_rows, start=1)
         ]
-        block["order_planned"] = bool(seq)
+        block["order_planned"] = planned
         block["interviewers"] = [
             {
                 "interviewer_id": row["interviewer_id"],
@@ -1589,6 +1626,33 @@ def slot_labels(start: str, count: int, minutes: int, rest: int) -> list[str]:
     return out
 
 
+SCHED_HOURS = AM_HOURS + PM_HOURS   # 스케줄러가 쓰는 하루 여섯 칸
+LUNCH_UNTIL = "13:00"               # 오후 칸은 아무리 일러도 이 시각부터
+
+
+def hour_clock(timing: dict) -> dict[str, str]:
+    """스케줄러의 칸 이름(09시 · 10시 …)을 실제 시각으로 바꾼다.
+
+    스케줄러는 하루를 여섯 칸(오전 3 · 오후 3)으로만 나눠 배치한다 — 그 칸이
+    몇 시 몇 분인지는 2단계에서 정한 면접 진행 조건이 정한다. 여기서 이어 주지
+    않으면 2단계는 09:35 라는데 4단계 시간표는 10시라고 해 서로 어긋난다.
+
+    오전 칸과 오후 칸은 이어 붙이지 않는다. 면접관이 '오후만' 을 고르면
+    스케줄러는 오후 칸에만 넣는데, 시각을 죽 이어 버리면 그 사람이 오전 10시
+    45분에 앉아 있는 시간표가 나온다 — 점심을 두고 오후를 다시 시작한다.
+    """
+    try:
+        am = slot_labels(timing["start"], len(AM_HOURS),
+                         timing["minutes"], timing["rest"])
+    except ValueError:
+        return {}
+    after_am = datetime.strptime(am[-1].split("~")[1], "%H:%M") + timedelta(minutes=60)
+    pm_start = max(after_am, datetime.strptime(LUNCH_UNTIL, "%H:%M"))
+    pm = slot_labels(f"{pm_start:%H:%M}", len(PM_HOURS),
+                     timing["minutes"], timing["rest"])
+    return dict(zip(AM_HOURS, am)) | dict(zip(PM_HOURS, pm))
+
+
 DEGREE_ORDER = {"박사": 0, "석사": 1, "대학원": 1, "학사": 2}
 
 
@@ -1937,8 +2001,12 @@ def render_roster_organizer(history: list[dict], plan_id: str,
             st.session_state["roster_table"] = table
             st.session_state["roster_days"] = days
             st.session_state["roster_matrix"] = matrix
-            # 여기서 잡은 차례를 적어 둬야 3단계에서 명단과 함께 부서로 넘어간다
-            save_order(round_id, sequence)
+            # 여기서 잡은 차례와 그 차례를 만든 조건을 적어 둬야 3단계에서 명단과
+            # 함께 부서로 넘어가고, 4단계 시간표도 같은 시각으로 그린다
+            save_order(round_id, sequence, {
+                "start": start.strip(), "minutes": int(minutes),
+                "rest": int(rest), "per_day": int(per_day),
+            })
 
     table = st.session_state.get("roster_table")
     if table is None:
@@ -1949,8 +2017,15 @@ def render_roster_organizer(history: list[dict], plan_id: str,
         f"{days}일에 걸쳐 · 하루 {int(per_day)}명씩 · 한 명당 {int(minutes)}분 면접 + "
         f"{int(rest)}분 휴식으로 순서를 잡았습니다."
         + (" 하루 안에서는 박사 → 석사 → 학사 순으로 묶여 있습니다." if balance else "")
-        + " 이 차례(순번)는 3단계에서 명단과 함께 각 팀으로 넘어갑니다."
+        + " 이 차례(순번)와 위 조건은 3단계에서 명단과 함께 각 팀으로 넘어가고,"
+        " 4단계 시간표도 같은 시각으로 그립니다."
     )
+    if int(per_day) > len(SCHED_HOURS):
+        st.warning(
+            f"4단계 시간표는 한 팀당 하루 {len(SCHED_HOURS)}칸(오전 3 · 오후 3)까지만 "
+            f"씁니다 — 하루 {int(per_day)}명으로 잡으면 이 순서표와 4단계 시간표의 "
+            "날짜가 어긋납니다."
+        )
     team_cols = [c for c in table.columns if c != "구분"]
     degree_by_name = {
         (row.get("name") or ""): (row.get("degree_full") or row.get("degree"))
@@ -2914,11 +2989,23 @@ def render_timetable(assignments: list[dict]) -> None:
     hours = hour_slots(assignments)
     by_hour = bool(hours) and all(row.get("hour") for row in assignments)
     minutes, rest, per_day = SLOT_MINUTES, BREAK_MINUTES, SLOTS_PER_DAY
+    clock: dict[str, str] = {}
 
     if by_hour:
-        labels = hours
+        # 스케줄러가 정한 것은 '몇째 칸' 이고, 그 칸이 몇 시인지는 2단계에서 정한
+        # 면접 진행 조건이 정한다 — 그래야 2단계 순서표와 시각이 같아진다.
+        timing = round_timing(load_handoff(round_id))
+        clock = hour_clock(timing)
+        labels = [clock.get(h, h) for h in hours]
         st.caption(
-            "시간표를 만들 때 정해진 시간대 그대로입니다 — 왼쪽이 시간, 위가 팀입니다."
+            f"2단계에서 정한 면접 진행 조건 그대로입니다 — {timing['start']} 부터 "
+            f"한 사람당 {timing['minutes']}분 면접에 {timing['rest']}분 휴식 · "
+            "오전 세 칸을 마치면 점심을 두고 오후를 다시 시작합니다 "
+            "(담당자가 고른 오전 · 오후를 지키려는 것입니다) · "
+            "왼쪽이 시간, 위가 팀입니다."
+            + (f" 하루 {timing['per_day']}명으로 잡으셨지만 시간표는 한 팀당 하루 "
+               f"{len(SCHED_HOURS)}칸까지만 씁니다."
+               if timing["per_day"] > len(SCHED_HOURS) else "")
         )
     else:
         c1, c2, c3, c4 = st.columns(4)
@@ -2977,8 +3064,9 @@ def render_timetable(assignments: list[dict]) -> None:
     overflow: list[dict] = []
     if by_hour:
         for row in assignments:
+            hour = str(row.get("hour"))
             placed.setdefault((row.get("team") or "미상", row.get("day") or "미정",
-                               str(row.get("hour"))), []).append(row)
+                               clock.get(hour, hour)), []).append(row)
     else:
         for (team, day), items in buckets.items():
             for index, item in enumerate(items):
@@ -3191,6 +3279,10 @@ def render_schedule_body(sc_id: str, expected: int | None = None) -> None:
         shown = shown.sort_values(sort_cols)
 
     listed = shown.copy()
+    # 목록에도 교시가 아니라 실제 시각을 적는다 (2단계 조건 그대로)
+    clock = hour_clock(round_timing(load_handoff(round_id)))
+    if clock and "hour" in listed:
+        listed["hour"] = listed["hour"].map(lambda h: clock.get(str(h), h))
     if "interviewer_id" in listed:
         listed["interviewer_name"] = listed["interviewer_id"].map(
             lambda i: iv_by_id.get(i, i)
@@ -3639,13 +3731,12 @@ def render_team_view() -> None:
 
     st.divider()
     st.subheader("② 면접 볼 사람 고르고, 담당자 정하기")
-    late = [row for row in applicants if not row.get("order_time")] if planned else []
     st.caption(
-        ("카드 왼쪽 위 번호는 인사 담당자가 2단계에서 잡아 보낸 **면접 차례**입니다. "
-         "아래 시간표와 자동배치도 이 차례를 그대로 따릅니다."
-         + (f" 차례표에 없던 {len(late)}명은 뒤에 이어 붙였습니다." if late else ""))
+        "카드 왼쪽 위 번호는 인사 담당자가 2단계에서 잡아 보낸 **면접 차례**입니다. "
+        "아래 시간표와 자동배치도 이 차례를 그대로 따릅니다."
         if planned else
-        "인사 담당자가 아직 면접 차례를 잡지 않아, 받은 명단 순서대로 번호를 붙였습니다."
+        "인사 담당자가 2단계에서 잡은 차례가 지금 명단과 달라, 같은 방식(날짜마다 "
+        "학력 고르게 · 하루 안에서는 박사 → 석사 → 학사)으로 차례를 다시 잡았습니다."
     )
     auto = st.session_state.get("tv_auto")
     if auto and auto[0] == team:
@@ -3811,12 +3902,15 @@ def render_team_view() -> None:
 
     st.divider()
     st.subheader("③ 우리 팀 면접 시간표")
+    # 인사 담당자가 2단계에서 정한 조건을 그대로 띄운다 — 부서가 따로 손대지
+    # 않으면 순서표와 같은 시각이 나온다
+    timing = round_timing(doc)
     c1, c2, c3, c4 = st.columns(4)
-    start = c1.text_input("면접 시작 시각", value="09:00", key="tv_start")
-    minutes = c2.number_input("한 사람당 면접 시간(분)", 10, 120, SLOT_MINUTES, 5,
+    start = c1.text_input("면접 시작 시각", value=timing["start"], key="tv_start")
+    minutes = c2.number_input("한 사람당 면접 시간(분)", 10, 120, timing["minutes"], 5,
                               key="tv_min")
-    rest = c3.number_input("사이 쉬는 시간(분)", 0, 60, BREAK_MINUTES, 5, key="tv_rest")
-    per_day = c4.number_input("하루에 볼 인원", 1, 20, SLOTS_PER_DAY, key="tv_perday")
+    rest = c3.number_input("사이 쉬는 시간(분)", 0, 60, timing["rest"], 5, key="tv_rest")
+    per_day = c4.number_input("하루에 볼 인원", 1, 20, timing["per_day"], key="tv_perday")
     try:
         rows = pair_schedule(
             applicants, pairs, iv_name, start=start.strip(), minutes=int(minutes),
