@@ -492,6 +492,18 @@ def publish_handoff(rid: str, plan_id: str, applicants: list[dict],
     return doc
 
 
+def team_only_pairs(block: dict, pairs: dict) -> dict[str, str]:
+    """인사가 그 팀에 보낸 명단 안의 사람 · 그 팀 담당자로 맺은 짝만 남긴다.
+
+    부서는 받은 목록에서 고르는 것이지 목록 밖의 사람을 넣을 수 없다. 인사가
+    명단을 다시 보내 팀 구성이 바뀌면 옛 짝은 여기서 걸러진다 — 걸러 두지
+    않으면 시간표가 그 사람을 못 넣어 ② 의 숫자와 어긋난다.
+    """
+    live = {row["applicant_id"] for row in (block.get("applicants") or [])}
+    mine = {row["interviewer_id"] for row in (block.get("interviewers") or [])}
+    return {a: i for a, i in (pairs or {}).items() if a in live and i in mine}
+
+
 def assign_team(rid: str, team: str, pairs: dict, by: str) -> dict:
     """부서가 '배정하기' 로 정한 짝 — 아직 인사 담당자에게는 가지 않는다.
 
@@ -503,7 +515,7 @@ def assign_team(rid: str, team: str, pairs: dict, by: str) -> dict:
     block["draft"] = {
         "at": datetime.now().isoformat(timespec="seconds"),
         "by": by,
-        "pairs": dict(pairs),
+        "pairs": team_only_pairs(block, pairs),
     }
     save_handoff(rid, doc)
     return doc
@@ -516,7 +528,7 @@ def submit_team(rid: str, team: str, pairs: dict, by: str) -> dict:
     block["submitted"] = {
         "at": datetime.now().isoformat(timespec="seconds"),
         "by": by,
-        "pairs": dict(pairs),
+        "pairs": team_only_pairs(block, pairs),
     }
     save_handoff(rid, doc)
     return doc
@@ -536,10 +548,21 @@ def handoff_pairs(doc: dict) -> dict[str, str]:
 
     보낸 것만 센다 — 배정만 해 두고 아직 안 보낸 팀은 인사 담당자 시간표에
     들어가지 않는다.
+
+    그리고 그 팀에 **보낸 명단 안의 사람** 과 **그 팀 담당자** 로 맺은 짝만
+    인정한다. 인사가 명단을 다시 보내면 팀 구성이 바뀌는데, 그때 남아 있던 옛
+    제출까지 세어 버리면 ② 의 '면접 못 보는 사람' 은 줄었는데 시간표는 그 사람을
+    넣지 못해 두 숫자가 어긋난다 — 각 단계의 명단에 종속시키려는 것이다.
     """
     out: dict[str, str] = {}
     for block in (doc.get("teams") or {}).values():
-        out.update(((block.get("submitted") or {}).get("pairs") or {}))
+        live = {row["applicant_id"] for row in (block.get("applicants") or [])}
+        mine = {row["interviewer_id"] for row in (block.get("interviewers") or [])}
+        for applicant, interviewer in (
+            ((block.get("submitted") or {}).get("pairs") or {}).items()
+        ):
+            if applicant in live and interviewer in mine:
+                out[applicant] = interviewer
     return out
 
 
@@ -3160,8 +3183,25 @@ def render_timetable(assignments: list[dict]) -> None:
     )
 
 
-def render_schedule_body(sc_id: str, expected: int | None = None) -> None:
-    """시간표 상세 — 지표 · 분포 · 배정 목록 · 팀별 · 히트맵 · 규칙."""
+def schedule_vs_pairs(assignments: list[dict], pairs: dict[str, str]) -> tuple:
+    """이 시간표가 '지금' 부서가 보낸 짝으로 만든 것인지 견준다.
+
+    (짝이 바뀐 사람, 짝도 없이 들어간 사람, 짝은 있는데 못 들어간 사람)
+    """
+    placed = {row.get("applicant_id"): row.get("interviewer_id") for row in assignments}
+    changed = [a for a, i in placed.items() if a in pairs and pairs[a] != i]
+    stranger = [a for a in placed if a not in pairs]
+    missing = [a for a in pairs if a not in placed]
+    return changed, stranger, missing
+
+
+def render_schedule_body(sc_id: str, pairs: dict[str, str] | None = None) -> None:
+    """시간표 상세 — 지표 · 분포 · 배정 목록 · 팀별 · 히트맵 · 규칙.
+
+    pairs 를 주면 그 짝으로 만든 시간표가 맞는지 견줘서 먼저 알려 준다. 회차에는
+    예전에 만든 시간표도 남아 있어서, 그중 하나를 보면서 '지금 상태' 라고 믿으면
+    ② 의 숫자와 어긋난다.
+    """
     sched, err = fetch_json(f"{SCHEDULER}/api/v1/schedules/{sc_id}")
     if err:
         st.error(err)
@@ -3179,17 +3219,31 @@ def render_schedule_body(sc_id: str, expected: int | None = None) -> None:
         f"{say(sched.get('status'), STATUS_LABELS)}"
     )
 
-    # 부서가 보낸 짝만 시간표에 들어간다. 그런데도 모자라면 담당자의 가능한
-    # 시간이 부족한 것이므로, 숫자만 보고 헤매지 않게 여기서 말해 준다.
-    assigned = sched.get("total_assigned") or 0
-    if expected is not None and assigned < expected:
-        st.warning(
-            f"부서에서 보낸 짝 {expected}명 중 {assigned}명만 들어갔습니다 — "
-            f"{expected - assigned}명은 담당자의 가능한 시간이 모자라 넣지 못했습니다. "
-            "3단계에서 그 담당자의 가능한 시간을 더 받아 주세요."
-        )
-
     assignments = sched.get("assignments") or []
+
+    # 이 시간표가 지금 부서가 보낸 짝으로 만든 것인지 먼저 밝힌다.
+    if pairs is not None:
+        changed, stranger, missing = schedule_vs_pairs(assignments, pairs)
+        if changed or stranger:
+            st.error(
+                f"**이 시간표는 지금 부서가 보낸 짝({len(pairs)}명)으로 만든 것이 "
+                "아닙니다.** "
+                + (f"부서가 정한 담당자와 다르게 들어간 사람 {len(changed)}명 · "
+                   if changed else "")
+                + (f"짝도 없이 들어간 사람 {len(stranger)}명 · " if stranger else "")
+                + "위 ① 에서 '시간표 만들기' 를 다시 눌러 주세요 — 그래야 ② 의 "
+                  "'면접 못 보는 사람' 과 이 시간표가 같은 명단을 봅니다."
+            )
+        elif missing:
+            # 짝은 지켰는데 못 들어간 사람 = 그 담당자의 가능한 시간이 모자란 것
+            st.warning(
+                f"부서에서 보낸 짝 {len(pairs)}명 중 {len(pairs) - len(missing)}명만 "
+                f"들어갔습니다 — {len(missing)}명은 담당자의 가능한 시간이 모자라 넣지 "
+                "못했습니다. 3단계에서 그 담당자의 가능한 시간을 더 받아 주세요."
+            )
+        elif pairs:
+            st.success(f"부서가 보낸 짝 {len(pairs)}명 그대로 만든 시간표입니다.")
+
     if not assignments:
         st.warning("시간표에 들어간 사람이 없습니다.")
         return
@@ -3373,19 +3427,30 @@ def render_excluded(selected: list[dict], plan_id: str) -> None:
         st.info("3단계에서 명단을 보내고 부서가 짝을 지으면 여기에 남는 사람이 보입니다.")
         return
 
-    out_ap, out_iv = [], []
+    out_ap, out_iv, stale = [], [], []
     for team, block in sorted(teams_doc.items()):
         used = set(((block.get("submitted") or {}).get("pairs") or {}).values())
         out_ap += [{**row, "team": team} for row in (block.get("applicants") or [])
                    if row["applicant_id"] not in pairs]
         out_iv += [{**row, "team": team} for row in (block.get("interviewers") or [])
                    if row["interviewer_id"] not in used]
+        # 부서가 보낸 뒤에 명단이나 담당자가 바뀌어 무효가 된 짝
+        stale += [team for a in ((block.get("submitted") or {}).get("pairs") or {})
+                  if a not in pairs]
     total_ap = sum(len(b.get("applicants") or []) for b in teams_doc.values())
     total_iv = sum(len(b.get("interviewers") or []) for b in teams_doc.values())
 
     c1, c2 = st.columns(2)
     c1.metric("면접 못 보는 지원자", f"{len(out_ap)} / {total_ap}")
     c2.metric("맡은 사람 없는 담당자", f"{len(out_iv)} / {total_iv}")
+
+    if stale:
+        st.warning(
+            f"부서가 보낸 짝 {len(stale)}건은 그 뒤에 명단이나 담당자가 바뀌어 "
+            f"무효가 되었습니다 ({' · '.join(sorted(set(stale)))}). 이 사람들은 위 "
+            "'면접 못 보는 지원자' 에 들어 있고 시간표에도 들어가지 않습니다 — "
+            "3단계에서 명단을 다시 보내 부서가 짝을 다시 짓게 해 주세요."
+        )
 
     team_colors(teams_doc)
     st.markdown("**면접 못 보는 지원자**")
@@ -3500,7 +3565,15 @@ def render_scheduling() -> None:
     rounds = [r for r in fetch_rounds(round_id) if r["round_id"] == round_id]
     sc_id = st.session_state.get("schedule_id")
     if rounds:
-        labels = [f"{r['at']} 만듦 · 면접자 {r['assigned']}명" for r in rounds]
+        # 회차에는 예전에 만든 시간표도 남아 있다. 지금 부서 짝과 인원이 다른
+        # 것은 목록에서부터 그렇다고 적어 둔다 — 골라 놓고 나서야 어긋난 걸
+        # 알게 되면 ② 의 숫자와 왜 다른지 헤매게 된다.
+        labels = [
+            f"{r['at']} 만듦 · 면접자 {r['assigned']}명"
+            + ("" if not sent or r["assigned"] == len(sent)
+               else f"  ⚠ 지금 부서 짝 {len(sent)}명과 다름")
+            for r in rounds
+        ]
         index = next((i for i, r in enumerate(rounds) if r["schedule_id"] == sc_id), 0)
         pick = st.selectbox("어느 시간표를 볼까요", range(len(rounds)), index=index,
                             format_func=lambda i: labels[i], key="s_pick")
@@ -3539,7 +3612,7 @@ def render_scheduling() -> None:
             st.success("확정했습니다. 이제 이 시간표는 함부로 바뀌지 않습니다.")
     a3.caption("확정해 두면 나중에 일정이 바뀌어도 이 배정은 그대로 유지됩니다.")
 
-    render_schedule_body(sc_id, expected=len(sent) or None)
+    render_schedule_body(sc_id, pairs=sent)
 
 
 def dept_todo(team: str, block: dict, doc: dict, selected: list[dict]) -> list[tuple]:
@@ -4213,11 +4286,17 @@ def render_scenario() -> None:
         if not plan_id:
             add("  ⏭ 건너뜀 — 2단계에서 plan_id 를 얻지 못함")
         else:
+            # 그 회차에 부서가 보낸 짝이 있으면 시나리오도 그 짝을 지킨다.
+            # 안 그러면 이 자리에서 만든 '전원 배정' 시간표가 회차 목록의
+            # 맨 위에 올라가, 4단계 ③ 이 그걸 보여 주며 ② 와 다른 말을 한다.
+            body = {"round_id": sc_round, "plan_id": plan_id, "algorithm": "v5",
+                    "generated_by": sc_actor}
+            sc_pairs = handoff_pairs(load_handoff(sc_round))
+            if sc_pairs:
+                body["pairs"] = sc_pairs
+                add(f"  부서가 보낸 짝 {len(sc_pairs)}명으로 만듭니다")
             data, err = post_json(
-                f"{SCHEDULER}/api/v1/schedules/generate",
-                {"round_id": sc_round, "plan_id": plan_id, "algorithm": "v5",
-                 "generated_by": sc_actor},
-                timeout=180.0,
+                f"{SCHEDULER}/api/v1/schedules/generate", body, timeout=180.0,
             )
             if err:
                 failed = True
