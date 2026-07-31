@@ -204,6 +204,12 @@ def get_plan_detail(session: Session, plan_id: str) -> dict:
         "duplicate_count": plan.duplicate_count,
         "team_counts": _team_counts(session, plan_id),
         "teams": teams,
+        # 누가 언제 만들고 확정했는지 — 화면이 이 값으로 확정 여부를 알린다
+        "created_by": plan.created_by,
+        "created_at": plan.created_at,
+        "approved_by": plan.approved_by,
+        "approved_at": plan.approved_at,
+        "reject_reason": plan.reject_reason,
     }
 
 

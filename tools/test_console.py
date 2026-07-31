@@ -813,7 +813,7 @@ def ko_frame(rows, keep=None, drop_ids: bool = True) -> pd.DataFrame:
         frame["reason_tags"] = frame["reason_tags"].map(tag_text)
     if "lock_level" in frame.columns:   # DRAFT / CONFIRMED / LOCKED 도 우리말로
         frame["lock_level"] = frame["lock_level"].map(
-            lambda v: STATUS_LABELS.get(str(v), v)
+            lambda v: say(v, STATUS_LABELS)
         )
     return frame.rename(columns=COLUMN_LABELS)
 
@@ -880,9 +880,17 @@ STATUS_LABELS = {
 
 
 def say(value, table: dict) -> str:
-    """코드 값을 우리말로 — 모르는 값은 그대로 보여 준다."""
+    """코드 값을 우리말로 — 모르는 값은 그대로 보여 준다.
+
+    서비스마다 상태를 approved 로도, APPROVED 로도 돌려주므로 대소문자는 가린다.
+    """
     text = str(value or "").strip()
-    return table.get(text, text or "-")
+    if not text:
+        return "-"
+    for key in (text, text.upper(), text.lower()):
+        if key in table:
+            return table[key]
+    return text
 
 
 # ============================================================
@@ -2375,8 +2383,8 @@ def render_distribution() -> None:
     s3.metric("조건에 안 맞아 빠진 인원", summary.get("filtered_count"))
     s4.metric("상태", say(summary.get("status"), STATUS_LABELS))
     st.caption(
-        f"{str(summary.get('created_at'))[:16]} · {summary.get('created_by')} 님이 "
-        "만든 배정입니다."
+        f"{str(summary.get('created_at') or '')[:16].replace('T', ' ')} · "
+        f"{summary.get('created_by') or '-'} 님이 만든 배정입니다."
     )
 
     team_counts = summary.get("team_counts") or {}
@@ -2430,6 +2438,7 @@ def render_distribution() -> None:
 
     st.divider()
     st.subheader("④ 손보고 확정하기")
+    approved = str(summary.get("status") or "").lower() == "approved"
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("**사람 옮기기** — 배정을 직접 고칠 때만 씁니다")
@@ -2456,23 +2465,43 @@ def render_distribution() -> None:
                     st.error(merr)
                 else:
                     clear_caches()
+                    # 옮기면 '조정됨' 으로 돌아온다 — 오른쪽 확정 버튼도 바로 살린다
+                    approved = str(data.get("status") or "").lower() == "approved"
                     st.success(
                         f"옮겼습니다 — 지금 상태 {say(data.get('status'), STATUS_LABELS)}"
                     )
 
     with c2:
         st.markdown("**이대로 확정할까요**")
-        if st.button("✅ 이대로 확정", type="primary", key="d_approve"):
-            data, aerr2 = post_json(
+        # 확정한 배정은 다시 확정할 수도, 되돌릴 수도 없다 (서버가 409 로 막는다).
+        # 눌리지 않게 해 두고, 대신 무엇을 하면 되는지 알려 준다.
+        if approved:
+            when = str(summary.get("approved_at") or "")[:16].replace("T", " ")
+            who = summary.get("approved_by")
+            st.success(
+                "이미 확정했습니다"
+                + (f" — {when}" if when else "")
+                + (f" · {who} 님" if who else "")
+            )
+            st.caption(
+                "확정한 뒤에는 다시 확정하거나 되돌릴 수 없습니다. 고치려면 왼쪽 "
+                "[사람 옮기기] 로 옮기거나(다시 ‘조정됨’ 이 되어 확정할 수 있습니다), "
+                "① 에서 새로 배정하세요."
+            )
+        if st.button("✅ 이대로 확정", type="primary", key="d_approve",
+                     disabled=approved):
+            _, aerr2 = post_json(
                 f"{DISTRIBUTOR}/api/v1/distribute/{plan_id}/approve", {"actor": actor}
             )
             if aerr2:
                 st.error(aerr2)
             else:
                 clear_caches()
-                st.success(f"확정했습니다 — {str(data.get('approved_at'))[:16]}")
-        reject_reason = st.text_input("다시 하는 이유", key="d_reject_reason").strip()
-        if st.button("⛔ 다시 하기", key="d_reject"):
+                # 다시 그리면 위의 '이미 확정했습니다 — 시각 · 사람' 이 뜬다
+                st.rerun()
+        reject_reason = st.text_input("다시 하는 이유", key="d_reject_reason",
+                                      disabled=approved).strip()
+        if st.button("⛔ 다시 하기", key="d_reject", disabled=approved):
             if not reject_reason:
                 st.warning("다시 하는 이유를 적어 주세요.")
             else:
@@ -2487,6 +2516,7 @@ def render_distribution() -> None:
                     st.warning(
                         f"되돌렸습니다 — 지금 상태 {say(data.get('status'), STATUS_LABELS)}"
                     )
+                    st.rerun()
 
     with st.expander("팀마다 어떤 사람을 원하는지 (배정 기준 고치기)"):
         profiles, perr2 = fetch_json(f"{DISTRIBUTOR}/api/v1/profiles")
