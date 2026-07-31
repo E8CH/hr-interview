@@ -55,3 +55,7 @@ data/
 # 다시 만들려면 docs/제안서/README.md 를 볼 것.
 docs/제안서/figs/
 docs/제안서/*.pdf
+
+# 시연 영상도 같은 화면을 녹화한 것이라 뺀다. 100MB 를 넘어 어차피
+# git-lfs 없이는 push 도 안 된다.
+docs/*.mp4
