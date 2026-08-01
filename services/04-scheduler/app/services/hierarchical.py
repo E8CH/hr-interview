@@ -109,9 +109,15 @@ def _largest_remainder(desired: list[float], total: int, caps: list[int]) -> lis
 
 
 def split_team_by_day(
-    applicants: list[ApplicantIn], days: list[str], target_ratio: float
+    applicants: list[ApplicantIn], days: list[str], target_ratio: float | None = None
 ) -> tuple[dict[str, list[ApplicantIn]], list[ApplicantIn]]:
     """팀 지원자를 배정된 면접일별로 나누고 대학원 쿼터를 맞춘다.
+
+    `target_ratio` 를 안 주면 **그 팀 명단의 실제 비율** 을 목표로 삼는다. 하려는
+    일은 "학사 · 석박사 편중이 생기지 않도록 요일을 분산" 하는 것이므로, 팀이
+    가진 만큼을 날마다 고르게 나누면 된다. 3할 같은 고정값을 들이대면 대학원생이
+    한 명뿐인 팀은 그 한 명을 어느 날에 넣어도 목표를 못 맞추고, 대학원생만 있는
+    팀은 아예 맞출 길이 없다 — 그 팀들의 쿼터가 뜻 없이 한쪽으로 쏠린다.
 
     반환: ({면접일: [지원자]}, 수용량 초과로 남은 지원자)
     """
@@ -122,6 +128,8 @@ def split_team_by_day(
     bachelors = sorted(
         [a for a in applicants if not a.is_grad], key=lambda a: (-a.priority_score, a.applicant_id)
     )
+    if target_ratio is None:
+        target_ratio = (len(grads) / len(applicants)) if applicants else 0.0
 
     sizes = balanced_sizes(len(applicants), len(days))
     take = sum(sizes)
@@ -303,7 +311,7 @@ def place_group(
 # Stage 3 — Fallback (v5)
 # --------------------------------------------------------------------------
 def fallback_place(
-    board: Board, leftovers: list[ApplicantIn], target_ratio: float, timing=None
+    board: Board, leftovers: list[ApplicantIn], target_ratio: float | None = None, timing=None
 ) -> tuple[list[PlannedAssignment], list[ApplicantIn]]:
     """미배정자를 규칙 손해가 최소인 슬롯에 흡수한다.
 
@@ -311,7 +319,16 @@ def fallback_place(
       +100  세로 연속(규칙3)을 깨뜨림
       + 12  그날 이미 길게 잡은 조가 첫 타임(오전 · 오후)에 더 앉는 경우 (규칙4)
       +  ρ  배치 후 그날 대학원 비율의 목표 이탈도 (규칙1)
+
+    `target_ratio` 를 안 주면 **이 회차에 앉은 사람 + 아직 못 앉은 사람** 의 실제
+    비율을 목표로 삼는다. 여기서는 팀을 가리지 않고 날을 고르므로, 팀별이 아니라
+    회차 전체의 비율이 '고르게 나눈 상태' 다. 규칙1을 매길 때와 같은 잣대여야
+    이 단계가 점수를 스스로 깎지 않는다.
     """
+    if target_ratio is None:
+        pool = sum(board.day_count.values()) + len(leftovers)
+        grads = sum(board.day_grad.values()) + sum(1 for a in leftovers if a.is_grad)
+        target_ratio = (grads / pool) if pool else 0.0
     guarded = set(first_slots(timing))
     placed: list[PlannedAssignment] = []
     still_unassigned: list[ApplicantIn] = []

@@ -2,8 +2,10 @@
 
 점수 정의
 ---------
-rule1_grad_balance (SOFT) : 일차별 대학원 비율이 target±tolerance(기본 30%±20%p)
+rule1_grad_balance (SOFT) : 일차별 대학원 비율이 target±tolerance(기본 ±20%p)
                             안에 드는 날의 비율. 배정이 없는 날은 평가 제외.
+                            target 을 안 주면 그 시간표에 실린 명단의 실제
+                            비율 — 재는 것은 "요일 분산" 이지 3할이 아니다.
 rule2_team_conflict (HARD): 같은 팀이 동시간에 중복 배치된 건수.
                             100 × (1 − 중복건수 / 전체 배정수).
 rule3_vertical_group(SOFT): (팀, 면접일)별로 사용한 시간대가 HOURS 순서상 연속인 그룹의 비율.
@@ -64,7 +66,17 @@ def _round(value: float) -> float:
     return round(value + 1e-9, 1)
 
 
-def rule1_grad_balance(assignments: Iterable[Any], target: float, tolerance: float) -> tuple[float, dict]:
+def rule1_grad_balance(assignments: Iterable[Any], target: float | None,
+                       tolerance: float) -> tuple[float, dict]:
+    """날마다 대학원 비율이 목표에서 크게 벗어나지 않는지.
+
+    `target` 을 안 주면 **그 시간표에 실린 사람들의 실제 비율** 을 목표로 삼는다.
+    원래 목적은 "학사 · 석박사 간 실력 편중이 생기지 않도록 요일을 분산" 하는
+    것이다. 3할이라는 숫자를 지키는 것이 목적이 아니다 — 대학원생이 1할인
+    회차는 어느 날도 3할이 될 수 없어 늘 0점이 나오고, 6할인 회차는 아무리
+    고르게 나눠도 전부 위반으로 잡힌다. 어느 쪽이든 점수가 편중을 못 잰다.
+    명단이 정한 비율을 기준으로 삼아야 '고르게 나눴는가' 를 재게 된다.
+    """
     per_day_total: Counter = Counter()
     per_day_grad: Counter = Counter()
     for a in assignments:
@@ -72,6 +84,11 @@ def rule1_grad_balance(assignments: Iterable[Any], target: float, tolerance: flo
         per_day_total[day] += 1
         if _get(a, "degree") == "대학원":
             per_day_grad[day] += 1
+
+    total = sum(per_day_total.values())
+    from_roster = target is None
+    if from_roster:
+        target = (sum(per_day_grad.values()) / total) if total else 0.0
 
     ratios: dict[str, float] = {}
     outside: list[str] = []
@@ -85,13 +102,17 @@ def rule1_grad_balance(assignments: Iterable[Any], target: float, tolerance: flo
             outside.append(day)
 
     if not ratios:
-        return 100.0, {"ratios": {}, "outside": [], "target": target, "tolerance": tolerance}
+        return 100.0, {"ratios": {}, "outside": [], "target": _round(target),
+                       "tolerance": tolerance, "target_source": "명단" if from_roster else "지정"}
 
     score = 100.0 * (len(ratios) - len(outside)) / len(ratios)
     detail = {
         "ratios": ratios,
         "outside": outside,
-        "target": target,
+        "target": round(target, 4),
+        # 목표를 어디서 가져왔는지 — 화면이 "명단이 3.5할이라 그 언저리로 봅니다"
+        # 라고 말할 수 있어야 사람이 점수를 믿는다.
+        "target_source": "명단" if from_roster else "지정",
         "tolerance": tolerance,
         "acceptable_range": [round(low, 4), round(high, 4)],
     }
@@ -246,7 +267,7 @@ def rule_compliance(
     interviewers: Iterable[Any] | None = None,
     applicants: Iterable[Any] | None = None,
     *,
-    grad_ratio_target: float = 0.30,
+    grad_ratio_target: float | None = None,
     grad_ratio_tolerance: float = 0.20,
     timing=None,
 ) -> RuleReport:
@@ -255,6 +276,11 @@ def rule_compliance(
     `timing` 은 그 회차의 면접 진행 조건이다. 규칙4가 보는 '첫 타임' 이 몇 번째
     칸인지는 이 값으로 정해지므로, 시간표를 만들 때와 나중에 다시 검증할 때 같은
     값을 넘겨야 같은 점수가 나온다.
+
+    `grad_ratio_target` 도 마찬가지다. 안 주면 그 시간표에 실린 명단의 실제
+    비율로 규칙1을 잰다 — 편중을 재는 것이 목적이지 3할을 맞추는 것이 목적이
+    아니기 때문이다. 인사가 숫자를 못 박았다면 만들 때와 검증할 때 같은 숫자를
+    넘겨야 한다.
     """
     items = list(assignments)
 

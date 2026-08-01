@@ -4457,6 +4457,34 @@ def render_schedule_body(sc_id: str, pairs: dict[str, dict[str, str]] | None = N
         }
         for col, (key, label) in zip(st.columns(len(labels_rule)), labels_rule.items()):
             col.metric(label, f"{(rules.get(key) or {}).get('score', '-')}%")
+
+        # 점수가 깎였으면 왜 깎였는지를 말한다. 특히 규칙1은 '무엇에 견주어'
+        # 고른지가 화면에 안 보이면, 인사가 3할 같은 남의 숫자를 떠올리고
+        # 멀쩡한 시간표를 고치려 든다.
+        grad = (rules.get("rule1_grad_balance") or {}).get("detail") or {}
+        if grad.get("ratios"):
+            source = grad.get("target_source")
+            target = grad.get("target") or 0.0
+            span = grad.get("tolerance") or 0.0
+            base = {
+                # 어디서 온 목표인지를 안 남긴 옛 시간표는 숫자만 말한다
+                None: f"대학원 {target:.0%}를 목표로",
+                "명단": f"이번 회차 명단이 대학원 {target:.0%}라서 그 비율을",
+                "지정": f"인사팀이 정한 목표가 대학원 {target:.0%}라서 그 비율을",
+            }.get(source, f"대학원 {target:.0%}를 목표로")
+            outside = grad.get("outside") or []
+            if outside:
+                spread = ", ".join(
+                    f"{d} {grad['ratios'][d]:.0%}" for d in outside if d in grad["ratios"]
+                )
+                st.warning(
+                    f"**학사·대학원 고르게** — {base} 날마다 맞춥니다(±{span:.0%}). "
+                    f"{spread} 이(가) 그 폭을 벗어났습니다. "
+                    "채용 목적상 문제가 없으면 그대로 두어도 됩니다."
+                )
+            else:
+                st.caption(f"학사·대학원 — {base} 날마다 맞췄습니다(±{span:.0%}). 벗어난 날 없음.")
+
         with st.expander("자세한 값 보기"):
             st.json(rules)
 

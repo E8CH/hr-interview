@@ -3,8 +3,8 @@ from datetime import datetime
 
 from shared.contracts.constants import HOURS
 
-from app.domain.schedule import (InterviewerInfo, ScheduleAssignment,
-                                 ScheduleSnapshot)
+from app.domain.schedule import (ApplicantInfo, InterviewerInfo,
+                                 ScheduleAssignment, ScheduleSnapshot)
 from app.services.constraint_recheck import (W_FIRST_SLOT, ConstraintIndex,
                                              check_hard_constraints,
                                              compute_soft_penalty,
@@ -121,6 +121,44 @@ def test_grad_balance_penalty_triggers_on_skew(snapshot):
     breakdown = soft_penalty_breakdown(snapshot.assignments, snapshot.interviewers,
                                        list(ap_map.values()))
     assert breakdown["RULE1_GRAD_BALANCE"] > 0
+
+
+def _grad_rows(day: str, total: int, grads: int):
+    """그 날에 total 건 — 그중 grads 건이 대학원. 팀 · 담당자는 안 겹치게 돌린다."""
+    rows, aps = [], []
+    for i in range(total):
+        aid = f"{day}-{i}"
+        rows.append(_a(aid, aid, "IV002", day, HOURS[i % len(HOURS)], "AI솔루션팀"))
+        aps.append(ApplicantInfo(applicant_id=aid, name=aid, team_1st="AI솔루션팀",
+                                 degree_type="대학원" if i < grads else "학사"))
+    return rows, aps
+
+
+def test_grad_balance_is_measured_against_the_round_not_a_fixed_30_percent():
+    """대학원생이 반 할뿐인 회차를 고르게 나눴으면 벌점이 없어야 한다.
+
+    3할로 못 박으면 어느 날도 허용 범위(1~5할)에 못 들어 온 날이 벌점이다.
+    줄일 길이 없는 벌점을 줄이겠다고 재편성이 멀쩡한 자리를 흔들게 되고,
+    04 규칙1은 만점을 주는데 05만 깎는 어긋남도 생긴다.
+    """
+    rows, aps = [], []
+    for day in ("1일차", "2일차", "3일차"):
+        r, a = _grad_rows(day, 8, 0 if day == "2일차" else 1)   # 2/24 ≒ 0.08
+        rows += r
+        aps += a
+
+    assert soft_penalty_breakdown(rows, IVS, aps)["RULE1_GRAD_BALANCE"] == 0
+
+
+def test_grad_balance_still_catches_a_day_piled_with_grads():
+    """명단 비율을 목표로 삼아도 한쪽으로 몰린 날은 잡아야 한다."""
+    rows, aps = [], []
+    for day, grads in (("1일차", 0), ("2일차", 0), ("3일차", 8)):
+        r, a = _grad_rows(day, 8, grads)
+        rows += r
+        aps += a
+
+    assert soft_penalty_breakdown(rows, IVS, aps)["RULE1_GRAD_BALANCE"] > 0
 
 
 def test_first_slot_penalty_follows_the_interview_timing():

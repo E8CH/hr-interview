@@ -349,6 +349,11 @@ def generate(db: Session, req: GenerateRequest) -> tuple[Schedule, RuleReport, l
                 # 이 값으로 갈리므로, 안 남기면 다시 검증할 때 기본 조건으로 재서
                 # 만들 때와 다른 점수가 나온다.
                 "timing": _jsonable(req.constraints.timing or {}),
+                # 규칙1을 어떤 목표로 쟀는지도 남긴다. 안 주면(None) 명단의 실제
+                # 비율로 재므로 다시 검증해도 같은 값이 나오지만, 인사가 숫자를
+                # 못 박았다면 그 숫자를 안 남기는 순간 검증 점수가 달라진다.
+                "grad_ratio_target": req.constraints.grad_ratio_target,
+                "grad_ratio_tolerance": req.constraints.grad_ratio_tolerance,
                 "off_band": _jsonable(off_band_rows),
             },
         )
@@ -541,6 +546,17 @@ def stored_timing(db: Session, schedule_id: str) -> dict | None:
     return _overall_details(db, schedule_id).get("timing") or None
 
 
+def stored_grad_target(db: Session, schedule_id: str) -> tuple[float | None, float]:
+    """만들 때 쓴 규칙1의 목표 · 허용폭 — 검증도 같은 잣대로.
+
+    없으면 (None, 0.20) 이다. None 은 '명단의 실제 비율' 을 뜻하므로, 이 칸이
+    생기기 전에 만든 시간표도 지금 규칙과 같게 읽힌다.
+    """
+    details = _overall_details(db, schedule_id)
+    tolerance = details.get("grad_ratio_tolerance")
+    return details.get("grad_ratio_target"), 0.20 if tolerance is None else tolerance
+
+
 def validate_schedule(
     db: Session, schedule_id: str
 ) -> tuple[Schedule, list[dict], float, list[dict]]:
@@ -549,8 +565,13 @@ def validate_schedule(
     interviewers = load_interviewers(db, schedule.round_id)
     ignore = ignored_availability(db, schedule_id)
     violations = check_hard_constraints(assignments, interviewers, ignore_availability=ignore)
+    target, tolerance = stored_grad_target(db, schedule_id)
     report = rule_compliance(
-        assignments, interviewers, timing=stored_timing(db, schedule_id)
+        assignments,
+        interviewers,
+        grad_ratio_target=target,
+        grad_ratio_tolerance=tolerance,
+        timing=stored_timing(db, schedule_id),
     )
     penalty = soft_penalty(report, assignments, interviewers)
     off_band_rows = off_band(assignments, interviewers) if ignore else []

@@ -88,7 +88,12 @@ class GenerateConstraints(BaseModel):
     # 면접이면 4타임부터다 — 규칙4는 이 값 없이는 옳게 잴 수 없다. 안 주면
     # 계약의 기본값(09:00 · 30분 · 5분)으로 본다.
     timing: dict[str, Any] = Field(default_factory=dict)
-    grad_ratio_target: float = 0.30
+    # 하루에 몇 할이 대학원생이어야 하는가. 원래 목적은 "학사 · 석박사 편중이
+    # 생기지 않도록 요일을 분산" 하는 것이지 3할을 맞추는 것이 아니다. 그래서
+    # 안 주면(None) 그 회차 명단의 실제 비율을 목표로 삼는다 — 대학원생이 1할인
+    # 회차에 3할을 맞추라는 것은 지킬 수도 없고 지킬 까닭도 없다.
+    # 숫자를 주면 그 값으로 고정한다.
+    grad_ratio_target: float | None = None
     grad_ratio_tolerance: float = 0.20
     max_daily_default: int = len(HOURS)
     # 담당자가 적어 낸 가능 시간을 무시하고 자리부터 채운다. 앞타임만 되는

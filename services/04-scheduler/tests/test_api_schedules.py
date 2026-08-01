@@ -179,6 +179,50 @@ def test_timing_survives_generate_and_revalidation(client):
     assert after["rule4_first_slot"]["score"] == created["rule_compliance"]["rule4_first_slot"]
 
 
+def test_grad_target_survives_generate_and_revalidation(client):
+    """규칙1의 목표 비율도 시간표에 붙어 다녀야 한다.
+
+    인사가 '하루 절반은 석박사' 라고 못 박았으면 나중에 다시 재도 그 잣대여야
+    한다. 안 남기면 검증할 때는 명단의 실제 비율로 재게 되어, 같은 시간표인데
+    점수가 달라진다. 화면이 '고쳐야 한다' 와 '괜찮다' 를 번갈아 말하게 된다.
+    """
+    created = client.post(
+        "/api/v1/schedules/generate",
+        json={"round_id": "R2026-Q3-GRAD", "plan_id": "plan-grad", "algorithm": "v5",
+              "constraints": {"grad_ratio_target": 0.5, "grad_ratio_tolerance": 0.02}},
+    ).json()["data"]
+    sid = created["schedule_id"]
+    pinned = created["rule_compliance"]["rule1_grad_balance"]
+
+    live = client.get(f"/api/v1/schedules/{sid}/rules?recompute=true").json()["data"]
+    assert live["rule1_grad_balance"]["detail"]["target"] == 0.5
+    assert live["rule1_grad_balance"]["detail"]["target_source"] == "지정"
+    assert live["rule1_grad_balance"]["score"] == pinned
+
+    # 검증도 같은 잣대로 — 벌점이 그 점수 그대로 반영돼야 한다
+    validated = client.post(f"/api/v1/schedules/{sid}/validate").json()["data"]
+    expected = sum(
+        (100.0 - created["rule_compliance"][key]) * 0.10
+        for key in ("rule1_grad_balance", "rule3_vertical_group", "rule4_first_slot")
+    )
+    assert validated["soft_penalty"] == round(expected, 2)
+
+    after = client.get(f"/api/v1/schedules/{sid}/rules").json()["data"]
+    assert after["rule1_grad_balance"]["score"] == pinned
+
+
+def test_grad_target_defaults_to_the_roster_ratio(client):
+    """안 못 박으면 명단의 실제 비율로 잰다 — 재는 것은 요일 분산이다."""
+    created = _generate(client, "v5", round_id="R2026-Q3-ROSTER").json()["data"]
+    sid = created["schedule_id"]
+
+    detail = client.get(f"/api/v1/schedules/{sid}/rules").json()["data"]
+    detail = detail["rule1_grad_balance"]["detail"]
+    assert detail["target_source"] == "명단"
+    # 목표가 명단에서 왔으니 하루하루의 비율은 그 값 언저리에 모여 있다
+    assert min(detail["ratios"].values()) <= detail["target"] <= max(detail["ratios"].values())
+
+
 def test_list_round_schedules(client, generated):
     """화면이 '어느 시간표를 볼까요' 를 감사 로그가 아니라 여기서 받아야 한다."""
     other = _generate(client, "v4", round_id="R2026-Q3-02").json()["data"]

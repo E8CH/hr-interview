@@ -10,7 +10,7 @@ v3 에서는 재검증이 없어 하드 위반이 발생했다 — v3.1 의 핵�
   H4          면접위원 일일 최대 면접 수(max_daily) 초과 금지
 
 소프트 규칙 (페널티만 부여, 배정을 막지 않음)
-  S1 (규칙1)  날별 대학원 비율 30% ±20%p
+  S1 (규칙1)  날별 대학원 비율이 그 회차 전체의 비율 ±20%p
   S3 (규칙3)  동일 팀 세로(같은 날 연속 시간) 배치
   S4 (규칙4)  오전 · 오후 첫 타임은 그날 적게 보는 조 우선
 """
@@ -31,7 +31,10 @@ HOUR_BLOCKS: list[list[str]] = [list(HOURS)]
 
 HOUR_INDEX: dict[str, int] = {h: i for i, h in enumerate(HOURS)}
 
-GRAD_TARGET = 0.30
+#: 하루 대학원 비율의 허용폭. 목표값 자체는 못 박지 않는다 — 그 회차 명단의
+#: 실제 비율이 목표다. 04 규칙1도 같은 잣대로 매긴다. 3할 같은 고정값을 쓰면
+#: 대학원생이 1할인 회차는 고르게 나눠도 온 날이 벌점이라, 재편성이 줄일 수
+#: 없는 벌점을 줄이겠다고 멀쩡한 자리를 흔든다.
 GRAD_TOLERANCE = 0.20
 
 # 소프트 페널티 가중치
@@ -163,17 +166,28 @@ def check_hard_constraints(assignments: list[ScheduleAssignment],
 
 def _grad_balance_penalty(assignments: list[ScheduleAssignment],
                           applicants: dict[str, ApplicantInfo]) -> int:
+    """날마다의 대학원 비율이 **이 회차 전체의 비율** 에서 벗어난 만큼 벌한다.
+
+    재려는 것은 "학사 · 석박사 편중이 생기지 않도록 요일을 분산" 했는가다.
+    회차가 가진 비율대로 날마다 나뉘었으면 편중이 없는 것이다.
+    """
     per_day: dict[str, list[str]] = defaultdict(list)
     for a in assignments:
         ap = applicants.get(a.applicant_id)
         per_day[a.day].append(ap.degree_type if ap else "학사")
+
+    total = sum(len(d) for d in per_day.values())
+    if not total:
+        return 0
+    target = sum(1 for degrees in per_day.values()
+                 for d in degrees if d == "대학원") / total
 
     penalty = 0.0
     for _day, degrees in per_day.items():
         if not degrees:
             continue
         ratio = sum(1 for d in degrees if d == "대학원") / len(degrees)
-        excess = abs(ratio - GRAD_TARGET) - GRAD_TOLERANCE
+        excess = abs(ratio - target) - GRAD_TOLERANCE
         if excess > 0:
             penalty += excess * W_GRAD_BALANCE
     return int(round(penalty))
