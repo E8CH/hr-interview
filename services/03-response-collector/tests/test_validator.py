@@ -58,20 +58,19 @@ def test_unknown_day_rejected(valid_payload):
     assert "알 수 없는 날" in reason
 
 
-def test_legacy_weekday_is_still_accepted(valid_payload):
-    """요일('월')로 적어 보낸 옛 폼 응답은 1일차로 받아 준다.
+def test_a_weekday_is_rejected_and_named_in_the_reason(valid_payload):
+    """요일('월')로 온 회신은 조용히 고쳐 받지 않고 무슨 값이 왔는지 알려 준다.
 
-    날 이름을 바꾸기 전에 나간 폼 링크로 그때 응답을 다시 내면 '월' 이 온다.
-    여기서 물리면 그분만 회신을 못 하게 된다.
+    날 이름은 '1일차 … 5일차' 뿐이다. 요일이 왔다는 건 이름을 바꾸기 전에 나간
+    폼 링크로 낸 회신이라는 뜻이라, 받아 두면 어디서 온 값인지 아무도 모르게
+    된다. 되돌려 주는 말에 그 값을 그대로 담아 링크를 다시 받으시게 한다.
     """
     valid_payload["available_slots"] = [{"day": "월", "hour": HOURS[1]}]
 
     ok, reason = validate_form_response(valid_payload)
 
-    assert (ok, reason) == (True, "OK")
-    assert normalize_payload(valid_payload)["available_slots"] == [
-        {"day": "1일차", "hour": HOURS[1]}
-    ]
+    assert ok is False
+    assert "월" in reason
 
 
 def test_unknown_hour_rejected(valid_payload):

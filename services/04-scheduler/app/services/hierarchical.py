@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from app.domain.schemas import ApplicantIn, PlannedAssignment
-from app.infrastructure.contracts import DAYS, HOURS, day_name, plan_team_days
+from app.infrastructure.contracts import DAYS, HOURS, plan_team_days
 from app.services.board import Board
 from app.services.rule_evaluator import FIRST_SLOTS
 
@@ -36,14 +36,14 @@ def fixed_team_days(
 
     부서가 자리를 잡을 때 이미 이 날들을 보고 잡았으므로, 여기서 다시 뽑으면
     부서가 본 시간표와 최종 시간표가 어긋난다. 넘어온 이름 중 달력에 없는
-    것은 버린다. 옛 회차가 요일로 적어 보낸 것은 일차로 맞춰 읽는다.
+    것은 버린다.
     """
     planned = assign_team_days(sizes_by_team, days_per_team)
     if not given:
         return planned
     result: dict[str, list[str]] = {}
     for team in sizes_by_team:
-        days = [d for d in (day_name(x) for x in (given.get(team) or [])) if d in DAYS]
+        days = [d for d in (given.get(team) or []) if d in DAYS]
         # 같은 날을 두 번 적어 보냈으면 한 번만 센다 — 자리 수가 부풀지 않게
         seen: list[str] = []
         for day in days:

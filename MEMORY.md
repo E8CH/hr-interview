@@ -84,7 +84,7 @@ Streamlit 콘솔 1개로 되어 있다.
 `shared/contracts/constants.py` 의 고정 계약이다.
 
 ```python
-DAYS  = ["1일차", "2일차", "3일차", "4일차", "5일차"]   # 요일이 아니다 — 며칟날인지만 센다
+DAYS  = ["1일차", "2일차", "3일차", "4일차", "5일차"]   # 달력 날짜가 아니라 며칟날
 HOURS = ["1타임", "2타임", ..., "8타임"]        # 하루 8칸 — 점심을 따로 두지 않는다
 DEFAULT_TIMING = {"start": "09:00", "minutes": 30, "rest": 5}
 FRONT_END_MINUTES  = 14 * 60                    # 앞타임 — 아침부터 이 시각까지
@@ -123,9 +123,9 @@ MAX_SLOTS_PER_DAY = len(HOURS)                  # board.py
 → 한 팀이 하루에 넣을 수 있는 인원은 최대 8명 (규칙2가 `(팀, 날, 칸)` 을
 하나로 묶으므로 팀당 하루 상한은 곧 `len(HOURS)` 다).
 
-**옛 자료:** 이름을 바꾸기 전에 저장된 DB 에는 `{"월": ["09시", ...]}` 가 남아
-있다. 그대로 읽으면 어느 칸에도 안 걸려 그 사람이 통째로 빠지고 배정이 0명이
-된다. `normalize_availability()` 가 읽는 자리(`schedule_service.row_to_interviewer`
+**옛 자료:** 이름을 바꾸기 전에 저장된 DB 에는 `{<아무 날>: ["09시", ...]}` 처럼
+옛 칸 이름이 남아 있다. 그대로 읽으면 어느 칸에도 안 걸려 그 사람이 통째로
+빠지고 배정이 0명이 된다(날 이름 쪽은 무엇이든 어차피 지워진다). `normalize_availability()` 가 읽는 자리(`schedule_service.row_to_interviewer`
 · `_merge_availability` · `api/interviewers._serialize` · `response_client`)에서
 그 이름이 뜻하던 앞/뒤만 살려 지금 칸으로 옮긴다. 시각을 그대로 믿지는
 않는다 — 진행 조건이 바뀌면 그 시각은 이미 다른 칸이기 때문이다.
@@ -800,13 +800,21 @@ R20260731-01 기준 02: 배포안 1 · 배정 123, 03: 요청 1 · 대상자 22,
 월요일이 없나" 를 묻게 되는데, 우리 셈에는 월요일과 목요일의 차이가 없다.
 실제 달력에 언제 잡을지는 인사팀이 따로 정한다.
 
-**(라) 옛 자료는 물리지 않는다**
+**(라) 요일은 옮겨 읽지도 않는다** — 이 커밋
 
-저장된 회차에는 `"월"` 이 그대로 남아 있다. 자료를 옮기는 대신 `day_name()` ·
-`LEGACY_DAYS` 를 만들어 **읽는 길목마다** 일차로 맞춰 읽는다(`duplicate_fix._row` ·
-`hierarchical.fixed_team_days` · 03 `validator` · 콘솔 `handoff_team_days`).
-04 스키마에서 날 이름 검증도 뺐다 — 어차피 읽을 때 날은 지워지므로 물릴 까닭이
-없고, 물리면 옛 회차가 통째로 안 열린다. 옛 폼 링크로 낸 `"월"` 회신도 받아 준다.
+처음에는 옛 자료를 물리지 않으려고 `day_name()` · `LEGACY_DAYS` 를 만들어 읽는
+길목마다 `"월"` 을 일차로 옮겨 읽었다. 그런데 **7개 DB 를 다 뒤져 보니 요일로
+저장된 행이 한 줄도 없었다** — 회차를 다시 돌리면서 전부 일차로 바뀌어 있었다.
+쓰는 데가 없는 옮김판은 "어딘가 요일 자료가 있다" 는 거짓 신호만 남긴다. 그래서
+통째로 걷어냈다. 요일이 우리 셈에 들어오지 않는다는 말은, 옮겨서라도 받아 준다는
+말이 아니라 **아예 다루지 않는다** 는 말이다.
+
+읽는 쪽은 원래부터 달력에 없는 이름을 버리고 있어서(`if d in DAYS`) 손댈 게
+없었다. 03 폼 검증만 태도가 바뀐다 — `"월"` 이 오면 조용히 고쳐 받지 않고
+`알 수 없는 날: 월` 로 되돌려 준다. 그 회신은 이름을 바꾸기 전에 나간 폼 링크로
+낸 것이라는 뜻이라, 받아 두면 어디서 온 값인지 아무도 모르게 된다.
+04 스키마에서 날 이름 검증은 그대로 뺀 채다 — 읽을 때 날은 어차피 지워지므로
+물릴 까닭이 없고, 물리면 옛 회차가 통째로 안 열린다.
 
 **확인** — 01 47 · 02 122 · 03 177 · **04 204** · 05 82 · 06 129 · 07 119 ·
 콘솔 9 = **889건** 전부 통과, `integration-tests` 22건 통과. 화면 7개 예외 0.
@@ -815,9 +823,10 @@ R20260731-01 기준 02: 배포안 1 · 배정 123, 03: 요청 1 · 대상자 22,
 
 새로 넣은 회귀 시험 4건은 **버그를 되돌려 놓고 실패하는지 확인했다** —
 ① 옛 날 배분을 되살리면 `test_every_team_starts_on_day_one` 실패,
-② `LEGACY_DAYS` 를 비우면 `test_legacy_weekday_data_is_read_as_a_day_number` 실패,
+② `fixed_team_days` 의 `if d in DAYS` 를 빼면 `test_a_day_name_off_the_calendar_is_dropped` 실패,
 ③ `place_group` 의 되밀기를 빼면 `test_both_seats_are_scheduled_at_different_times[v4]` 실패,
-④ 03 `validator` 의 `day_name()` 을 빼면 `test_legacy_weekday_is_still_accepted` 실패.
+④ 03 `validator` 에 `day_name()` 을 되살리면
+   `test_a_weekday_is_rejected_and_named_in_the_reason` 실패.
 
 ---
 

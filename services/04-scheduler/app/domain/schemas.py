@@ -167,8 +167,8 @@ class InterviewerCreate(BaseModel):
     @classmethod
     def _valid_availability(cls, v: dict[str, list[str]]) -> dict[str, list[str]]:
         # 날 이름은 따지지 않는다 — 읽을 때 `normalize_availability()` 가 지우고
-        # 모든 날에 똑같이 펴기 때문이다. 저장해 둔 옛 자료에는 '월' 같은 요일이
-        # 키로 남아 있는데, 그걸 여기서 물리면 옛 회차를 아예 못 읽는다.
+        # 모든 날에 똑같이 펴기 때문이다. 자료에 어떤 이름이 키로 남아 있든 뜻을
+        # 갖지 않으므로, 여기서 물려 봐야 회차만 못 열게 될 뿐이다.
         for hours in v.values():
             for hour in hours:
                 if hour not in HOURS:

@@ -48,7 +48,7 @@ CREATE TABLE assignments (
     schedule_id     UUID REFERENCES schedules(schedule_id),
     applicant_id    VARCHAR(32) NOT NULL,
     interviewer_id  VARCHAR(32) NOT NULL,
-    day             VARCHAR(8) NOT NULL,  -- 1일차|2일차|…|5일차 (요일이 아니다)
+    day             VARCHAR(8) NOT NULL,  -- 1일차|2일차|…|5일차 (며칟날)
     hour            VARCHAR(8) NOT NULL,  -- 1타임|2타임|... (자리 번호)
     lock_level      VARCHAR(16) DEFAULT 'DRAFT',  -- DRAFT|CONFIRMED|LOCKED
     reason_tags     TEXT[],

@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from typing import Any, Iterable
 
-from app.infrastructure.contracts import DAYS, HOURS, day_name
+from app.infrastructure.contracts import DAYS, HOURS
 from app.services.board import MAX_SLOTS_PER_DAY
 from app.services.rule_evaluator import _get
 
@@ -32,8 +32,7 @@ def _row(index: int, item: Any) -> dict:
         "applicant_name": _get(item, "applicant_name", "") or "",
         "team": _get(item, "team"),
         "interviewer_id": _get(item, "interviewer_id"),
-        # 옛 회차는 날이 요일('월')로 저장돼 있다 — 읽을 때 일차로 맞춘다
-        "day": day_name(_get(item, "day")),
+        "day": _get(item, "day"),
         "hour": _get(item, "hour"),
         "lock_level": _get(item, "lock_level", "DRAFT") or "DRAFT",
     }
@@ -134,7 +133,7 @@ class _Space:
 
 def _team_days(days_by_team: dict | None, team: str) -> list[str]:
     """그 팀이 면접을 보기로 한 날 — 모르면 닷새 전부."""
-    given = [day_name(d) for d in ((days_by_team or {}).get(team) or [])]
+    given = list((days_by_team or {}).get(team) or [])
     days = [d for d in given if d in DAYS]
     return days or list(DAYS)
 

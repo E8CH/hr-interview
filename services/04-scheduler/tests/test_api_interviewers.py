@@ -74,8 +74,9 @@ def test_get_not_found(client):
 def test_an_unknown_day_is_not_rejected_but_read_as_every_day(client):
     """달력에 없는 날 이름이 와도 물리지 않는다 — 칸만 살려 모든 날에 편다.
 
-    날 이름을 여기서 물리면 날을 요일('월')로 저장해 둔 옛 회차가 통째로 안
-    열린다. 어차피 읽을 때 날은 지워지고 칸만 남으므로 물릴 까닭도 없다.
+    담당자에게 어느 날 되는지 묻지 않으므로, 자료에 적힌 날은 아무 뜻이 없다.
+    읽을 때 날은 지워지고 칸만 남는다 — 물려서 회차를 통째로 못 열게 할 까닭이
+    없다.
     """
     resp = client.post(
         "/api/v1/interviewers",
@@ -87,11 +88,11 @@ def test_an_unknown_day_is_not_rejected_but_read_as_every_day(client):
     assert fetched["availability"] == {day: [H[0]] for day in DAYS}
 
 
-def test_a_legacy_weekday_still_reads_as_the_same_slot(client):
-    """요일로 적어 보낸 옛 자료도 같은 칸으로 읽힌다."""
+def test_the_day_key_never_changes_which_slot_is_read(client):
+    """날 이름이 무엇이든 읽히는 칸은 같다 — 날은 뜻을 갖지 않는다."""
     client.post("/api/v1/interviewers",
                 json={"interviewer_id": "IV906", "team": "전극기술팀",
-                      "availability": {"월": [H[2]]}})
+                      "availability": {"아무날": [H[2]]}})
 
     fetched = client.get("/api/v1/interviewers/IV906").json()["data"]
     assert fetched["availability"] == {day: [H[2]] for day in DAYS}

@@ -49,7 +49,6 @@ from shared.contracts.constants import (  # noqa: E402
     band_hours,
     band_name,
     band_of as contract_band_of,
-    day_name,
     hour_bands,
     normalize_availability,
     plan_team_days,
@@ -58,9 +57,9 @@ DEFAULT_MASTER = PROJECT_ROOT / "docs" / "취합파일.xlsx"
 INTERVIEWER_SAMPLE = PROJECT_ROOT / "tools" / "fixtures" / "면접관명단_sample.xlsx"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-# 화면에 날을 늘어놓는 차례. 옛 회차 자료에는 요일로 적힌 날이 남아 있어 뒤에
-# 붙여 둔다 — 지금 만든 회차는 앞의 다섯 개(1일차 …)만 쓴다.
-DAY_ORDER = list(SCHED_DAYS) + ["월", "화", "수", "목", "금", "토", "일"]
+# 화면에 날을 늘어놓는 차례 — 달력에 있는 날이 전부다. 그 밖의 이름이 자료에
+# 섞여 있으면 화면 뒤쪽으로 밀리거나 필터에서 빠진다.
+DAY_ORDER = list(SCHED_DAYS)
 
 SERVICES = [
     ("version-manager", 8001),
@@ -467,12 +466,10 @@ def handoff_team_days(doc: dict) -> dict[str, list[str]]:
 
     옛 회차 자료에는 이 값이 없다. 그때는 그 자리에서 같은 셈(`plan_team_days`)
     으로 다시 뽑는다 — 스케줄러도 같은 함수를 쓰므로 답이 어긋나지 않는다.
-    날을 요일('월')로 적어 둔 옛 자료는 일차로 맞춰 읽는다.
     """
     saved = (doc or {}).get("team_days") or {}
     teams = (doc or {}).get("teams") or {}
-    out = {team: [d for d in (day_name(x) for x
-                              in (saved.get(team) or (block.get("days") or [])))
+    out = {team: [d for d in (saved.get(team) or (block.get("days") or []))
                   if d in SCHED_DAYS]
            for team, block in teams.items()}
     missing = {team: len((teams.get(team) or {}).get("applicants") or [])
@@ -523,7 +520,7 @@ def publish_handoff(rid: str, plan_id: str, applicants: list[dict],
     sizes = {team: sum(1 for row in applicants
                        if (row.get("team") or "미상") == team) for team in names}
     # 담당자가 어느 날에 나올 수 있는지는 보지 않는다 — 우리 모델에 담당자
-    # 가능 요일은 없다. 가능 시간은 앞타임 · 뒤타임 · 모든타임 뿐이고, 그 덩어리는
+    # 가능 날은 없다. 가능 시간은 앞타임 · 뒤타임 · 모든타임 뿐이고, 그 덩어리는
     # 1일차든 3일차든 똑같이 적용된다.
     team_days = plan_team_days(sizes, SCHED_DAYS_PER_TEAM)
     doc["team_days"] = team_days
@@ -3826,7 +3823,7 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
 
     `can` (사번 → {일차: 맡을 수 있는 칸})을 주면 그 자리에만 놓는다. 담당자가
     적어 낸 덩어리(앞타임 · 뒤타임 · 모든타임)가 그대로 그 칸 목록이고, 어느
-    일차든 같다 — 담당자 가능 요일이라는 것은 우리 모델에 없다.
+    일차든 같다 — 담당자 가능 날이라는 것은 우리 모델에 없다.
 
     맡을 자리를 못 찾은 사람은 자리는 주되 `off_band` 로 표시하고 왜 그런지
     (`off_why`)를 함께 남긴다 — 자리를 안 주면 부서 화면에서 그 사람이 통째로

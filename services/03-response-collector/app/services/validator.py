@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from shared.contracts.constants import DAYS, HOURS, day_name
+from shared.contracts.constants import DAYS, HOURS
 
 REQUIRED_FIELDS = ("job_role", "available_slots")
 MAX_SLOTS = len(DAYS) * len(HOURS)  # 닷새 × 하루 8칸 = 40
@@ -41,9 +41,9 @@ def validate_form_response(payload: Any) -> tuple[bool, str]:
     for slot in slots:
         if not isinstance(slot, dict) or "day" not in slot or "hour" not in slot:
             return False, f"슬롯 형식 오류: {slot}"
-        # 날은 '1일차 … 5일차'. 옛 회차가 요일('월')로 적어 보낸 것은 같은 뜻으로
-        # 받아 준다 — 옛 폼 링크로 다시 내신 분의 답을 여기서 물리지 않게.
-        day, hour = day_name(slot["day"]), slot["hour"]
+        # 날은 '1일차 … 5일차' 뿐이다. 그 밖의 이름은 오래된 폼 링크로 낸
+        # 회신이라는 뜻이라, 조용히 고쳐 받지 않고 무슨 값이 왔는지 되돌려 준다.
+        day, hour = slot["day"], slot["hour"]
         if day not in DAYS:
             return False, f"알 수 없는 날: {slot['day']}"
         if hour not in HOURS:
@@ -71,7 +71,7 @@ def normalize_payload(payload: dict) -> dict:
     normalized = dict(payload)
     normalized["job_role"] = str(normalized["job_role"]).strip()
     normalized["available_slots"] = [
-        {"day": day_name(s["day"]), "hour": s["hour"]}
+        {"day": s["day"], "hour": s["hour"]}
         for s in normalized["available_slots"]
     ]
     normalized.setdefault("max_daily", len(HOURS))

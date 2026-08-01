@@ -1,7 +1,7 @@
 """팀별 면접일은 인사가 명단을 보낼 때 한 번 정하고 끝이다
 
-날 이름은 요일이 아니라 '1일차 … 5일차' 다. 무슨 요일에 보는지는 우리가 셈에
-넣는 값이 아니다.
+날 이름은 '1일차 … 5일차' 다. 달력의 어느 날인지는 우리가 셈에 넣는 값이
+아니다 — 그건 인사가 나중에 붙인다.
 
 두 가지를 여기서 지킨다.
 
@@ -21,7 +21,7 @@ import inspect
 
 from app.domain.schemas import ApplicantIn, GenerateConstraints, InterviewerIn
 from app.infrastructure.contracts import (BAND_ALL, BAND_FRONT, DAYS, HOURS,
-                                          band_hours, day_name,
+                                          band_hours,
                                           normalize_availability,
                                           plan_team_days)
 from app.services import algorithm_v4, hierarchical
@@ -79,21 +79,22 @@ def test_days_never_run_past_the_calendar():
     assert days["가팀"] == list(DAYS)
 
 
-def test_legacy_weekday_data_is_read_as_a_day_number():
-    """요일로 저장해 둔 옛 회차 자료도 지금 이름으로 읽힌다.
+def test_a_day_name_off_the_calendar_is_dropped():
+    """달력에 없는 이름은 팀 면접일이 되지 못한다.
 
-    옛 회차의 시간표 · 인계 파일에는 날이 '월 · 화' 로 적혀 있다. 그대로 읽으면
-    달력에 없는 날이 되어 그 회차가 통째로 안 열린다.
+    3단계에서 못 박은 날을 그대로 받아 쓰되, 그 목록에 달력 밖 이름이 섞여
+    들어오면 버린다. 남는 게 없으면 같은 셈으로 다시 뽑는다.
     """
-    assert [day_name(d) for d in ["월", "화", "수", "목", "금"]] == list(DAYS)
-    assert day_name("3일차") == "3일차"        # 지금 이름은 그대로
-    assert day_name("토") == "토"              # 모르는 값은 건드리지 않는다
+    kept = hierarchical.fixed_team_days(
+        {"가팀": [DAYS[1], "월", "8일차"]}, {"가팀": 6}, days_per_team=3)
+
+    assert kept["가팀"] == [DAYS[1]]
 
 
-# ------------------------------------------------- 담당자 가능 요일은 묻지 않는가
+# --------------------------------------------- 담당자에게 되는 날은 묻지 않는가
 #
-# 한때는 담당자가 적어 낸 요일을 보고 팀 면접일을 골랐다. 그런데 그 요일은 어느
-# 화면에서도 물어본 적이 없는 값이었다 — 폼은 시간 덩어리만 받았고, 요일은 저장
+# 한때는 담당자가 적어 낸 날을 보고 팀 면접일을 골랐다. 그런데 그 날은 어느
+# 화면에서도 물어본 적이 없는 값이었다 — 폼은 시간 덩어리만 받았고, 날은 저장
 # 형식이 {날: [칸]} 이라 딸려 들어간 부산물이었다. 그 부산물이 사람의 뜻인 양
 # 자리를 막아 "나는 모든 시간이 된다고 했는데 왜 빈 자리가 없나" 가 나왔다.
 # 지금은 가능 시간이 앞타임 · 뒤타임 · 모든타임 뿐이고, 그 덩어리는 어느 날에나
