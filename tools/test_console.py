@@ -50,6 +50,7 @@ from shared.contracts.constants import (  # noqa: E402
     band_name,
     band_of as contract_band_of,
     hour_bands,
+    normalize_availability,
     plan_team_days,
 )
 DEFAULT_MASTER = PROJECT_ROOT / "docs" / "취합파일.xlsx"
@@ -516,7 +517,18 @@ def publish_handoff(rid: str, plan_id: str, applicants: list[dict],
     # 종속되게 한다.
     sizes = {team: sum(1 for row in applicants
                        if (row.get("team") or "미상") == team) for team in names}
-    team_days = plan_team_days(sizes, SCHED_DAYS_PER_TEAM, len(SCHED_HOURS))
+    # 요일은 그 팀 담당자가 나올 수 있는 날 중에서 고른다. 인원 수만 보고 정하면
+    # 목·금만 되는 팀에 월·화·수를 줘 버려, 부서 화면에서는 자리를 하나도 제대로
+    # 못 잡고 자동배치가 아무에게나 한 칸씩 얹는다 — 연달아 보지도 못하고 인사팀
+    # 최종 시간표는 그 자리를 죄다 옮긴다.
+    open_days = {}
+    for team in names:
+        mine_days = {day for row in interviewers
+                     if (row.get("team") or "미상") == team
+                     for day, hours in iv_availability(row).items() if hours}
+        open_days[team] = [day for day in SCHED_DAYS if day in mine_days]
+    team_days = plan_team_days(sizes, SCHED_DAYS_PER_TEAM, len(SCHED_HOURS),
+                               open_days)
     doc["team_days"] = team_days
     for team in names:
         block = teams.setdefault(team, {})
@@ -1027,6 +1039,17 @@ def band_cap(band: str, timing: dict | None = None) -> int:
     return len(band_hours(band, timing))
 
 
+def iv_availability(row: dict) -> dict[str, list[str]]:
+    """이 담당자가 적어 낸 가능 시간 — 저장된 표기를 지금 칸 이름으로 맞춰서.
+
+    저장된 값에는 옛 표기('09시' 등)가 남아 있을 수 있다. 스케줄러는 읽을 때마다
+    `normalize_availability()` 로 맞춰 보는데 화면만 날것으로 비교하면, 실제로는
+    되는 분이 화면에서만 '되는 칸이 하나도 없는 사람' 이 된다 — 그러면 팀 전원이
+    '가능하다고 하신 요일 · 시간에는 빈 자리가 없습니다' 로 밀린다.
+    """
+    return normalize_availability(row.get("availability") or {})
+
+
 def iv_answered(row: dict) -> bool:
     """이 담당자가 가능 시간을 적어 냈는가.
 
@@ -1035,7 +1058,7 @@ def iv_answered(row: dict) -> bool:
     사람' 으로 읽어 그 자리를 통째로 버렸다 — 부서가 확인하고 보낸 시간표와
     최종 시간표가 서로 다른 물건이 되던 가장 큰 까닭이다.
     """
-    return any((row.get("availability") or {}).values())
+    return any(iv_availability(row).values())
 
 
 def iv_open_slots(row: dict, days: list[str], per_day: int,
@@ -1050,12 +1073,25 @@ def iv_open_slots(row: dict, days: list[str], per_day: int,
     every = set(range(min(per_day, len(SCHED_HOURS))))
     if ignore:
         return {index: set(every) for index in range(len(days))}
-    availability = row.get("availability") or {}
+    availability = iv_availability(row)
     out: dict[int, set[int]] = {}
     for index, day in enumerate(days):
         hours = set(availability.get(day) or [])
         out[index] = {slot for slot in every if SCHED_HOURS[slot] in hours}
     return out
+
+
+def iv_open_days(rows: list[dict]) -> dict[str, list[str]]:
+    """담당자마다 나올 수 있다고 적어 낸 요일 — 화면에 이유를 적을 때 쓴다."""
+    return {row["interviewer_id"]: [day for day in SCHED_DAYS
+                                    if iv_availability(row).get(day)]
+            for row in rows or []}
+
+
+def team_days_gap(rows: list[dict], days: list[str]) -> list[str]:
+    """이 팀 면접 요일 중 담당자가 아무도 못 나오는 요일."""
+    open_days = {day for row in rows or [] for day in iv_availability(row)}
+    return [day for day in days or [] if day not in open_days]
 
 
 def team_open_slots(rows: list[dict], days: list[str], per_day: int,
@@ -3530,7 +3566,30 @@ def render_send(selected: list[dict]) -> None:
             st.error(aerr)
         else:
             doc = publish_handoff(round_id, plan_id, applicants, selected, actor)
-            st.success(f"{len(doc.get('teams') or {})}개 팀에 명단을 보냈습니다.")
+            st.success(
+                f"{len(doc.get('teams') or {})}개 팀에 명단을 보냈습니다 — "
+                "팀마다 면접 요일도 함께 갔습니다. 요일은 그 팀 담당자가 나올 수 "
+                "있다고 답한 날 중에서 고릅니다."
+            )
+            # 담당자가 아무도 못 나오는 요일을 준 팀은 여기서 짚어 준다 —
+            # 부서 화면에서는 그 팀 자리가 통째로 담당자 시간 밖으로 밀린다.
+            short = []
+            for team, days in (doc.get("team_days") or {}).items():
+                mine = [row for row in selected
+                        if (row.get("team") or "미상") == team]
+                lack = team_days_gap(mine, days)
+                if mine and lack:
+                    short.append(f"{team} — {' · '.join(lack)}")
+            if short:
+                st.warning(
+                    "아래 팀은 담당자가 나올 수 있다고 답한 요일이 "
+                    f"{SCHED_DAYS_PER_TEAM}일에 못 미쳐, 아무도 못 나오는 요일까지 "
+                    "면접일로 잡았습니다 — 그날 자리는 부서가 무엇을 하든 최종 "
+                    "시간표에서 옮겨집니다.\n\n"
+                    + "\n".join(f"- {line}" for line in short)
+                    + "\n\n그 팀에 담당자를 더 넣거나, 3단계에서 가능 시간을 "
+                    "다시 받아 주세요."
+                )
     c2.caption(f"마지막으로 보낸 시각 {str(doc.get('sent_at'))[:16] or '-'}")
 
     teams = doc.get("teams") or {}
@@ -3793,7 +3852,8 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
                  balance: bool = True,
                  can: dict[str, dict[int, set[int]]] | None = None,
                  days: list[str] | None = None,
-                 unanswered: set[str] | None = None) -> list[dict]:
+                 unanswered: set[str] | None = None,
+                 open_days: dict[str, list[str]] | None = None) -> list[dict]:
     """매칭(면접자→담당자)만으로 일자별 시간표를 만든다.
 
     5번 스케줄러가 아직 돌지 않아도 부서가 제출한 즉시 시간표를 볼 수 있어야 한다.
@@ -3808,6 +3868,12 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
     맡을 자리를 못 찾은 사람은 자리는 주되 `off_band` 로 표시하고 왜 그런지
     (`off_why`)를 함께 남긴다 — 자리를 안 주면 부서 화면에서 그 사람이 통째로
     사라져 버려 무엇이 잘못됐는지 볼 수가 없다.
+
+    사유는 셋으로 갈린다. ① 아직 가능 시간을 안 적어 내셨다 ② 적어는 내셨는데
+    **우리 팀 면접 요일에 못 나오신다** ③ 나오시는 요일 · 칸이 이미 다 찼다.
+    ②와 ③은 할 일이 아주 다르다 — ②는 인사 담당자가 팀 면접 요일을 바꿔야 하고
+    ③은 담당자를 더 불러야 한다. 예전에는 둘을 뭉뚱그려 ③으로만 적어, 요일이
+    어긋난 팀은 전원이 "빈 자리가 없습니다" 로 나와 까닭을 알 수가 없었다.
     """
     rows = [
         {
@@ -3827,6 +3893,18 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
     # 인사팀이 이 팀에 잡아 준 면접 요일 수 — 부서가 그보다 긴 시간표를 짜면
     # 최종 시간표가 그 일차를 받아 줄 수 없다.
     limit = len(days or []) or (len(rows) + 1)
+    open_days = open_days or {}
+    day_text = " · ".join(days or []) or "정해진 요일"
+
+    def why_off(interviewer_id) -> str:
+        """왜 이분이 이 자리를 못 맡는지 — 할 일이 달라지므로 갈라서 적는다."""
+        if interviewer_id in unanswered:
+            return "가능 시간을 아직 안 적어 내셨습니다"
+        mine_days = [d for d in (open_days.get(interviewer_id) or []) if d]
+        if mine_days and not set(mine_days) & set(days or []):
+            return (f"우리 팀 면접 요일({day_text})에 못 나오십니다 — "
+                    f"적어 내신 요일은 {' · '.join(mine_days)} 입니다")
+        return f"{day_text} 중 나오시는 칸이 이미 다 찼습니다"
 
     taken: set[tuple[int, int]] = set()
     placed = []
@@ -3854,10 +3932,7 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
             "slot_no": cell[1],
             "slot": labels[cell[1]],
             "off_band": off,
-            "off_why": ("가능 시간을 아직 안 적어 내셨습니다"
-                        if row["interviewer_id"] in unanswered
-                        else "가능하다고 하신 요일 · 시간에는 빈 자리가 없습니다")
-                       if off else "",
+            "off_why": why_off(row["interviewer_id"]) if off else "",
             "interviewer": iv_name.get(row["interviewer_id"],
                                        row["interviewer_id"] or ""),
         }))
@@ -3886,6 +3961,7 @@ def assign_by_availability(
     daily: dict[tuple[str, int], int] = {}
     picks: dict[str, str] = {}
     gaps: list[tuple[int, int]] = []
+    last: dict[int, str] = {}      # 그날 바로 앞 칸을 맡은 사람
     span = max(1, per_day)
     room = max(1, day_count or 1)
     for index, aid in enumerate(queue):
@@ -3903,19 +3979,27 @@ def assign_by_availability(
             who = min(free, key=lambda iid: (
                 len(can[iid].get(day) or ()), rank[iid]))
         else:
-            # 그날 여유가 가장 많은 분 — 같은 여유면 그날 나오시는 분을 먼저,
-            # 그래도 같으면 앞 차례대로. 아무도 없으면 팀장이 진다.
-            who = min(
-                order,
-                key=lambda iid: (
-                    daily.get((iid, day), 0) - caps.get(iid, 0),
-                    0 if can.get(iid, {}).get(day) else 1,
-                    rank[iid],
-                ),
-                default=lead,
-            )
+            # 바로 앞 칸을 맡은 분이 아직 하루 한도가 남았으면 그분이 이어 받는다.
+            # 여유만 보고 고르면 두 분이 한 칸씩 번갈아 앉아, 어차피 옮겨질 자리
+            # 때문에 아무도 연달아 보지 못하는 시간표가 나온다.
+            prev = last.get(day)
+            if prev is not None and daily.get((prev, day), 0) < caps.get(prev, 0):
+                who = prev
+            else:
+                # 그날 여유가 가장 많은 분 — 같은 여유면 그날 나오시는 분을 먼저,
+                # 그래도 같으면 앞 차례대로. 아무도 없으면 팀장이 진다.
+                who = min(
+                    order,
+                    key=lambda iid: (
+                        daily.get((iid, day), 0) - caps.get(iid, 0),
+                        0 if can.get(iid, {}).get(day) else 1,
+                        rank[iid],
+                    ),
+                    default=lead,
+                )
             gaps.append((day, slot))
         daily[(who, day)] = daily.get((who, day), 0) + 1
+        last[day] = who
         picks[aid] = who
     return picks, gaps
 
@@ -5150,11 +5234,23 @@ def render_team_view() -> None:
         rows = pair_schedule(
             applicants, pairs, iv_name, start=start.strip(), minutes=int(minutes),
             rest=int(rest), per_day=int(per_day), can=tv_can, days=team_days,
-            unanswered=set(tv_blank),
+            unanswered=set(tv_blank), open_days=iv_open_days(interviewers),
         )
     except ValueError:
         st.error("시작 시각은 HH:MM 형식으로 입력하세요. (예: 09:00)")
         return
+    # 우리 팀 면접 요일에 아무도 못 나오면 자리를 하나도 제대로 못 잡는다. 그때는
+    # 담당자를 바꿔도 소용이 없고 인사 담당자가 요일을 다시 잡아 줘야 한다 —
+    # 사람 이름을 줄줄이 늘어놓기 전에 그것부터 짚는다.
+    dead_days = team_days_gap(interviewers, team_days)
+    if dead_days:
+        st.error(
+            f"우리 팀 면접 요일 {' · '.join(team_days)} 가운데 "
+            f"**{' · '.join(dead_days)}** 에는 우리 팀 담당자가 한 분도 못 나오십니다. "
+            "그날 자리는 누구에게 맡겨도 인사 담당자의 최종 시간표에서 옮겨집니다.\n\n"
+            "인사 담당자에게 **우리 팀 면접 요일을 바꿔 달라** 고 요청하시거나, "
+            "그 요일에 나오실 수 있는 담당자를 '부서 1' 화면에서 더 넣어 주세요."
+        )
     off = [row for row in rows if row.get("off_band")]
     if off:
         st.warning(
@@ -5164,8 +5260,9 @@ def render_team_view() -> None:
                 f"- {row['name']} → {row['interviewer']} : {row['off_why']}"
                 for row in off
             )
-            + "\n\n담당자를 바꾸시거나, 인사 담당자에게 그분의 가능 시간을 다시 "
-            "받아 달라고 요청해 주세요."
+            + "\n\n요일이 어긋난 것이면 인사 담당자에게 면접 요일을 다시 잡아 달라고, "
+            "칸이 모자란 것이면 담당자를 더 넣거나 가능 시간을 더 받아 달라고 "
+            "요청해 주세요."
         )
 
     schedule_cards(rows, team=team)

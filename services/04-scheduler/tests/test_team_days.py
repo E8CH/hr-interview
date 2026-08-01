@@ -10,7 +10,8 @@
 from __future__ import annotations
 
 from app.domain.schemas import ApplicantIn, GenerateConstraints, InterviewerIn
-from app.infrastructure.contracts import DAYS, HOURS, band_hours, plan_team_days
+from app.infrastructure.contracts import (DAYS, DAYS_PER_TEAM, HOURS, band_hours,
+                                          plan_team_days)
 from app.services import algorithm_v4, hierarchical
 
 BAND = "둘 다"
@@ -61,6 +62,53 @@ def test_bigger_teams_get_the_emptier_days():
 
     assert days["큰팀"] == ["월", "화"]
     assert days["작은팀"] == ["수", "목"]
+
+
+# ------------------------------------------- 담당자가 나올 수 있는 요일로 잡는가
+
+def test_days_land_where_the_crew_can_actually_come():
+    """목 · 금만 되는 팀에 월 · 화 · 수를 주지 않는다.
+
+    인원 수만 보고 요일을 정하면, 그 팀 담당자가 한 분도 못 나오는 날이
+    면접 요일이 된다. 부서 화면은 전원을 '가능하다고 하신 요일 · 시간에는
+    빈 자리가 없습니다' 로 밀어 내고, 자동배치는 남는 사람에게 한 칸씩
+    번갈아 얹으며, 인사팀 최종 시간표는 그 자리를 죄다 옮긴다.
+    """
+    days = plan_team_days({"가팀": 16}, 3, len(HOURS), {"가팀": ["목", "금"]})
+
+    assert days["가팀"] == ["목", "금"]
+
+
+def test_open_days_only_narrow_the_pool_when_seats_fit():
+    """앉힐 사람이 다 들어가면 못 나오는 날을 억지로 붙이지 않는다."""
+    # 8명 · 하루 8칸 → 하루면 다 앉는다. 못 나오는 날을 더 붙이면 그 하루가
+    # 통째로 '인사팀 시간표에서 옮겨질 자리' 가 된다.
+    assert plan_team_days({"가팀": 8}, 3, 8, {"가팀": ["금"]})["가팀"] == ["금"]
+
+
+def test_days_are_filled_up_when_open_days_cannot_hold_everyone():
+    """되는 요일만으로 자리가 모자라면 남은 요일로 채운다 — 빈손보다는 낫다."""
+    days = plan_team_days({"가팀": 40}, 3, 8, {"가팀": ["목", "금"]})
+
+    assert days["가팀"] == ["월", "목", "금"]      # 되는 날 먼저, 모자란 하루만 더
+
+
+def test_team_with_nobody_available_falls_back_to_load():
+    """아무도 못 나오는 팀은 예전처럼 한산한 요일로 — 요일이 없으면 화면이 죽는다."""
+    days = plan_team_days({"가팀": 12}, 3, len(HOURS), {"가팀": []})
+
+    assert len(days["가팀"]) == 3
+    assert all(day in DAYS for day in days["가팀"])
+
+
+def test_open_days_do_not_change_the_old_answer():
+    """안 주거나 모두 다 되는 팀이면 예전 결과 그대로다 — 옛 호출자 보호."""
+    sizes = {"가팀": 12, "나팀": 9, "다팀": 7}
+    everyone = {team: list(DAYS) for team in sizes}
+
+    assert plan_team_days(sizes) == plan_team_days(sizes, open_days=None)
+    assert plan_team_days(sizes) == plan_team_days(sizes, DAYS_PER_TEAM,
+                                                   len(HOURS), everyone)
 
 
 # ------------------------------------------------ 정해 둔 요일을 그대로 쓰는가

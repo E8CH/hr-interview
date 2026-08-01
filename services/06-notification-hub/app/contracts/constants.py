@@ -251,7 +251,8 @@ DAYS_PER_TEAM = 3
 
 
 def plan_team_days(sizes_by_team, days_per_team: int = DAYS_PER_TEAM,
-                   slots_per_day: int | None = None) -> dict[str, list[str]]:
+                   slots_per_day: int | None = None,
+                   open_days=None) -> dict[str, list[str]]:
     """팀마다 어느 요일에 면접을 볼지 정한다 — 큰 팀부터 한산한 요일로.
 
     이 함수가 여기 있는 까닭은 **같은 답이 두 곳에서 필요해서** 다. 부서 화면은
@@ -260,13 +261,31 @@ def plan_team_days(sizes_by_team, days_per_team: int = DAYS_PER_TEAM,
     담당자를 몇 명 빼면 팀 인원이 달라지고 그러면 요일까지 통째로 바뀌었다 —
     같은 자료로 두 번 만들면 결과가 달라 보이던 원인이다. 이제는 인사가 명단을
     보내는 순간 한 번 정해서 그대로 물려준다.
+
+    `open_days[team]` 에 **그 팀 담당자가 한 명이라도 나올 수 있는 요일** 을 주면
+    그 안에서 먼저 고른다. 요일을 인원 수만 보고 정하면, 목·금만 되는 팀에 월·화·수
+    를 줘 놓고 부서 화면은 "가능하다고 하신 요일 · 시간에는 빈 자리가 없습니다"
+    라고만 말하게 된다 — 그 팀은 자리를 하나도 제대로 못 잡고, 자동배치는 남는
+    사람에게 한 칸씩 번갈아 얹으며(연달아 보지 못한다), 인사팀 최종 시간표는 그
+    자리를 죄다 옮긴다. 될 수 있는 요일이 모자라면 남은 요일로 채우되, 되는 요일을
+    먼저 쓴다.
     """
     slots_per_day = slots_per_day or len(HOURS)
+    open_days = open_days or {}
     day_load: dict[str, int] = {day: 0 for day in DAYS}
     result: dict[str, list[str]] = {}
     for team, size in sorted((sizes_by_team or {}).items(),
                              key=lambda kv: (-int(kv[1] or 0), str(kv[0]))):
-        chosen = sorted(DAYS, key=lambda d: (day_load[d], DAYS.index(d)))[:days_per_team]
+        can = [d for d in DAYS if d in set(open_days.get(team) or ())]
+        pool = can or list(DAYS)      # 아무도 못 나오는 팀은 예전처럼 부하로만 고른다
+        chosen = sorted(pool, key=lambda d: (day_load[d], DAYS.index(d)))[:days_per_team]
+        # 자리가 모자랄 때만 나머지 요일로 채운다. 앉힐 사람이 다 들어가는데도
+        # 날을 더 붙이면, 아무도 못 나오는 그 하루가 통째로 '옮겨질 자리' 가 된다.
+        need = min(days_per_team, max(1, -(-int(size or 0) // max(1, slots_per_day))))
+        if len(chosen) < need:
+            spare = [d for d in DAYS if d not in chosen]
+            chosen += sorted(spare, key=lambda d: (day_load[d], DAYS.index(d)))[
+                :need - len(chosen)]
         chosen.sort(key=DAYS.index)
         per_day = (min(slots_per_day, -(-int(size or 0) // days_per_team))
                    if days_per_team else 0)
