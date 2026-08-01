@@ -15,6 +15,7 @@ from app.infrastructure.contracts import (
     BAND_ALL,
     BAND_BACK,
     BAND_FRONT,
+    DAYS,
     HOURS,
     band_hours,
     band_of,
@@ -192,7 +193,7 @@ def test_import_reads_time_band_column(client, db):
     assert listed["A2"]["availability"]["금"] == BACK
     assert listed["A3"]["availability"] == {}   # 안 적었으면 건드리지 않는다
     # 되읽은 표기는 저장된 칸에서 거꾸로 알아낸다. 기본 조건에서는 앞타임이 하루
-    # 전체라 '둘 다' 와 구별되지 않으므로 그렇게 나오는 게 맞다.
+    # 전체라 '모든타임' 과 구별되지 않으므로 그렇게 나오는 게 맞다.
     assert listed["A1"]["time_band"] == BAND_ALL
     assert listed["A2"]["time_band"] == "뒤타임"
 
@@ -360,15 +361,17 @@ def test_master_hours_survive_when_nobody_answered(client, db, roster_bytes,
     # 목 IV101 은 7 · 8타임만 되는 사람이다. 마스터가 그 칸에 **한 칸이라도**
     # 걸치면 교집합이 비지 않아 그 한 칸만 남는다 — 아예 안 겹칠 때만 마스터로
     # 되돌리는 지금 규칙에 가려져 있던 자리다.
-    wanted = {"수": [HOURS[2], HOURS[3], HOURS[4], HOURS[5], HOURS[6]]}
-    db.get(Interviewer, "IV101").availability = dict(wanted)
+    wanted = [HOURS[2], HOURS[3], HOURS[4], HOURS[5], HOURS[6]]
+    db.get(Interviewer, "IV101").availability = {"수": list(wanted)}
     db.commit()
     interviewer_roster.select_for_round(db, sample_round_id, ["IV101", "IV102"])
 
     loaded = {iv.interviewer_id: iv for iv in
               schedule_service.load_interviewers(db, sample_round_id)}
 
-    assert loaded["IV101"].availability == wanted
+    # 적어 낸 요일('수')은 살아 남지 않는다 — 우리 모델에 담당자 가능 요일이
+    # 없어서, 고른 칸이 모든 요일에 그대로 펴진다. 살아 남아야 하는 것은 칸이다.
+    assert loaded["IV101"].availability == {day: list(wanted) for day in DAYS}
 
 
 # ------------------------------------- 옛 시각 이름으로 저장된 자료 (칸 이름 개편 이전)
@@ -388,17 +391,19 @@ def test_legacy_clock_hours_are_moved_into_current_slots(client, db, roster_byte
     db.commit()
     interviewer_roster.select_for_round(db, sample_round_id, ["IV101", "IV102", "IV103"])
 
-    # 옮기는 규칙 자체
-    assert normalize_availability({"월": ["09시", "10시", "11시"]}) == {"월": FRONT}
-    assert normalize_availability({"화": ["14시", "15시"]}) == {"화": BACK}
-    assert normalize_availability({"수": ["09시", "15시"]}) == {"수": list(HOURS)}
+    # 옮기는 규칙 자체 — 적어 낸 요일은 지우고 모든 요일로 편다
+    assert normalize_availability({"월": ["09시", "10시", "11시"]}) == {d: FRONT for d in DAYS}
+    assert normalize_availability({"화": ["14시", "15시"]}) == {d: BACK for d in DAYS}
+    assert normalize_availability({"수": ["09시", "15시"]}) == {d: list(HOURS) for d in DAYS}
 
     # 읽어 들인 뒤에도 옛 이름이 남지 않고, 그 사람이 통째로 빠지지도 않는다.
     # (회신이 함께 오면 교집합을 잡으므로 칸이 더 줄어들 수는 있다.)
     loaded = {iv.interviewer_id: iv for iv in
               schedule_service.load_interviewers(db, sample_round_id)}
-    for interviewer_id, day in (("IV101", "월"), ("IV102", "화"), ("IV103", "수")):
-        hours = loaded[interviewer_id].availability.get(day, [])
-        assert hours, interviewer_id
-        assert set(hours) <= set(HOURS), interviewer_id
+    for interviewer_id in ("IV101", "IV102", "IV103"):
+        availability = loaded[interviewer_id].availability
+        assert sorted(availability) == sorted(DAYS), interviewer_id   # 요일을 안 가린다
+        for day in DAYS:
+            assert availability[day], (interviewer_id, day)
+            assert set(availability[day]) <= set(HOURS), (interviewer_id, day)
     assert set(loaded["IV102"].availability["화"]) <= set(BACK)

@@ -30,24 +30,19 @@
   textarea { min-height: 72px; resize: vertical; }
   input:focus, textarea:focus { outline: 2px solid #2563eb; outline-offset: -1px; border-color: #2563eb; }
 
-  /* 요일 × 시간 슬롯 그리드 */
-  table.grid { width: 100%; border-collapse: separate; border-spacing: 6px; margin-top: 8px; }
-  table.grid th {
-    font-size: 13px; font-weight: 600; color: #4b5563; padding: 4px;
-  }
-  table.grid th.rowhead { text-align: right; width: 64px; white-space: nowrap; }
+  /* 가능 시간 덩어리 — 요일은 묻지 않는다(고른 덩어리가 모든 요일에 적용된다) */
+  .bands { display: grid; gap: 8px; margin-top: 8px; }
   .slot {
-    display: block; width: 100%; padding: 12px 4px; border: 1px solid #d1d5db;
-    border-radius: 8px; background: #fff; cursor: pointer; font-size: 13px;
-    color: #6b7280; user-select: none; transition: background .1s, border-color .1s;
+    display: block; width: 100%; padding: 14px 16px; border: 1px solid #d1d5db;
+    border-radius: 8px; background: #fff; cursor: pointer; font-size: 14px;
+    color: #1c1e21; user-select: none; text-align: left;
+    transition: background .1s, border-color .1s;
   }
+  .slot .why { display: block; font-size: 12px; color: #6b7280; margin-top: 2px; }
   .slot:hover { border-color: #2563eb; }
   .slot[aria-pressed="true"] { background: #2563eb; border-color: #2563eb; color: #fff; font-weight: 600; }
+  .slot[aria-pressed="true"] .why { color: #dbeafe; }
   .gridbar { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
-  .btn-mini {
-    padding: 6px 12px; border: 1px solid #d1d5db; background: #fff;
-    border-radius: 6px; font-size: 13px; cursor: pointer;
-  }
   #count { font-size: 13px; color: #4b5563; margin-left: auto; }
 
   button.submit {
@@ -85,32 +80,18 @@
     <input type="text" id="job_role" name="job_role" maxlength="64" placeholder="예: 배터리 소재 연구"
            value="{{ submitted_payload.job_role if submitted_payload else '' }}" required>
 
-    <label>가능한 시간대 <span class="hint">(필수 · 칸을 클릭해 토글, 요일 {{ days|length }} × 시간대 {{ hours|length }})</span></label>
-    <table class="grid" id="slotgrid">
-      <thead>
-        <tr>
-          <th class="rowhead"></th>
-          {% for d in days %}<th scope="col">{{ d }}</th>{% endfor %}
-        </tr>
-      </thead>
-      <tbody>
-        {% for h in hours %}
-        <tr>
-          <th class="rowhead" scope="row">{{ h }}</th>
-          {% for d in days %}
-          <td>
-            <button type="button" class="slot" data-day="{{ d }}" data-hour="{{ h }}"
-                    aria-pressed="false" aria-label="{{ d }}요일 {{ h }}">{{ d }} {{ h }}</button>
-          </td>
-          {% endfor %}
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <label>가능한 시간대 <span class="hint">(필수 · 하나만 고르세요. 요일은 가리지 않습니다 — 고르신 시간대가 면접 요일 어느 날에나 그대로 적용됩니다)</span></label>
+    <div class="bands" id="bandlist">
+      {% for band in bands %}
+      <button type="button" class="slot" data-band="{{ band.name }}"
+              data-hours="{{ band.hours|join(',') }}" aria-pressed="false"
+              aria-label="{{ band.name }}">{{ band.name }}
+        <span class="why">{{ band.help }}</span>
+      </button>
+      {% endfor %}
+    </div>
     <div class="gridbar">
-      <button type="button" class="btn-mini" id="selall">전체 선택</button>
-      <button type="button" class="btn-mini" id="clearall">전체 해제</button>
-      <span id="count">선택 0칸</span>
+      <span id="count">아직 안 고르셨습니다</span>
     </div>
 
     <label for="max_daily">하루 최대 면접 횟수 <span class="hint">(1~{{ max_slots }})</span></label>
@@ -133,41 +114,46 @@
 (function () {
   var TOKEN = {{ token|tojson }};
   var LOCKED = {{ (already_submitted or closed)|tojson }};
-  var PRESELECTED = {{ (submitted_payload.available_slots if submitted_payload else [])|tojson }};
+  var DAYS = {{ days|tojson }};
+  var PRESELECTED_BAND = {{ (submitted_band or '')|tojson }};
 
-  var grid = document.getElementById('slotgrid');
-  var slots = Array.prototype.slice.call(grid.querySelectorAll('.slot'));
+  var slots = Array.prototype.slice.call(
+    document.getElementById('bandlist').querySelectorAll('.slot'));
   var countEl = document.getElementById('count');
   var msg = document.getElementById('msg');
   var btn = document.getElementById('submitbtn');
   var form = document.getElementById('respform');
 
-  function key(d, h) { return d + '|' + h; }
-  var preset = {};
-  PRESELECTED.forEach(function (s) { preset[key(s.day, s.hour)] = true; });
-
-  function selected() {
-    return slots.filter(function (s) { return s.getAttribute('aria-pressed') === 'true'; })
-                .map(function (s) { return { day: s.dataset.day, hour: s.dataset.hour }; });
+  function chosen() {
+    return slots.filter(function (s) { return s.getAttribute('aria-pressed') === 'true'; })[0];
   }
-  function refresh() { countEl.textContent = '선택 ' + selected().length + '칸'; }
+  // 고른 덩어리를 모든 요일로 편다 — 요일별로 다르게 받지 않는다.
+  function selected() {
+    var pick = chosen();
+    if (!pick) return [];
+    var hours = pick.dataset.hours ? pick.dataset.hours.split(',') : [];
+    var out = [];
+    DAYS.forEach(function (d) {
+      hours.forEach(function (h) { out.push({ day: d, hour: h }); });
+    });
+    return out;
+  }
+  function refresh() {
+    var pick = chosen();
+    countEl.textContent = pick
+      ? pick.dataset.band + ' · 하루 ' + pick.dataset.hours.split(',').length + '칸'
+      : '아직 안 고르셨습니다';
+  }
   function setPressed(el, on) { el.setAttribute('aria-pressed', on ? 'true' : 'false'); }
 
   slots.forEach(function (s) {
-    if (preset[key(s.dataset.day, s.dataset.hour)]) setPressed(s, true);
+    if (s.dataset.band === PRESELECTED_BAND) setPressed(s, true);
     s.addEventListener('click', function () {
       if (LOCKED) return;
-      setPressed(s, s.getAttribute('aria-pressed') !== 'true');
+      slots.forEach(function (other) { setPressed(other, false); });
+      setPressed(s, true);
       refresh();
     });
-  });
-  document.getElementById('selall').addEventListener('click', function () {
-    if (LOCKED) return;
-    slots.forEach(function (s) { setPressed(s, true); }); refresh();
-  });
-  document.getElementById('clearall').addEventListener('click', function () {
-    if (LOCKED) return;
-    slots.forEach(function (s) { setPressed(s, false); }); refresh();
   });
   refresh();
 
@@ -176,7 +162,7 @@
   if (LOCKED) {
     btn.disabled = true;
     btn.textContent = '{{ "마감됨" if closed else "제출 완료" }}';
-    form.querySelectorAll('input, textarea, .btn-mini').forEach(function (el) { el.disabled = true; });
+    form.querySelectorAll('input, textarea, .slot').forEach(function (el) { el.disabled = true; });
   }
 
   form.addEventListener('submit', function (ev) {
@@ -186,7 +172,7 @@
     var picked = selected();
     var role = document.getElementById('job_role').value.trim();
     if (!role) { show('담당 직무를 입력해 주세요.', 'err'); return; }
-    if (picked.length === 0) { show('가능한 시간대를 1칸 이상 선택해 주세요.', 'err'); return; }
+    if (picked.length === 0) { show('가능한 시간대를 골라 주세요.', 'err'); return; }
 
     var backup = document.getElementById('backup_contact').value.trim();
     var notes = document.getElementById('notes').value.trim();

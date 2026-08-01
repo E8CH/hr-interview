@@ -67,6 +67,11 @@ DEFAULT_TIMING = {"start": "09:00", "minutes": 30, "rest": 5}
 # 담당자가 하루 중 언제 있어 줄 수 있는지 — 칸을 하나씩 고르기는 번거로워서
 # 두 덩어리로만 받는다. 고른 덩어리가 그대로 배치 제약이 된다.
 #
+# **요일은 묻지 않는다.** 담당자가 고른 덩어리는 어느 요일에나 똑같이 적용된다.
+# 요일까지 받아 봐야 배치에 쓰지 않으면서 화면에만 선택지로 남아, "나는 다 된다고
+# 했는데 왜 빈 자리가 없다고 하나" 같은 헛갈림만 만든다. 그래서 아예 뺐다 —
+# 어느 요일이건 앞타임 · 뒤타임 · 모든타임 셋으로만 셈한다.
+#
 # 예전에는 오전 · 오후로 **갈라서** 받았다. 그러면 정오에 걸치는 칸(기본 조건에서
 # 11시 55분 ~ 12시 25분)을 어느 쪽도 맡을 수 없어 점심때가 통째로 빈다.
 # 그래서 두 덩어리가 **겹치게** 둔다 — 앞타임은 14시까지, 뒤타임은 12시부터.
@@ -74,12 +79,15 @@ DEFAULT_TIMING = {"start": "09:00", "minutes": 30, "rest": 5}
 FRONT_END_MINUTES = 14 * 60    # 앞타임 — 아침부터 이 시각까지 있어 준다
 BACK_START_MINUTES = 12 * 60   # 뒤타임 — 이 시각부터 와서 끝까지 있어 준다
 
-BAND_ALL, BAND_FRONT, BAND_BACK, BAND_NONE = "둘 다", "앞타임", "뒤타임", "어려움"
+BAND_ALL, BAND_FRONT, BAND_BACK, BAND_NONE = "모든타임", "앞타임", "뒤타임", "어려움"
 
 #: 예전 표기 → 지금 표기. 저장해 둔 자료와 현업이 적어 낸 엑셀에 남아 있다.
 LEGACY_BANDS = {
     "오전·오후": BAND_ALL, "오전 · 오후": BAND_ALL, "오전오후": BAND_ALL,
     "오전만": BAND_FRONT, "오후만": BAND_BACK,
+    # '둘 다' 는 앞타임 · 뒤타임 둘 다라는 뜻이었는데, 요일까지 둘 다인지 헷갈려
+    # 해서 '모든타임' 으로 바꿨다. 저장해 둔 자료에는 옛 이름이 남아 있다.
+    "둘 다": BAND_ALL, "둘다": BAND_ALL,
 }
 
 
@@ -143,7 +151,7 @@ def hour_bands(hour: str, timing=None) -> list[str]:
     """이 칸을 맡을 수 있는 덩어리들 — 겹치는 시간대의 칸은 둘 다 나온다.
 
     둘 다 안 나오는 칸(앞타임이 끝난 뒤에 시작해서 뒤타임이 오기 전에 끝나는
-    칸)은 '둘 다' 라고 답한 사람만 맡을 수 있다. 앞뒤가 겹쳐 있으므로 보통
+    칸)은 '모든타임' 이라고 답한 사람만 맡을 수 있다. 앞뒤가 겹쳐 있으므로 보통
     조건에서는 생기지 않는다.
     """
     spans = hour_spans(timing)
@@ -170,7 +178,7 @@ def band_hours(band: str, timing=None) -> list[str]:
 
 
 def band_availability(band: str, days=DAYS, timing=None) -> dict[str, list[str]]:
-    """고른 덩어리를 요일마다 같은 칸으로 펼친다."""
+    """고른 덩어리를 요일마다 같은 칸으로 펼친다 — 요일별로 다르게 두지 않는다."""
     hours = band_hours(band, timing)
     return {day: list(hours) for day in days} if hours else {}
 
@@ -179,7 +187,7 @@ def band_of(availability, timing=None) -> str:
     """저장된 가용성이 어느 덩어리인지 되읽는다 — 화면 표시용.
 
     앞타임과 뒤타임이 겹치므로 한 칸만 보고는 못 가른다. 고른 칸 전체가 어느
-    덩어리 안에 들어가는지로 판단하고, 어느 쪽에도 안 들어가면 '둘 다' 다.
+    덩어리 안에 들어가는지로 판단하고, 어느 쪽에도 안 들어가면 '모든타임' 이다.
     """
     hours = {h for day_hours in (availability or {}).values() for h in day_hours}
     if not hours:
@@ -215,35 +223,49 @@ def _legacy_hour_of(name) -> int | None:
 
 
 def normalize_availability(availability, timing=None) -> dict[str, list[str]]:
-    """저장해 둔 가용성을 지금 쓰는 자리 이름(1타임…8타임)으로 맞춘다.
+    """저장해 둔 가용성을 지금 쓰는 자리 이름(1타임…8타임)으로, 요일은 지워서.
 
-    예전에는 칸 이름이 '09시'·'14시' 같은 시각이었다. 그 이름을 그대로 두면
-    지금은 어느 칸에도 걸리지 않아 그 사람이 통째로 빠져 버린다. 그렇다고
-    시각을 그대로 믿을 수도 없다 — 진행 조건이 바뀌면 09시라고 적힌 칸이
-    실제로는 다른 시각이기 때문이다. 그래서 이름이 뜻하던 오전/오후만 살려
-    지금 칸으로 옮긴다.
+    두 가지를 한다.
+
+    ① 옛 칸 이름을 지금 이름으로. 예전에는 칸 이름이 '09시'·'14시' 같은
+       시각이었다. 그 이름을 그대로 두면 지금은 어느 칸에도 걸리지 않아 그
+       사람이 통째로 빠져 버린다. 그렇다고 시각을 그대로 믿을 수도 없다 —
+       진행 조건이 바뀌면 09시라고 적힌 칸이 실제로는 다른 시각이기 때문이다.
+       그래서 이름이 뜻하던 오전/오후만 살려 지금 칸으로 옮긴다.
+
+    ② **요일을 지운다.** 우리 모델에 담당자 가능 요일은 없다. 무슨 요일에
+       적어 냈든 고른 칸을 모아 모든 요일에 똑같이 편다. 예전에는 요일별로
+       받아 두고 배치는 그 요일을 그대로 믿었는데, 정작 화면 어디에서도 요일을
+       고르게 하지 않아 자료에 남은 요일이 그 사람의 뜻과 상관없이 자리를
+       막았다 — "나는 모든 시간이 된다고 했는데 왜 빈 자리가 없다고 하나" 가
+       거기서 나왔다. 요일이 필요한 곳은 팀 면접 요일(`plan_team_days`) 뿐이다.
     """
     if not availability:
         return {}
     known = set(HOURS)
-    result: dict[str, list[str]] = {}
-    for day, hours in availability.items():
-        hours = list(hours or [])
-        kept = {h for h in hours if h in known}
-        legacy = [_legacy_hour_of(h) for h in hours if h not in known]
-        legacy = [h for h in legacy if h is not None]
-        if legacy:
-            has_am = any(h < 12 for h in legacy)
-            has_pm = any(h >= 12 for h in legacy)
-            if has_am and has_pm:
-                kept |= set(HOURS)
-            elif has_am:
-                kept |= set(band_hours(BAND_FRONT, timing))
-            elif has_pm:
-                kept |= set(band_hours(BAND_BACK, timing))
-        if kept:
-            result[day] = [h for h in HOURS if h in kept]
-    return result
+    kept: set[str] = set()
+    legacy: list[int] = []
+    for hours in availability.values():
+        for hour in list(hours or []):
+            if hour in known:
+                kept.add(hour)
+                continue
+            old = _legacy_hour_of(hour)
+            if old is not None:
+                legacy.append(old)
+    if legacy:
+        has_am = any(h < 12 for h in legacy)
+        has_pm = any(h >= 12 for h in legacy)
+        if has_am and has_pm:
+            kept |= set(HOURS)
+        elif has_am:
+            kept |= set(band_hours(BAND_FRONT, timing))
+        elif has_pm:
+            kept |= set(band_hours(BAND_BACK, timing))
+    if not kept:
+        return {}
+    hours = [h for h in HOURS if h in kept]
+    return {day: list(hours) for day in DAYS}
 
 
 #: 한 팀을 몰아 보는 날 수 — 인사 화면과 스케줄러가 같은 값을 써야 한다
@@ -251,8 +273,7 @@ DAYS_PER_TEAM = 3
 
 
 def plan_team_days(sizes_by_team, days_per_team: int = DAYS_PER_TEAM,
-                   slots_per_day: int | None = None,
-                   open_days=None) -> dict[str, list[str]]:
+                   slots_per_day: int | None = None) -> dict[str, list[str]]:
     """팀마다 어느 요일에 면접을 볼지 정한다 — 큰 팀부터 한산한 요일로.
 
     이 함수가 여기 있는 까닭은 **같은 답이 두 곳에서 필요해서** 다. 부서 화면은
@@ -262,30 +283,16 @@ def plan_team_days(sizes_by_team, days_per_team: int = DAYS_PER_TEAM,
     같은 자료로 두 번 만들면 결과가 달라 보이던 원인이다. 이제는 인사가 명단을
     보내는 순간 한 번 정해서 그대로 물려준다.
 
-    `open_days[team]` 에 **그 팀 담당자가 한 명이라도 나올 수 있는 요일** 을 주면
-    그 안에서 먼저 고른다. 요일을 인원 수만 보고 정하면, 목·금만 되는 팀에 월·화·수
-    를 줘 놓고 부서 화면은 "가능하다고 하신 요일 · 시간에는 빈 자리가 없습니다"
-    라고만 말하게 된다 — 그 팀은 자리를 하나도 제대로 못 잡고, 자동배치는 남는
-    사람에게 한 칸씩 번갈아 얹으며(연달아 보지 못한다), 인사팀 최종 시간표는 그
-    자리를 죄다 옮긴다. 될 수 있는 요일이 모자라면 남은 요일로 채우되, 되는 요일을
-    먼저 쓴다.
+    담당자가 **어느 요일에 나올 수 있는지는 보지 않는다.** 우리 모델에는 담당자
+    가능 요일이라는 것이 없다 — 가능 시간은 앞타임 · 뒤타임 · 모든타임 뿐이고
+    그 덩어리는 어느 요일에나 똑같이 적용된다(`normalize_availability` 참고).
     """
     slots_per_day = slots_per_day or len(HOURS)
-    open_days = open_days or {}
     day_load: dict[str, int] = {day: 0 for day in DAYS}
     result: dict[str, list[str]] = {}
     for team, size in sorted((sizes_by_team or {}).items(),
                              key=lambda kv: (-int(kv[1] or 0), str(kv[0]))):
-        can = [d for d in DAYS if d in set(open_days.get(team) or ())]
-        pool = can or list(DAYS)      # 아무도 못 나오는 팀은 예전처럼 부하로만 고른다
-        chosen = sorted(pool, key=lambda d: (day_load[d], DAYS.index(d)))[:days_per_team]
-        # 자리가 모자랄 때만 나머지 요일로 채운다. 앉힐 사람이 다 들어가는데도
-        # 날을 더 붙이면, 아무도 못 나오는 그 하루가 통째로 '옮겨질 자리' 가 된다.
-        need = min(days_per_team, max(1, -(-int(size or 0) // max(1, slots_per_day))))
-        if len(chosen) < need:
-            spare = [d for d in DAYS if d not in chosen]
-            chosen += sorted(spare, key=lambda d: (day_load[d], DAYS.index(d)))[
-                :need - len(chosen)]
+        chosen = sorted(DAYS, key=lambda d: (day_load[d], DAYS.index(d)))[:days_per_team]
         chosen.sort(key=DAYS.index)
         per_day = (min(slots_per_day, -(-int(size or 0) // days_per_team))
                    if days_per_team else 0)

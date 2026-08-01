@@ -2,14 +2,16 @@
 
 사건: 한 팀 16명 전원이 "가능하다고 하신 요일 · 시간에는 빈 자리가 없습니다"
 로 나왔다. 그 팀 담당자 중에는 **모든 시간이 가능하다고 적어 낸 분**도
-있었는데도 그랬다. 까닭은 팀 면접 요일이 담당자 사정과 상관없이 인원 수만
-보고 정해져서, 그 팀 담당자가 한 분도 못 나오는 요일이 면접 요일이 된 것이다.
+있었는데도 그랬다. 까닭은 그 '요일' 이었다 — 우리는 담당자에게 가능한 요일을
+물어본 적이 없다. 가능 시간은 앞타임 · 뒤타임 · 모든타임 세 덩어리뿐이고 그
+덩어리는 어느 요일에나 똑같이 적용된다. 그런데 저장 형식이 {요일: [칸]} 이라
+딸려 들어간 요일이 사람의 뜻인 양 자리를 막았다.
 
-그때 화면은 두 가지를 잘못했다.
-  ① 사유가 뭉뚱그려져 있었다 — 요일이 어긋난 것과 칸이 모자란 것은 할 일이
-     완전히 다르다(인사에 요일을 바꿔 달라 / 담당자를 더 넣어라).
-  ② 자동배치가 아무도 못 맡는 자리를 '그날 여유가 가장 많은 분' 에게 한 칸씩
-     얹어, 두 분이 번갈아 앉는 시간표가 나왔다 — 연달아 보지 못한다.
+그래서 지금은 화면 어디에도 담당자 가능 요일이 없다. 남은 사유는 둘 뿐이고,
+둘은 할 일이 다르다 — 인사에 가능 시간을 받아 달라 / 담당자를 더 넣어라.
+
+한 가지 더: 자동배치가 아무도 못 맡는 자리를 '그날 여유가 가장 많은 분' 에게
+한 칸씩 얹어, 두 분이 번갈아 앉는 시간표가 나오던 것도 여기서 막는다.
 
 관련: services/04-scheduler/tests/test_team_days.py (요일을 어떻게 고르는가)
 """
@@ -46,22 +48,29 @@ def test_legacy_hour_names_still_count_as_available(console):
     assert console.iv_open_slots(row, ["월"], 8)[0]    # 맡을 자리가 생긴다
 
 
-# --------------------------------------------- 못 나오는 요일을 짚어 내는가
+# --------------------------------------------------- 요일을 안 가리는가
 
-def test_open_days_are_listed_in_week_order(console):
-    """담당자가 나올 수 있는 요일만, 월 → 금 차례로."""
-    rows = [_iv("IV1", {"금": HOURS, "화": HOURS}), _iv("IV2", {})]
+def test_a_day_written_down_does_not_narrow_anything(console):
+    """'금' 에만 적어 낸 분도 월요일 자리를 맡는다.
 
-    assert console.iv_open_days(rows) == {"IV1": ["화", "금"], "IV2": []}
+    화면이 저장된 요일을 그대로 믿던 시절에는 이분이 월 · 화 · 수가 면접
+    요일인 팀에서 '되는 칸이 하나도 없는 사람' 이 됐다.
+    """
+    row = _iv("IV1", {"금": HOURS})
+
+    assert console.iv_availability(row) == {day: HOURS for day in DAYS}
+    assert console.iv_open_slots(row, ["월", "화", "수"], 8) == {
+        0: set(range(8)), 1: set(range(8)), 2: set(range(8))}
 
 
-def test_gap_days_are_the_ones_nobody_can_come(console):
-    """팀 면접 요일 중 아무도 못 나오는 날을 집어 준다."""
-    rows = [_iv("IV1", {"목": HOURS}), _iv("IV2", {"금": HOURS})]
+def test_every_day_gets_the_same_slots(console):
+    """어느 일차든 맡을 수 있는 칸이 같다 — 덩어리는 요일을 안 가린다."""
+    row = _iv("IV1", {"월": HOURS[:4]})
 
-    assert console.team_days_gap(rows, ["월", "화", "수"]) == ["월", "화", "수"]
-    assert console.team_days_gap(rows, ["수", "목"]) == ["수"]
-    assert console.team_days_gap(rows, ["목", "금"]) == []
+    open_slots = console.iv_open_slots(row, ["월", "화", "수", "목"], 8)
+
+    assert list(open_slots) == [0, 1, 2, 3]
+    assert all(slots == {0, 1, 2, 3} for slots in open_slots.values())
 
 
 # ------------------------------------------------------- 사유를 갈라 적는가
@@ -86,23 +95,24 @@ def test_unanswered_is_told_apart(one_seat):
     assert row["off_why"] == "가능 시간을 아직 안 적어 내셨습니다"
 
 
-def test_day_mismatch_is_told_apart(one_seat):
-    """요일이 어긋난 분 — 인사가 팀 면접 요일을 바꿔야 한다."""
-    row = one_seat(open_days={"IV1": ["목", "금"]})
+def test_no_slot_at_all_is_told_apart(one_seat):
+    """적어 낸 덩어리에 맡을 칸이 하나도 없는 분 — 요일 얘기는 하지 않는다."""
+    row = one_seat()
 
-    assert row["off_why"] == ("우리 팀 면접 요일(월 · 화 · 수)에 못 나오십니다 — "
-                              "적어 내신 요일은 목 · 금 입니다")
+    assert row["off_band"] is True
+    assert row["off_why"] == "적어 내신 가능 시간에는 맡으실 수 있는 칸이 없습니다"
+    assert "요일" not in row["off_why"]
 
 
 def test_full_slots_are_told_apart(console):
-    """요일은 맞는데 칸이 다 찬 분 — 담당자를 더 넣어야 한다."""
+    """맡을 칸은 있는데 이미 다 찬 분 — 담당자를 더 넣어야 한다."""
     rows = console.pair_schedule(
         _people(2), {"A00": "IV1", "A01": "IV1"}, {"IV1": "실무1 책임"},
         can={"IV1": {0: {0}, 1: set(), 2: set()}},
-        days=["월", "화", "수"], open_days={"IV1": ["월"]}, balance=False)
+        days=["월", "화", "수"], balance=False)
     late = next(row for row in rows if row["off_band"])
 
-    assert late["off_why"] == "월 · 화 · 수 중 나오시는 칸이 이미 다 찼습니다"
+    assert late["off_why"] == "적어 내신 가능 시간의 칸이 이미 다 찼습니다"
 
 
 def test_a_seat_that_fits_has_no_reason_at_all(console):
@@ -110,7 +120,7 @@ def test_a_seat_that_fits_has_no_reason_at_all(console):
     rows = console.pair_schedule(
         _people(1), {"A00": "IV1"}, {"IV1": "실무1 책임"},
         can={"IV1": {0: {0, 1}, 1: set(), 2: set()}},
-        days=["월", "화", "수"], open_days={"IV1": ["월"]}, balance=False)
+        days=["월", "화", "수"], balance=False)
 
     assert rows[0]["off_band"] is False
     assert rows[0]["off_why"] == ""

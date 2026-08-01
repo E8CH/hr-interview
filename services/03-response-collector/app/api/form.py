@@ -12,10 +12,51 @@ from app.infrastructure.db import get_db
 from app.schemas import FormSubmitIn, fail, ok
 from app.services import response_service
 from app.services.response_service import SubmissionError
-from shared.contracts.constants import DAYS, HOURS
+from shared.contracts.constants import (
+    BAND_ALL,
+    BAND_BACK,
+    BAND_FRONT,
+    BAND_NONE,
+    DAYS,
+    HOURS,
+    band_hours,
+    band_of,
+)
 
 router = APIRouter(tags=["form"])
 templates = Jinja2Templates(directory=str(SERVICE_ROOT / "app" / "templates"))
+
+#: 폼에서 고를 수 있는 것 — 요일은 묻지 않는다. 고른 덩어리가 모든 요일에 그대로 간다.
+BAND_CHOICES = [BAND_ALL, BAND_FRONT, BAND_BACK]
+
+
+def _bands(timing=None) -> list[dict]:
+    """폼에 그릴 덩어리 목록 — 이름 · 실제 칸 · 설명 한 줄."""
+    out = []
+    for band in BAND_CHOICES:
+        hours = band_hours(band, timing)
+        if not hours:
+            continue
+        out.append({
+            "name": band,
+            "hours": hours,
+            "help": f"{hours[0]} ~ {hours[-1]} · 하루 {len(hours)}칸 (요일은 가리지 않습니다)",
+        })
+    return out
+
+
+def _submitted_band(payload, timing=None) -> str:
+    """이미 낸 응답이 어느 덩어리였는지 되읽는다 — 다시 열었을 때 눌러 두려고."""
+    if not payload:
+        return ""
+    availability: dict[str, list[str]] = {}
+    for slot in payload.get("available_slots") or []:
+        day = slot.get("day") if isinstance(slot, dict) else getattr(slot, "day", None)
+        hour = slot.get("hour") if isinstance(slot, dict) else getattr(slot, "hour", None)
+        if day and hour:
+            availability.setdefault(day, []).append(hour)
+    band = band_of(availability, timing)
+    return "" if band == BAND_NONE else band
 
 
 def _load_invitee(db: Session, token: str):
@@ -41,8 +82,10 @@ def render_form(token: str, request: HttpRequest, db: Session = Depends(get_db))
             "req": invitee.request,
             "days": DAYS,
             "hours": HOURS,
+            "bands": _bands(),
             "already_submitted": existing is not None,
             "submitted_payload": existing.payload if existing else None,
+            "submitted_band": _submitted_band(existing.payload if existing else None),
             "closed": invitee.request.is_closed,
             "max_slots": len(HOURS),
         },

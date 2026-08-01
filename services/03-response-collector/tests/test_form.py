@@ -2,22 +2,28 @@
 import pytest
 
 from app.events import EventType
-from shared.contracts.constants import DAYS, HOURS
+from shared.contracts.constants import (BAND_ALL, BAND_BACK, BAND_FRONT, DAYS,
+                                        HOURS, band_hours)
 
 
-def test_form_renders_slot_grid(client, first_invitee):
+def test_form_offers_bands_and_never_a_day(client, first_invitee):
+    """폼은 시간 덩어리 셋만 묻는다 — 요일을 고르게 하지 않는다.
+
+    예전에는 요일 × 칸 격자를 그렸는데, 우리 계산에는 담당자 가능 요일이라는
+    것이 없어서 거기 찍힌 요일이 아무 뜻 없이 자리만 막았다.
+    """
     resp = client.get(f"/form/{first_invitee.token}")
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
 
     html = resp.text
     assert first_invitee.name in html
-    # 요일 5 × 시간대 6 = 30칸 토글 버튼
-    assert html.count('class="slot"') == len(DAYS) * len(HOURS) == 40
-    for day in DAYS:
-        assert f'data-day="{day}"' in html
-    for hour in HOURS:
-        assert f'data-hour="{hour}"' in html
+    assert html.count('class="slot"') == 3
+    for band in (BAND_ALL, BAND_FRONT, BAND_BACK):
+        assert f'data-band="{band}"' in html
+        assert f'data-hours="{",".join(band_hours(band))}"' in html
+    assert "data-day=" not in html          # 요일을 고르는 자리가 없다
+    assert "data-hour=" not in html         # 칸 하나하나를 고르는 자리도 없다
 
 
 def test_form_has_no_external_resources(client, first_invitee):

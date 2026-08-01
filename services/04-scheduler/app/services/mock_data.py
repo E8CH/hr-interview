@@ -89,15 +89,16 @@ def build_applicants(round_id: str = "R2026-Q3-01", plan_id: str = "mock-plan") 
 def build_interviewers() -> list[InterviewerIn]:
     """팀당 4명(리더 1 + 실무 3).
 
-    실무진의 휴무 요일을 팀 내부에서 어긋나게 배치해 어떤 요일에도
-    최소 2명 이상이 전 시간대 가용하도록 만든다 → 가용성 때문에
-    슬롯이 막히는 일이 없어 알고리즘 비교가 공정해진다.
+    가능 시간은 덩어리(앞타임 · 뒤타임 · 모든타임)로만 준다. **휴무 요일은
+    두지 않는다** — 우리 모델에 담당자 가능 요일이라는 것이 없어서다. 리더만
+    뒤타임으로 두어 부하가 한쪽으로 몰리는지 볼 수 있게 하고, 실무진은
+    모든타임이라 가용성 때문에 칸이 막히는 일이 없다.
     """
     interviewers: list[InterviewerIn] = []
     full = {day: list(HOURS) for day in DAYS}
 
     for t_idx, team in enumerate(TEAMS, start=1):
-        # 리더: 전 요일 가용하지만 뒤타임만 (부하 집중 방지)
+        # 리더: 뒤타임만 (부하 집중 방지) — 요일은 가리지 않는다
         interviewers.append(
             InterviewerIn(
                 interviewer_id=f"IV{t_idx}01",
@@ -110,10 +111,8 @@ def build_interviewers() -> list[InterviewerIn]:
                 availability={day: list(BACK_HOURS) for day in DAYS},
             )
         )
-        # 실무 3인: 각자 하루씩 휴무 (월/화/수), 나머지 요일은 전 타임 가용
+        # 실무 3인: 모든타임
         for m_idx in range(3):
-            off_day = DAYS[m_idx]
-            availability = {day: hours for day, hours in full.items() if day != off_day}
             interviewers.append(
                 InterviewerIn(
                     interviewer_id=f"IV{t_idx}0{m_idx + 2}",
@@ -123,7 +122,7 @@ def build_interviewers() -> list[InterviewerIn]:
                     max_daily=len(HOURS),
                     priority=2,
                     email=f"iv{t_idx}0{m_idx + 2}@example.com",
-                    availability=availability,
+                    availability={day: list(hours) for day, hours in full.items()},
                 )
             )
     return interviewers

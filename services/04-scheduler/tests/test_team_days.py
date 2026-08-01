@@ -9,12 +9,15 @@
 """
 from __future__ import annotations
 
+import inspect
+
 from app.domain.schemas import ApplicantIn, GenerateConstraints, InterviewerIn
-from app.infrastructure.contracts import (DAYS, DAYS_PER_TEAM, HOURS, band_hours,
+from app.infrastructure.contracts import (BAND_ALL, BAND_FRONT, DAYS, HOURS,
+                                          band_hours, normalize_availability,
                                           plan_team_days)
 from app.services import algorithm_v4, hierarchical
 
-BAND = "둘 다"
+BAND = BAND_ALL
 
 
 def _crew(team: str, count: int = 2) -> list[InterviewerIn]:
@@ -64,51 +67,53 @@ def test_bigger_teams_get_the_emptier_days():
     assert days["작은팀"] == ["수", "목"]
 
 
-# ------------------------------------------- 담당자가 나올 수 있는 요일로 잡는가
+# ------------------------------------------------- 담당자 가능 요일은 묻지 않는가
+#
+# 한때는 담당자가 적어 낸 요일을 보고 팀 면접 요일을 골랐다. 그런데 그 요일은
+# 어느 화면에서도 물어본 적이 없는 값이었다 — 폼은 시간 덩어리만 받았고, 요일은
+# 저장 형식이 {요일: [칸]} 이라 딸려 들어간 부산물이었다. 그 부산물이 사람의
+# 뜻인 양 자리를 막아 "나는 모든 시간이 된다고 했는데 왜 빈 자리가 없나" 가
+# 나왔다. 지금은 가능 시간이 앞타임 · 뒤타임 · 모든타임 뿐이고, 그 덩어리는
+# 어느 요일에나 똑같이 적용된다.
 
-def test_days_land_where_the_crew_can_actually_come():
-    """목 · 금만 되는 팀에 월 · 화 · 수를 주지 않는다.
+def test_team_days_do_not_ask_about_the_crew():
+    """요일 계산에 담당자 가용성이 끼어들 자리가 아예 없다."""
+    params = list(inspect.signature(plan_team_days).parameters)
 
-    인원 수만 보고 요일을 정하면, 그 팀 담당자가 한 분도 못 나오는 날이
-    면접 요일이 된다. 부서 화면은 전원을 '가능하다고 하신 요일 · 시간에는
-    빈 자리가 없습니다' 로 밀어 내고, 자동배치는 남는 사람에게 한 칸씩
-    번갈아 얹으며, 인사팀 최종 시간표는 그 자리를 죄다 옮긴다.
+    assert params == ["sizes_by_team", "days_per_team", "slots_per_day"]
+
+
+def test_a_day_written_down_spreads_to_every_day():
+    """'금요일에 3타임' 이라고 적어 내도 3타임은 모든 요일에 열려 있다."""
+    spread = normalize_availability({"금": [HOURS[2]]})
+
+    assert spread == {day: [HOURS[2]] for day in DAYS}
+
+
+def test_which_day_it_was_written_on_changes_nothing():
+    """어느 요일 칸에 적혔는지는 결과를 바꾸지 않는다 — 칸만 남는다."""
+    front = list(band_hours(BAND_FRONT))
+
+    assert (normalize_availability({"월": front})
+            == normalize_availability({"목": front})
+            == {day: front for day in DAYS})
+
+
+def test_a_crew_that_only_wrote_one_day_still_fills_another():
+    """'금' 에만 적어 낸 팀도 인사가 정한 요일(수)에 그대로 앉는다.
+
+    예전 같으면 이 담당자는 수요일에 못 나오는 사람이라 자리가 통째로 비었다.
     """
-    days = plan_team_days({"가팀": 16}, 3, len(HOURS), {"가팀": ["목", "금"]})
+    people = _people("가팀", 4)
+    crew = [InterviewerIn(interviewer_id="가팀-IV0", name="가팀-IV0", team="가팀",
+                          max_daily=len(HOURS), priority=2,
+                          availability=normalize_availability({"금": list(HOURS)}))]
+    constraints = GenerateConstraints(days_by_team={"가팀": ["수"]})
 
-    assert days["가팀"] == ["목", "금"]
+    plan = algorithm_v4.run(people, crew, constraints, days_per_team=1)
 
-
-def test_open_days_only_narrow_the_pool_when_seats_fit():
-    """앉힐 사람이 다 들어가면 못 나오는 날을 억지로 붙이지 않는다."""
-    # 8명 · 하루 8칸 → 하루면 다 앉는다. 못 나오는 날을 더 붙이면 그 하루가
-    # 통째로 '인사팀 시간표에서 옮겨질 자리' 가 된다.
-    assert plan_team_days({"가팀": 8}, 3, 8, {"가팀": ["금"]})["가팀"] == ["금"]
-
-
-def test_days_are_filled_up_when_open_days_cannot_hold_everyone():
-    """되는 요일만으로 자리가 모자라면 남은 요일로 채운다 — 빈손보다는 낫다."""
-    days = plan_team_days({"가팀": 40}, 3, 8, {"가팀": ["목", "금"]})
-
-    assert days["가팀"] == ["월", "목", "금"]      # 되는 날 먼저, 모자란 하루만 더
-
-
-def test_team_with_nobody_available_falls_back_to_load():
-    """아무도 못 나오는 팀은 예전처럼 한산한 요일로 — 요일이 없으면 화면이 죽는다."""
-    days = plan_team_days({"가팀": 12}, 3, len(HOURS), {"가팀": []})
-
-    assert len(days["가팀"]) == 3
-    assert all(day in DAYS for day in days["가팀"])
-
-
-def test_open_days_do_not_change_the_old_answer():
-    """안 주거나 모두 다 되는 팀이면 예전 결과 그대로다 — 옛 호출자 보호."""
-    sizes = {"가팀": 12, "나팀": 9, "다팀": 7}
-    everyone = {team: list(DAYS) for team in sizes}
-
-    assert plan_team_days(sizes) == plan_team_days(sizes, open_days=None)
-    assert plan_team_days(sizes) == plan_team_days(sizes, DAYS_PER_TEAM,
-                                                   len(HOURS), everyone)
+    assert len(plan.assignments) == len(people)
+    assert {a.day for a in plan.assignments} == {"수"}
 
 
 # ------------------------------------------------ 정해 둔 요일을 그대로 쓰는가

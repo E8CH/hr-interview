@@ -21,7 +21,8 @@ def invitation(name: str, team: str, deadline: datetime, token: str) -> tuple[st
     body = (
         f"{name}님, 안녕하세요.\n\n"
         f"{team} 면접위원으로 배정되어 가능 시간대 회신을 요청드립니다.\n"
-        f"아래 링크의 폼에서 가능한 요일×시간 슬롯을 클릭 후 제출해 주세요.\n\n"
+        f"아래 링크의 폼에서 가능한 시간대(앞타임 · 뒤타임 · 모든타임) 하나를\n"
+        f"고른 뒤 제출해 주세요. 요일은 묻지 않습니다.\n\n"
         f"  {form_url(token)}\n\n"
         f"회신 마감: {_deadline_text(deadline)}\n"
         f"소요 시간: 약 1분\n\n"

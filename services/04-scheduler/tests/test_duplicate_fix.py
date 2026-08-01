@@ -9,10 +9,10 @@
 from __future__ import annotations
 
 from app.domain.schemas import InterviewerIn
-from app.infrastructure.contracts import DAYS, HOURS, band_hours
+from app.infrastructure.contracts import BAND_ALL, DAYS, HOURS, band_hours
 from app.services import duplicate_fix
 
-BAND = "둘 다"
+BAND = BAND_ALL
 
 
 def _iv(interviewer_id: str, team: str, hours=None, max_daily=len(HOURS)) -> InterviewerIn:
