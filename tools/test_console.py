@@ -1587,11 +1587,37 @@ def render_versions() -> None:
     merged = st.session_state.get("merged_version")
     if merged:
         st.success(f"확정 명단을 만들었습니다 — {merged.get('file_name')}")
-        m1, m2, m3 = st.columns(3)
+        m1, m2, m3, m4 = st.columns(4)
         m1.metric("지원자", merged.get("applicant_count"))
         m2.metric("줄 수", merged.get("row_count"))
         m3.metric("못 정한 사람", len(merged.get("unresolved") or []))
+        m4.metric("담당팀 붙음", merged.get("teamed_count"))
         st.caption(f"만든 시각 {str(merged.get('created_at'))[:16]}")
+
+        # 팀 나눔이 이 파일에 실제로 새겨졌는지 여기서 눈으로 확인할 수 있어야 한다.
+        # 엑셀을 열어 보기 전에는 컬럼이 생겼는지 알 길이 없어서, 예전 취합본을
+        # 보고 "안 붙었다" 고 오해하기 쉬웠다. 이 컬럼이 2단계 [팀 배정하기] 의
+        # 유일한 근거이므로, 비어 있으면 그 자리에서 알려 준다.
+        column = merged.get("team_column")
+        teamed = merged.get("teamed_count")
+        if column and teamed is not None:
+            duplicated = merged.get("team_duplicate_count") or 0
+            teamless = merged.get("teamless") or []
+            st.caption(
+                f"`{column}` 칸에 팀 이름을 적어 두었습니다 — {teamed}명. "
+                + (f"두 팀 이상이 적어 낸 {duplicated}명은 한 칸에 쉼표로 이어 "
+                   "두었고, 2단계 [팀 배정하기] 에서 그대로 중복면접이 됩니다. "
+                   if duplicated else "")
+                + "2단계는 이 칸을 읽어 팀을 나눕니다."
+            )
+            if teamless:
+                st.info(
+                    f"어느 팀도 적어 내지 않은 지원자 {len(teamless)}명은 `{column}` 이 "
+                    "비어 있습니다 — 2단계 [팀 배정하기] 를 누르면 이 사람들만 규칙대로 "
+                    "(지망 조직·직무·전공·정원) 나눠 담습니다. 팀이 적어 낸 사람은 그대로 "
+                    "둡니다. 특정 팀에 넣으려면 팀별 명단(`희망지원자_팀이름`)을 올린 뒤 "
+                    "확정 명단을 다시 만들어 주세요."
+                )
 
         vid = merged["version_id"]
         blob, berr = fetch_bytes(f"{VERSION_MANAGER}/api/v1/versions/by-id/{vid}/file")
@@ -1610,10 +1636,13 @@ def render_versions() -> None:
             st.error(perr)
         elif preview:
             st.markdown(f"**미리 보기** — 전체 {preview.get('total_rows')}명 중 앞부분")
-            st.dataframe(
-                pd.DataFrame(preview.get("rows") or []),
-                width="stretch", hide_index=True, height=420,
-            )
+            frame = pd.DataFrame(preview.get("rows") or [])
+            # '담당팀' 은 원본 컬럼을 건드리지 않으려고 파일 맨 뒤에 붙는다. 컬럼이
+            # 50개가 넘어서 그대로 두면 가로로 한참 밀어야 보이므로, 미리 보기에서만
+            # 앞으로 당긴다 — 방금 새긴 팀 나눔을 바로 눈으로 확인할 수 있어야 한다.
+            if column and column in frame.columns:
+                frame = frame[[column] + [c for c in frame.columns if c != column]]
+            st.dataframe(frame, width="stretch", hide_index=True, height=420)
 
 
 # ============================================================
@@ -2248,7 +2277,8 @@ def render_distribution() -> None:
         st.caption(
             "취합파일의 `담당팀` 을 그대로 옮깁니다 — 각 팀이 `희망지원자_팀이름` 으로 "
             "올린 명단이 곧 배정입니다. 두 팀이 같은 사람을 적어 냈으면 두 팀 다 "
-            "봅니다(중복면접). 정원도 학사·대학원 비율도 손대지 않습니다."
+            "봅니다(중복면접). 정원도 학사·대학원 비율도 손대지 않습니다. "
+            "`담당팀` 이 빈 사람만 규칙대로 나눠 담습니다."
         )
         run_inherit = st.button("🧮 팀 배정하기", type="primary", key="d_plan",
                                 width="stretch")
@@ -2287,12 +2317,19 @@ def render_distribution() -> None:
             st.rerun()
 
     made = st.session_state.get("plan_summary") or {}
+    if made.get("auto_filled"):
+        st.info(
+            f"`담당팀` 이 비어 있던 {made['auto_filled']}명은 규칙대로 나눠 담았습니다 "
+            "— 지망 조직·직무·전공과 팀 정원을 보고 골랐습니다. 배정 사유에 "
+            "`AUTO_FILL` 표가 붙어 있어 ③ 에서 가려낼 수 있습니다."
+        )
     if made.get("unknown_teams"):
         st.warning(
             "취합파일의 `담당팀` 에 모르는 팀 이름이 있었습니다 — "
             + " · ".join(made["unknown_teams"])
-            + ". 그 이름만 적힌 지원자는 어느 팀에도 배정하지 않았습니다. "
-            "1단계 파일 이름이 `희망지원자_팀이름` 형식인지 확인해 주세요."
+            + ". 그 이름만 적힌 지원자는 담당팀이 빈 사람과 같이 규칙대로 나눠 "
+            "담았습니다. 적어 낸 팀으로 보내려면 1단계 파일 이름이 "
+            "`희망지원자_팀이름` 형식인지 확인하고 확정 명단을 다시 만들어 주세요."
         )
 
     plan_id = plan_field("d_plan_id")

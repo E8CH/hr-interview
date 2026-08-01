@@ -46,6 +46,8 @@ class PlanSummary(BaseModel):
     filtered_count: int | None = None
     #: 승계에서 '담당팀' 에 있었지만 아는 팀이 아니었던 이름 — 오타를 여기서 잡는다
     unknown_teams: list[str] = Field(default_factory=list)
+    #: 승계에서 담당팀이 비어 있어 점수로 나눠 담은 인원
+    auto_filled: int = 0
 
 
 class CreatePlanRequest(BaseModel):

@@ -98,16 +98,39 @@ def test_prefilter_still_applies():
     assert [a.applicant_id for a in result.assignments] == ["A5"]
 
 
-def test_teamless_and_unknown_team_are_surfaced():
-    """담당팀이 비었거나 모르는 팀 이름뿐이면 배정하지 않고 이름을 올린다."""
+def test_teamless_is_spread_and_unknown_team_is_surfaced():
+    """담당팀이 비면 점수로 나눠 담는다 — 모르는 팀 이름은 그래도 이름을 올린다."""
     result = inherit(
         [person("A6", []), person("A7", ["없는팀", "AI솔루션팀"])],
         profiles(),
     )
 
-    assert result.unassigned == ["A6"]
+    assert result.unassigned == []            # 명단에 있는데 아무도 안 보는 사람은 없다
     assert result.unknown_teams == ["없는팀"]
-    assert [a.team_name for a in result.assignments] == ["AI솔루션팀"]
+    assert result.auto_filled == 1
+    placed = {a.applicant_id: a for a in result.assignments}
+    assert placed["A7"].team_name == "AI솔루션팀"
+    assert "TEAM_INHERITED" in placed["A7"].tags
+    assert "AUTO_FILL" in placed["A6"].tags
+    assert "TEAM_INHERITED" not in placed["A6"].tags
+
+
+def test_auto_fill_spreads_across_teams_instead_of_piling_up():
+    """담당팀이 통째로 빈 명단 — 정원을 보고 팀을 고르게 나눠 담는다."""
+    people = [person(f"E{i}", []) for i in range(4)]
+    result = inherit(people, profiles())     # 팀 둘 · 팀당 정원 1
+
+    assert result.auto_filled == 4
+    assert result.unassigned == []
+    assert sorted(result.team_counts.values()) == [2, 2]
+
+
+def test_auto_fill_leaves_room_where_inherit_already_filled():
+    """승계로 이미 찬 팀에는 덜 간다 — 남은 정원 위에서 계산하기 때문이다."""
+    people = [person("F1", ["AI솔루션팀"]), person("F2", [])]
+    result = inherit(people, profiles())     # 팀당 정원 1 — AI솔루션팀은 이미 참
+
+    assert result.team_counts == {"AI솔루션팀": 1, "전극기술팀": 1}
 
 
 def test_all_rows_have_two_tags():
@@ -151,18 +174,24 @@ def test_create_plan_records_mode_and_duplicate_rows(session):
     assert sum(1 for row in rows if row["is_duplicate"]) == 1
 
 
-def test_create_plan_rejects_inherit_without_team_column(session):
-    """담당팀이 통째로 비어 있으면 조용히 빈 명단을 만들지 않고 막는다."""
-    with pytest.raises(plan_service.ServiceError) as exc:
-        plan_service.create_plan(
-            session,
-            round_id="R2026-Q3-01",
-            master_version_id="vm_bare",
-            mode="inherit",
-            client=_StubClient([person("B3", []), person("B4", [])]),
-        )
-    assert exc.value.status_code == 400
-    assert "담당팀" in exc.value.message
+def test_create_plan_spreads_when_team_column_is_empty(session):
+    """담당팀이 통째로 비어 있어도 막지 않는다 — 승계할 게 없으면 나눠 담는다.
+
+    전체 명단만 올린 회차가 이렇다. 예전에는 400으로 되돌려서 [팀 배정하기] 가
+    아예 눌리지 않았다.
+    """
+    summary = plan_service.create_plan(
+        session,
+        round_id="R2026-Q3-01",
+        master_version_id="vm_bare",
+        mode="inherit",
+        client=_StubClient([person("B3", []), person("B4", [])]),
+    )
+
+    assert summary.mode == "inherit"
+    assert summary.auto_filled == 2
+    assert summary.unassigned == []
+    assert sum(summary.team_counts.values()) == 2
 
 
 def test_create_plan_defaults_to_auto(session):

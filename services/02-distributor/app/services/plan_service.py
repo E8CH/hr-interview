@@ -135,13 +135,10 @@ def create_plan(
         raise ServiceError("NOT_FOUND", str(exc), status_code=404) from exc
 
     if mode == MODE_INHERIT:
-        if not any(a.assigned_teams for a in applicants):
-            raise ServiceError(
-                "VALIDATION_FAILED",
-                "취합파일에 '담당팀' 이 비어 있습니다 — 1단계에서 팀별 명단을 함께 "
-                "올려 다시 합치거나, [명단 재배치] 로 새로 나눠 주세요",
-                status_code=400,
-            )
+        # 담당팀이 비어 있어도 막지 않는다. 전체 명단만 올린 회차는 이 칸이 통째로
+        # 비는데, 그때는 승계할 게 없으니 점수로 나눠 담으면 된다(`auto_filled`).
+        # 예전에는 400으로 되돌려 보내서, 팀별 명단이 없는 회차는 [팀 배정하기] 가
+        # 아예 눌리지 않았다.
         result = inherit(applicants, profiles)
     else:
         result = distribute(
@@ -188,6 +185,7 @@ def create_plan(
     summary.unassigned = result.unassigned
     summary.filtered_count = result.filtered_count
     summary.unknown_teams = result.unknown_teams
+    summary.auto_filled = result.auto_filled
 
     publish_plan_created(
         round_id=round_id,

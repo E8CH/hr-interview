@@ -46,6 +46,9 @@ INHERIT_TAG = "TEAM_INHERITED"
 #: 그 팀의 조직 조건에는 안 맞는데 팀이 직접 적어 냈다 — 승계에서만 나온다
 ORG_UNMATCHED_TAG = "ORG_UNMATCHED"
 
+#: 담당팀이 비어 있어 승계가 아니라 점수로 나눠 담은 자리 — 승계에서만 나온다
+AUTO_FILL_TAG = "AUTO_FILL"
+
 
 @dataclass
 class Candidate:
@@ -93,6 +96,8 @@ class DistributionResult:
     filtered_count: int
     #: 승계 배정에서 '담당팀' 에 적혀 있었지만 팀 프로필에 없던 이름 (오타·폐지된 팀)
     unknown_teams: list[str] = field(default_factory=list)
+    #: 승계에서 담당팀이 비어 있어 점수로 나눠 담은 인원 — 화면이 사유를 밝힌다
+    auto_filled: int = 0
 
 
 def filter_applicants(applicants: list[Applicant]) -> list[Applicant]:
@@ -352,6 +357,66 @@ def distribute(
     )
 
 
+def _auto_fill(
+    applicants: list[Applicant],
+    profiles: list[TeamProfile],
+    members: dict[str, list[str]],
+) -> list[Assignment]:
+    """담당팀이 빈 사람을 점수대로 나눠 담는다 — 승계에서 남는 사람이 없게.
+
+    전체 명단만 올리고 팀별 명단을 안 올렸으면 담당팀이 통째로 비어 있고, 팀이
+    적어 내지 않은 사람도 그렇다. 그런 사람을 배정에서 빼 두면 명단에는 있는데
+    어느 팀도 보지 않는 사람이 되므로, 여기서 일괄로 나눠 담는다.
+
+    정원이 남은 팀을 점수 순으로 먼저 채우고, 다 찼으면 그중 사람이 가장 적은
+    팀으로 보낸다. `members` 에는 이미 승계로 들어간 인원이 들어 있으므로 남은
+    정원이 그 위에서 계산된다 — 승계로 넘친 팀에는 덜 간다.
+    """
+    if not profiles:
+        return []
+
+    capacity = {p.team_name: p.target_headcount for p in profiles}
+    ranked: list[tuple[Applicant, list[tuple[str, float, list[str]]]]] = []
+    for applicant in applicants:
+        scored = [
+            (team, score, tags)
+            for team, score, tags in score_against_all(applicant, profiles)
+            if score > INELIGIBLE_SCORE
+        ]
+        scored.sort(key=lambda row: -row[1])
+        ranked.append((applicant, scored))
+    # 점수가 높은 사람이 먼저 자리를 고른다 — 재배치(`distribute`)와 같은 순서다
+    ranked.sort(key=lambda row: -(row[1][0][1] if row[1] else 0.0))
+
+    out: list[Assignment] = []
+    for applicant, scored in ranked:
+        pick = next(
+            ((team, score, tags) for team, score, tags in scored
+             if len(members[team]) < capacity[team]),
+            None,
+        )
+        if pick is None and scored:
+            # 갈 만한 팀이 다 찼다 — 그중 사람이 가장 적은 곳으로 고르게 편다
+            pick = min(scored, key=lambda row: (len(members[row[0]]), -row[1]))
+        if pick is None:
+            # 어느 팀 조건에도 안 맞는 사람 — 가장 적은 팀에 넣고 표시해 둔다
+            team = min(members, key=lambda name: len(members[name]))
+            pick = (team, 0.0, [ORG_UNMATCHED_TAG])
+        team, score, tags = pick
+        members[team].append(applicant.applicant_id)
+        out.append(
+            Assignment(
+                applicant_id=applicant.applicant_id,
+                team_name=team,
+                score=score,
+                tags=_ensure_min_tags([*tags, AUTO_FILL_TAG]),
+                is_duplicate=False,
+                primary_team=None,
+            )
+        )
+    return out
+
+
 def inherit(
     applicants: list[Applicant], profiles: list[TeamProfile]
 ) -> DistributionResult:
@@ -366,14 +431,16 @@ def inherit(
     `ORG_UNMATCHED` 로 표시만 해 둔다.
 
     걸러 내는 건 1차서류·R&D 사전필터뿐이다(`filtered_count`). 담당팀이 비었거나
-    아는 팀이 하나도 없으면 배정하지 않고 `unassigned` 로 올린다.
+    아는 팀이 하나도 없는 사람은 점수로 나눠 담는다(`auto_filled`) — 명단에는
+    있는데 어느 팀도 보지 않는 사람을 만들지 않기 위해서다. 팀이 하나도 없어
+    나눠 담을 데조차 없을 때만 `unassigned` 로 올린다.
     """
     targets = filter_applicants(applicants)
     known = {p.team_name: p for p in profiles}
 
     assignments: list[Assignment] = []
     members: dict[str, list[str]] = {team: [] for team in known}
-    unassigned: list[str] = []
+    teamless: list[Applicant] = []
     unknown_teams: list[str] = []
     duplicate_count = 0
 
@@ -385,7 +452,7 @@ def inherit(
             elif team not in unknown_teams:
                 unknown_teams.append(team)
         if not teams:
-            unassigned.append(applicant.applicant_id)
+            teamless.append(applicant)
             continue
 
         scored: list[tuple[str, float, list[str]]] = []
@@ -422,6 +489,12 @@ def inherit(
                 )
             )
 
+    # 담당팀이 비어 있던 사람은 여기서 나눠 담는다 — 승계 자리를 다 놓은 뒤라야
+    # 남은 정원이 제대로 계산된다.
+    filled = _auto_fill(teamless, profiles, members)
+    assignments.extend(filled)
+    unassigned = [] if filled else [a.applicant_id for a in teamless]
+
     return DistributionResult(
         assignments=assignments,
         team_counts={team: len(ids) for team, ids in sorted(members.items())},
@@ -430,4 +503,5 @@ def inherit(
         unassigned=unassigned,
         filtered_count=len(targets),
         unknown_teams=sorted(unknown_teams),
+        auto_filled=len(filled),
     )
