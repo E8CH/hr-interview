@@ -7,7 +7,7 @@ Stage 3  : Fallback 흡수 — v5 전용, 미배정자를 규칙 손해가 가�
 """
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from app.domain.schemas import ApplicantIn, PlannedAssignment
 from app.infrastructure.contracts import DAYS, HOURS, first_slots, plan_team_days
@@ -318,22 +318,35 @@ def fallback_place(
     후보 슬롯 비용:
       +100  세로 연속(규칙3)을 깨뜨림
       + 12  그날 이미 길게 잡은 조가 첫 타임(오전 · 오후)에 더 앉는 경우 (규칙4)
-      +  ρ  배치 후 그날 대학원 비율의 목표 이탈도 (규칙1)
+      +  ρ  배치 후 **그 팀의** 그날 대학원 비율이 목표에서 벗어난 정도 (규칙1)
 
-    `target_ratio` 를 안 주면 **이 회차에 앉은 사람 + 아직 못 앉은 사람** 의 실제
-    비율을 목표로 삼는다. 여기서는 팀을 가리지 않고 날을 고르므로, 팀별이 아니라
-    회차 전체의 비율이 '고르게 나눈 상태' 다. 규칙1을 매길 때와 같은 잣대여야
-    이 단계가 점수를 스스로 깎지 않는다.
+    `target_ratio` 를 안 주면 **그 사람이 속한 팀** 의 비율(이미 앉은 사람 + 아직
+    못 앉은 같은 팀 사람)을 목표로 삼는다. 규칙1이 (팀, 날)로 편중을 재므로 여기서도
+    같은 잣대를 써야 이 단계가 점수를 스스로 깎지 않는다. 회차 전체의 비율로 날을
+    고르면, 그 팀은 이미 한쪽으로 몰렸는데도 다른 팀 덕에 회차 비율이 맞아 보여
+    편중이 더 큰 자리로 앉힌다.
     """
-    if target_ratio is None:
-        pool = sum(board.day_count.values()) + len(leftovers)
-        grads = sum(board.day_grad.values()) + sum(1 for a in leftovers if a.is_grad)
-        target_ratio = (grads / pool) if pool else 0.0
+    pinned = target_ratio
+    team_goal: dict[str, float] = {}
+    if pinned is None:
+        pool: Counter = Counter()
+        grads: Counter = Counter()
+        for (team, _day), count in board.team_day_count.items():
+            pool[team] += count
+        for (team, _day), count in board.team_day_grad.items():
+            grads[team] += count
+        for a in leftovers:
+            pool[a.team] += 1
+            if a.is_grad:
+                grads[a.team] += 1
+        team_goal = {team: (grads[team] / total if total else 0.0)
+                     for team, total in pool.items()}
     guarded = set(first_slots(timing))
     placed: list[PlannedAssignment] = []
     still_unassigned: list[ApplicantIn] = []
 
     for applicant in sorted(leftovers, key=lambda a: (-a.priority_score, a.applicant_id)):
+        goal = pinned if pinned is not None else team_goal.get(applicant.team, 0.0)
         best_key: tuple[float, int, int] | None = None
         best_slot: tuple[str, str] | None = None
         for day in DAYS:
@@ -348,9 +361,9 @@ def fallback_place(
                 line = len(board.team_day_hours.get((applicant.team, day), ()))
                 if hour in guarded and line >= SMALL_GROUP:
                     cost += 12.0
-                total = board.day_count[day] + 1
-                grad = board.day_grad[day] + (1 if applicant.is_grad else 0)
-                cost += abs(grad / total - target_ratio) * 60.0
+                total = board.team_day_count[(applicant.team, day)] + 1
+                grad = board.team_day_grad[(applicant.team, day)] + (1 if applicant.is_grad else 0)
+                cost += abs(grad / total - goal) * 60.0
                 cost += board.day_count[day] * 0.01
                 key = (round(cost, 6), DAYS.index(day), HOURS.index(hour))
                 if best_key is None or key < best_key:

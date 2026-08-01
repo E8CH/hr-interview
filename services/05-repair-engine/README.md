@@ -97,7 +97,7 @@ curl -X POST http://localhost:8005/api/v1/repair/plans/{event_id}/select \
 | `H2_INTERVIEWER_DOUBLE_BOOK` | HARD | 면접위원 동시간 이중 예약 |
 | `H3_APPLICANT_DOUBLE_BOOK` | HARD | 지원자 동시간 이중 예약 |
 | `H4_MAX_DAILY_EXCEEDED` | HARD | 면접위원 일일 최대 초과 |
-| `RULE1_GRAD_BALANCE` | SOFT | 날별 대학원 비율이 그 회차 전체의 비율 ±20%p — 3할 같은 고정값이 아니다 (04 규칙1과 같은 잣대) |
+| `RULE1_GRAD_BALANCE` | SOFT | (팀, 날)별 대학원 비율이 **그 팀**의 비율 ±20%p — 3할 같은 고정값도, 회차 전체의 날별 비율도 아니다 (04 규칙1과 같은 잣대) |
 | `RULE3_VERTICAL_GROUP` | SOFT | 동일 팀 세로 연속 배치 |
 | `RULE4_FIRST_SLOT` | SOFT | 오전 · 오후 첫 타임은 그날 적게 보는 조 우선 (어느 칸이 첫 칸인지는 면접 진행 조건이 정한다) |
 

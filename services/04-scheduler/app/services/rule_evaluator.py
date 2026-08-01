@@ -2,10 +2,11 @@
 
 점수 정의
 ---------
-rule1_grad_balance (SOFT) : 일차별 대학원 비율이 target±tolerance(기본 ±20%p)
-                            안에 드는 날의 비율. 배정이 없는 날은 평가 제외.
-                            target 을 안 주면 그 시간표에 실린 명단의 실제
-                            비율 — 재는 것은 "요일 분산" 이지 3할이 아니다.
+rule1_grad_balance (SOFT) : (팀, 면접일)마다의 대학원 비율이 그 팀의 비율
+                            ±tolerance(기본 ±20%p) 안에 드는 칸의 비율.
+                            면접일이 하루뿐인 팀은 나눌 것이 없어 평가 제외.
+                            target 을 안 주면 그 팀 명단의 실제 비율 — 재는 것은
+                            "요일 분산" 이지 3할이 아니다.
 rule2_team_conflict (HARD): 같은 팀이 동시간에 중복 배치된 건수.
                             100 × (1 − 중복건수 / 전체 배정수).
 rule3_vertical_group(SOFT): (팀, 면접일)별로 사용한 시간대가 HOURS 순서상 연속인 그룹의 비율.
@@ -68,53 +69,103 @@ def _round(value: float) -> float:
 
 def rule1_grad_balance(assignments: Iterable[Any], target: float | None,
                        tolerance: float) -> tuple[float, dict]:
-    """날마다 대학원 비율이 목표에서 크게 벗어나지 않는지.
+    """**팀마다** 대학원생이 특정 면접일로 몰리지 않았는지.
 
-    `target` 을 안 주면 **그 시간표에 실린 사람들의 실제 비율** 을 목표로 삼는다.
     원래 목적은 "학사 · 석박사 간 실력 편중이 생기지 않도록 요일을 분산" 하는
-    것이다. 3할이라는 숫자를 지키는 것이 목적이 아니다 — 대학원생이 1할인
-    회차는 어느 날도 3할이 될 수 없어 늘 0점이 나오고, 6할인 회차는 아무리
-    고르게 나눠도 전부 위반으로 잡힌다. 어느 쪽이든 점수가 편중을 못 잰다.
-    명단이 정한 비율을 기준으로 삼아야 '고르게 나눴는가' 를 재게 된다.
+    것이다. 편중은 **팀 안에서** 생긴다 — 한 팀의 대학원생이 죄다 1일차에
+    앉으면 그 날은 저희끼리만 비교하는 자리가 되고, 2일차는 학사끼리만 겨루는
+    자리가 된다. 지원자를 뽑는 것도 견주는 것도 팀 안에서 일어나므로, 다른 팀이
+    그 날을 어떻게 채웠는지는 이 사람의 처지를 바꾸지 않는다.
+
+    그래서 (팀, 면접일)마다 잰다. 회차 전체의 날별 비율은 **팀마다 면접일이
+    다르면 깨지는 대리 지표**다 — 어느 팀이나 자기 날들에 고르게 나뉘었는데도,
+    한 팀의 넘친 인원만 앉는 날이 있으면 그 날 비율이 혼자 튀어 점수가 깎인다.
+    고칠 수 없는 것을 벌하는 점수는 사람이 곧 안 믿게 된다.
+
+    `target` 을 안 주면 **그 팀 명단의 실제 비율** 이 목표다. 3할 같은 고정값을
+    지키는 것이 목적이 아니다 — 대학원생만 있는 팀은 어느 날도 3할이 될 수 없다.
+
+    면접일이 **하루뿐인 팀은 평가에서 뺀다.** 나눌 날이 없으면 편중을 만들
+    수도 없앨 수도 없다(규칙3 · 규칙4가 판정 불가를 빼는 것과 같은 뜻이다).
     """
+    per_cell_total: Counter = Counter()
+    per_cell_grad: Counter = Counter()
     per_day_total: Counter = Counter()
     per_day_grad: Counter = Counter()
+    teams: dict[str, list[str]] = defaultdict(list)
     for a in assignments:
-        day = _get(a, "day")
+        day, team = _get(a, "day"), _get(a, "team")
+        is_grad = _get(a, "degree") == "대학원"
+        per_cell_total[(team, day)] += 1
         per_day_total[day] += 1
-        if _get(a, "degree") == "대학원":
+        if is_grad:
+            per_cell_grad[(team, day)] += 1
             per_day_grad[day] += 1
+        if day not in teams[team]:
+            teams[team].append(day)
 
-    total = sum(per_day_total.values())
     from_roster = target is None
-    if from_roster:
-        target = (sum(per_day_grad.values()) / total) if total else 0.0
+    grand_total = sum(per_day_total.values())
+    round_ratio = (sum(per_day_grad.values()) / grand_total) if grand_total else 0.0
 
-    ratios: dict[str, float] = {}
-    outside: list[str] = []
-    low, high = target - tolerance, target + tolerance
-    for day in DAYS:
-        if per_day_total[day] == 0:
+    team_ratios: dict[str, dict] = {}
+    outside: list[dict] = []
+    single_day: list[str] = []
+    evaluated = 0
+    for team in sorted(teams):
+        days = [d for d in DAYS if d in teams[team]] or sorted(teams[team])
+        seated = sum(per_cell_total[(team, d)] for d in days)
+        if len(days) < 2:
+            # 하루뿐인 팀 — 나눌 날이 없으니 판정하지 않는다
+            single_day.append(team)
             continue
-        ratio = per_day_grad[day] / per_day_total[day]
-        ratios[day] = round(ratio, 4)
-        if not (low - 1e-9 <= ratio <= high + 1e-9):
-            outside.append(day)
+        goal = (sum(per_cell_grad[(team, d)] for d in days) / seated) if seated else 0.0
+        if not from_roster:
+            goal = target
+        low, high = goal - tolerance, goal + tolerance
+        days_out: list[str] = []
+        ratios: dict[str, float] = {}
+        for day in days:
+            ratio = per_cell_grad[(team, day)] / per_cell_total[(team, day)]
+            ratios[day] = round(ratio, 4)
+            evaluated += 1
+            if not (low - 1e-9 <= ratio <= high + 1e-9):
+                days_out.append(day)
+                outside.append({"team": team, "day": day, "ratio": round(ratio, 4),
+                                "target": round(goal, 4)})
+        team_ratios[team] = {
+            "target": round(goal, 4),
+            "ratios": ratios,
+            "outside": days_out,
+            "seated": seated,
+        }
 
-    if not ratios:
-        return 100.0, {"ratios": {}, "outside": [], "target": _round(target),
-                       "tolerance": tolerance, "target_source": "명단" if from_roster else "지정"}
-
-    score = 100.0 * (len(ratios) - len(outside)) / len(ratios)
-    detail = {
-        "ratios": ratios,
-        "outside": outside,
-        "target": round(target, 4),
-        # 목표를 어디서 가져왔는지 — 화면이 "명단이 3.5할이라 그 언저리로 봅니다"
-        # 라고 말할 수 있어야 사람이 점수를 믿는다.
+    base = {
+        # 목표를 어디서 가져왔는지 — 화면이 "이 팀 명단이 3.5할이라 그 언저리로
+        # 봅니다" 라고 말할 수 있어야 사람이 점수를 믿는다.
         "target_source": "명단" if from_roster else "지정",
         "tolerance": tolerance,
-        "acceptable_range": [round(low, 4), round(high, 4)],
+        # 회차 전체의 날별 비율 — 채점하지는 않는다. 화면에 함께 적어 두는 것은
+        # 사람이 시간표를 볼 때 세로가 아니라 가로(날)로 먼저 보기 때문이다.
+        "day_ratios": {d: round(per_day_grad[d] / per_day_total[d], 4)
+                       for d in DAYS if per_day_total[d]},
+        "round_ratio": round(round_ratio, 4),
+        "single_day_teams": single_day,
+    }
+    if evaluated == 0:
+        # 팀마다 면접일이 하루뿐인 회차 — 나눌 것이 없었으므로 감점하지 않는다
+        return 100.0, {**base, "teams": team_ratios, "outside": [],
+                       "evaluated": 0, "target": round(target if not from_roster else round_ratio, 4)}
+
+    score = 100.0 * (evaluated - len(outside)) / evaluated
+    detail = {
+        **base,
+        "teams": team_ratios,
+        "outside": outside,
+        "evaluated": evaluated,
+        # 팀마다 목표가 다르므로 대표값 하나는 참고용이다 — 인사가 못 박았으면
+        # 그 숫자, 아니면 회차 전체의 비율.
+        "target": round(target if not from_roster else round_ratio, 4),
     }
     return _round(score), detail
 
@@ -277,10 +328,10 @@ def rule_compliance(
     칸인지는 이 값으로 정해지므로, 시간표를 만들 때와 나중에 다시 검증할 때 같은
     값을 넘겨야 같은 점수가 나온다.
 
-    `grad_ratio_target` 도 마찬가지다. 안 주면 그 시간표에 실린 명단의 실제
-    비율로 규칙1을 잰다 — 편중을 재는 것이 목적이지 3할을 맞추는 것이 목적이
-    아니기 때문이다. 인사가 숫자를 못 박았다면 만들 때와 검증할 때 같은 숫자를
-    넘겨야 한다.
+    `grad_ratio_target` 도 마찬가지다. 안 주면 **팀마다 그 팀 명단의 실제 비율**
+    로 규칙1을 잰다 — 편중을 재는 것이 목적이지 3할을 맞추는 것이 목적이 아니기
+    때문이다. 인사가 숫자를 못 박았다면 만들 때와 검증할 때 같은 숫자를 넘겨야
+    한다.
     """
     items = list(assignments)
 

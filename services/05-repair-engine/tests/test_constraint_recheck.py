@@ -161,6 +161,56 @@ def test_grad_balance_still_catches_a_day_piled_with_grads():
     assert soft_penalty_breakdown(rows, IVS, aps)["RULE1_GRAD_BALANCE"] > 0
 
 
+def _team_day_rows(team: str, day: str, total: int, grads: int):
+    """그 팀이 그 날 total 명 — 그중 grads 명이 대학원."""
+    rows, aps = [], []
+    for i in range(total):
+        aid = f"{team}-{day}-{i}"
+        rows.append(_a(aid, aid, "IV002", day, HOURS[i % len(HOURS)], team))
+        aps.append(ApplicantInfo(applicant_id=aid, name=aid, team_1st=team,
+                                 degree_type="대학원" if i < grads else "학사"))
+    return rows, aps
+
+
+def test_grad_balance_catches_two_teams_that_hide_each_other_in_the_day_total():
+    """A팀은 1일차에 대학원만, B팀은 2일차에 대학원만 앉힌 시간표.
+
+    날별로 합쳐 보면 두 날 다 딱 반이라 아무 흠이 없어 보인다. 그러나 지원자
+    입장에서는 A팀 1일차가 대학원끼리만 겨루는 자리다 — 정확히 막으려던 편중이다.
+    회차 전체의 날별 비율로 재면 이 시간표가 만점이라, 재편성이 고칠 것을 못 본다.
+    """
+    rows, aps = [], []
+    for team, first_day_grads in (("A팀", 8), ("B팀", 0)):
+        for day, grads in (("1일차", first_day_grads), ("2일차", 8 - first_day_grads)):
+            r, a = _team_day_rows(team, day, 8, grads)
+            rows += r
+            aps += a
+
+    # 날별로 합치면 두 날 다 8/16 — 옛 잣대로는 벌점이 0이었다
+    assert soft_penalty_breakdown(rows, IVS, aps)["RULE1_GRAD_BALANCE"] > 0
+
+
+def test_a_day_holding_only_one_teams_overflow_is_not_a_penalty():
+    """팀마다 제 면접일에 고르게 폈으면, 한 팀만 앉는 날이 튀어도 벌하지 않는다.
+
+    로봇팀은 사흘에 걸쳐 4명씩(대학원 1명씩) 고르고, 배터리팀은 이틀 다 대학원이다.
+    3일차에는 로봇팀만 앉아 회차 전체로 보면 그 날만 비율이 뚝 떨어지는데, 이는
+    팀들의 면접일이 서로 다르기 때문이지 누가 몰아 앉힌 탓이 아니다. 이걸 벌점으로
+    세면 재편성이 줄일 수 없는 벌점을 좇아 멀쩡한 자리를 흔든다.
+    """
+    rows, aps = [], []
+    for day in ("1일차", "2일차", "3일차"):
+        r, a = _team_day_rows("로봇응용기술팀", day, 4, 1)
+        rows += r
+        aps += a
+    for day in ("1일차", "2일차"):
+        r, a = _team_day_rows("배터리기술팀", day, 8, 8)
+        rows += r
+        aps += a
+
+    assert soft_penalty_breakdown(rows, IVS, aps)["RULE1_GRAD_BALANCE"] == 0
+
+
 def test_first_slot_penalty_follows_the_interview_timing():
     """'첫 타임' 이 몇 번째 칸인지는 면접 진행 조건이 정한다.
 

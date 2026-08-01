@@ -4462,28 +4462,50 @@ def render_schedule_body(sc_id: str, pairs: dict[str, dict[str, str]] | None = N
         # 고른지가 화면에 안 보이면, 인사가 3할 같은 남의 숫자를 떠올리고
         # 멀쩡한 시간표를 고치려 든다.
         grad = (rules.get("rule1_grad_balance") or {}).get("detail") or {}
-        if grad.get("ratios"):
+        span = grad.get("tolerance") or 0.0
+        if grad.get("teams"):
+            # 편중은 팀 안에서 생긴다 — 팀마다 그 팀 명단의 비율을 자기 면접일에
+            # 고르게 폈는지를 본다. 회차 전체의 날별 비율은 팀마다 면접일이
+            # 다르면 튀므로 채점하지 않는다(아래에 참고로만 적는다).
             source = grad.get("target_source")
-            target = grad.get("target") or 0.0
-            span = grad.get("tolerance") or 0.0
-            base = {
-                # 어디서 온 목표인지를 안 남긴 옛 시간표는 숫자만 말한다
-                None: f"대학원 {target:.0%}를 목표로",
-                "명단": f"이번 회차 명단이 대학원 {target:.0%}라서 그 비율을",
-                "지정": f"인사팀이 정한 목표가 대학원 {target:.0%}라서 그 비율을",
-            }.get(source, f"대학원 {target:.0%}를 목표로")
+            base = ("인사팀이 정한 목표"
+                    if source == "지정" else "팀마다 그 팀 명단의 대학원 비율")
             outside = grad.get("outside") or []
+            skipped = grad.get("single_day_teams") or []
+            tail = (f" 면접일이 하루뿐인 {', '.join(skipped)}은(는) 나눌 날이 없어 셈에서 뺐습니다."
+                    if skipped else "")
             if outside:
                 spread = ", ".join(
-                    f"{d} {grad['ratios'][d]:.0%}" for d in outside if d in grad["ratios"]
+                    f"{row['team']} {row['day']} {row['ratio']:.0%}"
+                    f"(그 팀 목표 {row['target']:.0%})" for row in outside[:6]
                 )
+                more = f" 외 {len(outside) - 6}건" if len(outside) > 6 else ""
                 st.warning(
-                    f"**학사·대학원 고르게** — {base} 날마다 맞춥니다(±{span:.0%}). "
-                    f"{spread} 이(가) 그 폭을 벗어났습니다. "
-                    "채용 목적상 문제가 없으면 그대로 두어도 됩니다."
+                    f"**학사·대학원 고르게** — {base}을(를) 그 팀 면접일에 "
+                    f"고르게 폅니다(±{span:.0%}). {spread}{more} 이(가) 그 폭을 "
+                    f"벗어났습니다.{tail} 채용 목적상 문제가 없으면 그대로 두어도 됩니다."
                 )
             else:
-                st.caption(f"학사·대학원 — {base} 날마다 맞췄습니다(±{span:.0%}). 벗어난 날 없음.")
+                st.caption(
+                    f"학사·대학원 — {base}을(를) 그 팀 면접일에 고르게 폈습니다"
+                    f"(±{span:.0%}). 벗어난 팀·날 없음.{tail}"
+                )
+            days = grad.get("day_ratios") or {}
+            if days:
+                st.caption(
+                    "참고 · 날마다의 대학원 비율(팀을 합친 값이라 팀마다 면접일이 "
+                    "다르면 고르지 않게 보일 수 있습니다) — "
+                    + ", ".join(f"{d} {r:.0%}" for d, r in days.items())
+                )
+        elif grad.get("ratios"):
+            # 이 화면이 바뀌기 전에 만든 시간표 — 날별로만 재던 자료다
+            outside = grad.get("outside") or []
+            target = grad.get("target") or 0.0
+            st.caption(
+                f"학사·대학원 — 예전 잣대(날별 {target:.0%} ±{span:.0%})로 잰 "
+                f"시간표입니다. 벗어난 날 {len(outside)}건. 다시 만들면 팀별로 "
+                "고르게 폈는지로 잽니다."
+            )
 
         with st.expander("자세한 값 보기"):
             st.json(rules)
@@ -4578,6 +4600,32 @@ def render_excluded(selected: list[dict], plan_id: str) -> None:
             )
         st.caption("이 사람들은 시간표에 들어가지 않습니다 — 현업 부서 화면에서 "
                    "짝을 지어 주면 사라집니다. 시간표는 여기서 남은 사람을 빼고 만듭니다.")
+
+
+#: 지금 상태에서 밟을 수 있는 다음 걸음 — (보낼 단계, 버튼 글, 성공했을 때 할 말).
+#: 스케줄러는 락을 한 단계씩만 올린다(DRAFT → CONFIRMED → LOCKED). 지원자 안내까지
+#: 마쳤다는 뜻인 LOCKED 를 아직 아무에게도 안 보낸 시간표에 바로 걸 수는 없다.
+LOCK_STEPS: dict[str, tuple[str | None, str, str]] = {
+    "draft": ("CONFIRMED", "🔒 이대로 확정",
+              "확정했습니다. 노쇼가 나도 이 배정을 되도록 그대로 둡니다. "
+              "지원자에게까지 안내를 보냈다면 한 번 더 눌러 완전히 잠그세요."),
+    "confirmed": ("LOCKED", "🔒 완전히 잠그기",
+                  "잠갔습니다. 이제 이 배정은 재편성에서 아예 건드리지 않습니다."),
+    "locked": (None, "🔒 이미 잠김", ""),
+}
+
+
+def next_lock_level(status: str | None) -> tuple[str | None, str, str]:
+    """'이대로 확정' 을 누르면 어느 단계를 보낼 것인가.
+
+    예전에는 상태를 안 보고 늘 `LOCKED` 를 보냈다. 갓 만든 시간표는 DRAFT 라
+    스케줄러가 `락 단계는 한 단계씩만 상승 가능` 으로 되돌려 보냈고, 화면에는
+    그 말만 떴다 — 무엇을 어떻게 하라는 말인지 알 수 없다. 단계를 건너뛰지
+    못하게 막는 것은 두 단계가 서로 다른 약속이기 때문이다(CONFIRMED 는
+    면접관에게, LOCKED 는 지원자에게 안내가 나갔다는 뜻).
+    """
+    key = str(status or "draft").strip().lower()
+    return LOCK_STEPS.get(key, LOCK_STEPS["draft"])
 
 
 def render_scheduling() -> None:
@@ -4752,17 +4800,28 @@ def render_scheduling() -> None:
             else:
                 st.success("꼭 지켜야 할 규칙은 모두 지켜졌습니다.")
             render_off_band(data.get("off_band"), timing)
-    if a2.button("🔒 이대로 확정", key="s_lock"):
+    # 확정은 두 걸음이다(아래 next_lock_level 참고). 버튼은 지금 상태에서
+    # 갈 수 있는 한 걸음만 밟는다 — 예전에는 무조건 LOCKED 를 보내서 아직
+    # DRAFT 인 시간표에서 누르면 '한 단계씩만 상승 가능' 이라고 되돌아왔다.
+    now, _ = fetch_json(f"{SCHEDULER}/api/v1/schedules/{sc_id}")
+    step, button, done = next_lock_level((now or {}).get("status"))
+    if step is None:
+        a2.button(button, key="s_lock", disabled=True)
+    elif a2.button(button, key="s_lock"):
         data, err = post_json(
             f"{SCHEDULER}/api/v1/schedules/{sc_id}/lock",
-            {"lock_level": "LOCKED", "actor": actor},
+            {"lock_level": step, "actor": actor},
         )
         if err:
             st.error(err)
         else:
             clear_caches()
-            st.success("확정했습니다. 이제 이 시간표는 함부로 바뀌지 않습니다.")
-    a3.caption("확정해 두면 나중에 일정이 바뀌어도 이 배정은 그대로 유지됩니다.")
+            st.success(done)
+    a3.caption(
+        "확정은 두 걸음입니다 — ① 면접관에게 안내를 보냈으면 [확정], "
+        "② 지원자에게까지 보냈으면 [완전히 잠그기]. 확정한 뒤에도 노쇼가 나면 "
+        "옮길 수는 있지만 되도록 이 배정을 지킵니다. 잠그면 아예 안 옮깁니다."
+    )
 
     render_schedule_body(sc_id, pairs=sent_by_team, days=sent_days, timing=timing)
 

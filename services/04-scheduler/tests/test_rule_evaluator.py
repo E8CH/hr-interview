@@ -42,39 +42,66 @@ def _day_of(day, total, grads, team="AI솔루션팀"):
 
 
 # --------------------------------------------------------------------------
-# 규칙 1 — 날별 대학원 비율
+# 규칙 1 — (팀, 면접일)별 대학원 비율
 # --------------------------------------------------------------------------
+def _team_day(team, day, total, grads):
+    """한 팀이 그 날 total명(그중 grads명이 대학원)을 보는 자리"""
+    hours = list(H)
+    return [
+        A(team=team, degree="대학원" if i < grads else "학사", day=day,
+          hour=hours[i % len(hours)], applicant_id=f"{team}-{day}-{i}")
+        for i in range(total)
+    ]
+
+
 def test_rule1_grad_detects_a_day_at_45_percent():
-    """1일차 대학원 45% 상황에서 편차를 감지한다"""
-    assignments = _day_of("1일차", 20, 9)  # 9/20 = 45%
-    assignments += _day_of("2일차", 20, 6)  # 30%
-    assignments += _day_of("5일차", 20, 0)  # 0% — 허용 범위 이탈
+    """한 팀의 1일차가 대학원 45% 인 상황에서 편차를 감지한다"""
+    team = "AI솔루션팀"
+    assignments = _team_day(team, "1일차", 20, 9)   # 9/20 = 45%
+    assignments += _team_day(team, "2일차", 20, 6)  # 30%
+    assignments += _team_day(team, "5일차", 20, 0)  # 0% — 허용 범위 이탈
 
     score, detail = rule1_grad_balance(assignments, target=0.30, tolerance=0.20)
 
-    assert detail["ratios"]["1일차"] == 0.45
-    assert detail["ratios"]["5일차"] == 0.0
+    mine = detail["teams"][team]
+    assert mine["ratios"]["1일차"] == 0.45
+    assert mine["ratios"]["5일차"] == 0.0
     # 기본 허용범위 10~50%: 1일차(45%)·2일차(30%)는 통과, 5일차(0%)만 이탈
-    assert detail["outside"] == ["5일차"]
+    assert mine["outside"] == ["5일차"]
+    assert [(row["team"], row["day"]) for row in detail["outside"]] == [(team, "5일차")]
     assert score == round(100 * 2 / 3, 1)
 
     # 허용 오차를 10%p로 조이면 1일차 45%도 편차로 잡힌다
     tight_score, tight_detail = rule1_grad_balance(assignments, target=0.30, tolerance=0.10)
-    assert "1일차" in tight_detail["outside"]
+    assert "1일차" in tight_detail["teams"][team]["outside"]
     assert tight_score < score
 
 
 def test_rule1_perfect_balance():
-    assignments = _day_of("1일차", 10, 3) + _day_of("2일차", 10, 3)
+    team = "AI솔루션팀"
+    assignments = _team_day(team, "1일차", 10, 3) + _team_day(team, "2일차", 10, 3)
     score, detail = rule1_grad_balance(assignments, 0.30, 0.20)
     assert score == 100.0
     assert detail["outside"] == []
 
 
+def test_rule1_skips_a_team_that_only_has_one_day():
+    """면접일이 하루뿐인 팀은 나눌 날이 없다 — 판정하지 않는다.
+
+    하루짜리 팀을 0% 라고 벌하면 인사가 고칠 수 없는 점수가 된다.
+    """
+    rows = _team_day("미래혁신팀", "1일차", 8, 8)  # 죄다 대학원 — 그러나 하루뿐
+    score, detail = rule1_grad_balance(rows, target=None, tolerance=0.20)
+    assert score == 100.0
+    assert detail["single_day_teams"] == ["미래혁신팀"]
+    assert detail["evaluated"] == 0
+
+
 def test_rule1_empty_is_neutral():
     score, detail = rule1_grad_balance([], 0.30, 0.20)
     assert score == 100.0
-    assert detail["ratios"] == {}
+    assert detail["teams"] == {}
+    assert detail["day_ratios"] == {}
 
 
 # --------------------------------------------------------------------------

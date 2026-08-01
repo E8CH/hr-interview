@@ -219,8 +219,11 @@ def test_grad_target_defaults_to_the_roster_ratio(client):
     detail = client.get(f"/api/v1/schedules/{sid}/rules").json()["data"]
     detail = detail["rule1_grad_balance"]["detail"]
     assert detail["target_source"] == "명단"
-    # 목표가 명단에서 왔으니 하루하루의 비율은 그 값 언저리에 모여 있다
-    assert min(detail["ratios"].values()) <= detail["target"] <= max(detail["ratios"].values())
+    assert detail["teams"], "면접일이 둘 이상인 팀이 있어야 판정된다"
+    # 목표가 그 팀 명단에서 왔으니 팀의 날별 비율은 그 값 언저리에 모여 있다
+    for team, row in detail["teams"].items():
+        spread = list(row["ratios"].values())
+        assert min(spread) <= row["target"] <= max(spread), team
 
 
 def test_list_round_schedules(client, generated):
@@ -287,7 +290,7 @@ def test_rules_endpoint_returns_score_and_detail(client, generated):
     data = client.get(f"/api/v1/schedules/{generated['schedule_id']}/rules").json()["data"]
 
     assert data["rule1_grad_balance"]["score"] == generated["rule_compliance"]["rule1_grad_balance"]
-    assert "ratios" in data["rule1_grad_balance"]["detail"]
+    assert "teams" in data["rule1_grad_balance"]["detail"]
     assert data["overall"]["score"] == generated["rule_compliance"]["overall"]
 
 

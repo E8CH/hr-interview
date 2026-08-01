@@ -70,6 +70,11 @@ class Board:
         self.iv_total: Counter = Counter()
         self.day_count: Counter = Counter()
         self.day_grad: Counter = Counter()
+        # 편중은 팀 안에서 생긴다 — 한 팀의 대학원생이 한 날에 몰리면 그 날 면접은
+        # 저희끼리 비교하는 자리가 된다. 팀마다 면접일이 다르므로 회차 전체의
+        # 날별 셈으로는 그것이 안 보인다. 규칙1과 같은 잣대로 재려고 함께 센다.
+        self.team_day_count: Counter = Counter()
+        self.team_day_grad: Counter = Counter()
         self.team_day_hours: dict[tuple[str, str], set[int]] = defaultdict(set)
         self.assignments: list[PlannedAssignment] = []
 
@@ -230,8 +235,10 @@ class Board:
         self.iv_day[(iv.interviewer_id, day)] += 1
         self.iv_total[iv.interviewer_id] += 1
         self.day_count[day] += 1
+        self.team_day_count[(applicant.team, day)] += 1
         if applicant.is_grad:
             self.day_grad[day] += 1
+            self.team_day_grad[(applicant.team, day)] += 1
         self.team_day_hours[(applicant.team, day)].add(HOURS.index(hour))
         self.assignments.append(assignment)
         return assignment
