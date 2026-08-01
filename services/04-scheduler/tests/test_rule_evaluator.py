@@ -11,7 +11,7 @@ from app.services.rule_evaluator import (
 )
 
 
-def A(team="AI솔루션팀", degree="학사", day="월", hour=H[0], **kw):
+def A(team="AI솔루션팀", degree="학사", day="1일차", hour=H[0], **kw):
     base = {
         "team": team,
         "degree": degree,
@@ -25,7 +25,7 @@ def A(team="AI솔루션팀", degree="학사", day="월", hour=H[0], **kw):
 
 
 def _day_of(day, total, grads, team="AI솔루션팀"):
-    """해당 요일에 total건(그중 grads건이 대학원) 생성 — 시간대는 순환"""
+    """해당 날에 total건(그중 grads건이 대학원) 생성 — 시간대는 순환"""
     hours = list(H)
     rows = []
     for i in range(total):
@@ -42,30 +42,30 @@ def _day_of(day, total, grads, team="AI솔루션팀"):
 
 
 # --------------------------------------------------------------------------
-# 규칙 1 — 요일별 대학원 비율
+# 규칙 1 — 날별 대학원 비율
 # --------------------------------------------------------------------------
-def test_rule1_grad_detects_monday_45_percent():
-    """월요일 대학원 45% 상황에서 편차를 감지한다"""
-    assignments = _day_of("월", 20, 9)  # 9/20 = 45%
-    assignments += _day_of("화", 20, 6)  # 30%
-    assignments += _day_of("금", 20, 0)  # 0% — 허용 범위 이탈
+def test_rule1_grad_detects_a_day_at_45_percent():
+    """1일차 대학원 45% 상황에서 편차를 감지한다"""
+    assignments = _day_of("1일차", 20, 9)  # 9/20 = 45%
+    assignments += _day_of("2일차", 20, 6)  # 30%
+    assignments += _day_of("5일차", 20, 0)  # 0% — 허용 범위 이탈
 
     score, detail = rule1_grad_balance(assignments, target=0.30, tolerance=0.20)
 
-    assert detail["ratios"]["월"] == 0.45
-    assert detail["ratios"]["금"] == 0.0
-    # 기본 허용범위 10~50%: 월(45%)·화(30%)는 통과, 금(0%)만 이탈
-    assert detail["outside"] == ["금"]
+    assert detail["ratios"]["1일차"] == 0.45
+    assert detail["ratios"]["5일차"] == 0.0
+    # 기본 허용범위 10~50%: 1일차(45%)·2일차(30%)는 통과, 5일차(0%)만 이탈
+    assert detail["outside"] == ["5일차"]
     assert score == round(100 * 2 / 3, 1)
 
-    # 허용 오차를 10%p로 조이면 월요일 45%도 편차로 잡힌다
+    # 허용 오차를 10%p로 조이면 1일차 45%도 편차로 잡힌다
     tight_score, tight_detail = rule1_grad_balance(assignments, target=0.30, tolerance=0.10)
-    assert "월" in tight_detail["outside"]
+    assert "1일차" in tight_detail["outside"]
     assert tight_score < score
 
 
 def test_rule1_perfect_balance():
-    assignments = _day_of("월", 10, 3) + _day_of("화", 10, 3)
+    assignments = _day_of("1일차", 10, 3) + _day_of("2일차", 10, 3)
     score, detail = rule1_grad_balance(assignments, 0.30, 0.20)
     assert score == 100.0
     assert detail["outside"] == []
@@ -83,7 +83,7 @@ def test_rule1_empty_is_neutral():
 def test_rule2_detects_team_conflict():
     assignments = [
         A(applicant_id="1"),
-        A(applicant_id="2"),  # 같은 팀·같은 요일·같은 시간 → 중복
+        A(applicant_id="2"),  # 같은 팀·같은 날·같은 시간 → 중복
         A(applicant_id="3", hour=H[1]),
     ]
     score, detail = rule2_team_conflict(assignments)
@@ -169,7 +169,7 @@ def test_rule4_single_hour_block_not_evaluated():
 # --------------------------------------------------------------------------
 def test_overall_is_mean_of_four_rules():
     """명세 예시(60/100/100/100 → 90.0)와 동일한 산식"""
-    assignments = _day_of("월", 20, 9) + _day_of("금", 20, 0)
+    assignments = _day_of("1일차", 20, 9) + _day_of("5일차", 20, 0)
     report = rule_compliance(assignments)
     expected = sum(
         report.scores[k]

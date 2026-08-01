@@ -30,7 +30,7 @@
   textarea { min-height: 72px; resize: vertical; }
   input:focus, textarea:focus { outline: 2px solid #2563eb; outline-offset: -1px; border-color: #2563eb; }
 
-  /* 가능 시간 덩어리 — 요일은 묻지 않는다(고른 덩어리가 모든 요일에 적용된다) */
+  /* 가능 시간 덩어리 — 어느 날인지는 묻지 않는다(고른 덩어리가 모든 날에 적용된다) */
   .bands { display: grid; gap: 8px; margin-top: 8px; }
   .slot {
     display: block; width: 100%; padding: 14px 16px; border: 1px solid #d1d5db;
@@ -80,7 +80,7 @@
     <input type="text" id="job_role" name="job_role" maxlength="64" placeholder="예: 배터리 소재 연구"
            value="{{ submitted_payload.job_role if submitted_payload else '' }}" required>
 
-    <label>가능한 시간대 <span class="hint">(필수 · 하나만 고르세요. 요일은 가리지 않습니다 — 고르신 시간대가 면접 요일 어느 날에나 그대로 적용됩니다)</span></label>
+    <label>가능한 시간대 <span class="hint">(필수 · 하나만 고르세요. 날은 가리지 않습니다 — 고르신 시간대가 면접 기간 어느 날에나 그대로 적용됩니다)</span></label>
     <div class="bands" id="bandlist">
       {% for band in bands %}
       <button type="button" class="slot" data-band="{{ band.name }}"
@@ -127,7 +127,7 @@
   function chosen() {
     return slots.filter(function (s) { return s.getAttribute('aria-pressed') === 'true'; })[0];
   }
-  // 고른 덩어리를 모든 요일로 편다 — 요일별로 다르게 받지 않는다.
+  // 고른 덩어리를 모든 날로 편다 — 날별로 다르게 받지 않는다.
   function selected() {
     var pick = chosen();
     if (!pick) return [];

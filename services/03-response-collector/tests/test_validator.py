@@ -13,7 +13,7 @@ def test_valid_payload_passes(valid_payload):
 
 def test_minimal_payload_passes():
     ok, reason = validate_form_response(
-        {"job_role": "직무다", "available_slots": [{"day": "화", "hour": HOURS[1]}]}
+        {"job_role": "직무다", "available_slots": [{"day": "2일차", "hour": HOURS[1]}]}
     )
     assert ok, reason
 
@@ -42,7 +42,7 @@ def test_blank_job_role_rejected(valid_payload):
 
 @pytest.mark.parametrize(
     "bad_slot",
-    [{"day": "화"}, {"hour": HOURS[1]}, {}, "화 10시", 42],
+    [{"day": "2일차"}, {"hour": HOURS[1]}, {}, "화 10시", 42],
 )
 def test_malformed_slot_rejected(valid_payload, bad_slot):
     valid_payload["available_slots"] = [bad_slot]
@@ -52,14 +52,30 @@ def test_malformed_slot_rejected(valid_payload, bad_slot):
 
 
 def test_unknown_day_rejected(valid_payload):
-    valid_payload["available_slots"] = [{"day": "토", "hour": HOURS[1]}]
+    valid_payload["available_slots"] = [{"day": "8일차", "hour": HOURS[1]}]
     ok, reason = validate_form_response(valid_payload)
     assert ok is False
-    assert "요일" in reason
+    assert "알 수 없는 날" in reason
+
+
+def test_legacy_weekday_is_still_accepted(valid_payload):
+    """요일('월')로 적어 보낸 옛 폼 응답은 1일차로 받아 준다.
+
+    날 이름을 바꾸기 전에 나간 폼 링크로 그때 응답을 다시 내면 '월' 이 온다.
+    여기서 물리면 그분만 회신을 못 하게 된다.
+    """
+    valid_payload["available_slots"] = [{"day": "월", "hour": HOURS[1]}]
+
+    ok, reason = validate_form_response(valid_payload)
+
+    assert (ok, reason) == (True, "OK")
+    assert normalize_payload(valid_payload)["available_slots"] == [
+        {"day": "1일차", "hour": HOURS[1]}
+    ]
 
 
 def test_unknown_hour_rejected(valid_payload):
-    valid_payload["available_slots"] = [{"day": "화", "hour": "13시"}]
+    valid_payload["available_slots"] = [{"day": "2일차", "hour": "13시"}]
     ok, reason = validate_form_response(valid_payload)
     assert ok is False
     assert "시간대" in reason
@@ -67,8 +83,8 @@ def test_unknown_hour_rejected(valid_payload):
 
 def test_duplicate_slot_rejected(valid_payload):
     valid_payload["available_slots"] = [
-        {"day": "화", "hour": HOURS[1]},
-        {"day": "화", "hour": HOURS[1]},
+        {"day": "2일차", "hour": HOURS[1]},
+        {"day": "2일차", "hour": HOURS[1]},
     ]
     ok, reason = validate_form_response(valid_payload)
     assert ok is False
@@ -76,7 +92,7 @@ def test_duplicate_slot_rejected(valid_payload):
 
 
 def test_slot_count_cap_is_grid_size():
-    """요일 5 × 하루 8칸 = 40칸"""
+    """닷새 × 하루 8칸 = 40칸"""
     assert MAX_SLOTS == len(DAYS) * len(HOURS) == 40
 
 
@@ -112,7 +128,7 @@ def test_non_dict_payload_rejected():
 
 
 def test_slots_not_a_list(valid_payload):
-    valid_payload["available_slots"] = {"day": "화", "hour": HOURS[1]}
+    valid_payload["available_slots"] = {"day": "2일차", "hour": HOURS[1]}
     ok, reason = validate_form_response(valid_payload)
     assert ok is False
     assert "배열" in reason
@@ -121,11 +137,11 @@ def test_slots_not_a_list(valid_payload):
 def test_normalize_fills_defaults():
     payload = {
         "job_role": "  배터리 소재 연구  ",
-        "available_slots": [{"day": "화", "hour": HOURS[1], "extra": "무시됨"}],
+        "available_slots": [{"day": "2일차", "hour": HOURS[1], "extra": "무시됨"}],
     }
     normalized = normalize_payload(payload)
     assert normalized["job_role"] == "배터리 소재 연구"
-    assert normalized["available_slots"] == [{"day": "화", "hour": HOURS[1]}]
+    assert normalized["available_slots"] == [{"day": "2일차", "hour": HOURS[1]}]
     assert normalized["max_daily"] == len(HOURS)
     assert normalized["backup_contact"] is None
     assert normalized["notes"] is None

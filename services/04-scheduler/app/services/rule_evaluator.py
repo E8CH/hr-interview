@@ -2,11 +2,11 @@
 
 점수 정의
 ---------
-rule1_grad_balance (SOFT) : 요일별 대학원 비율이 target±tolerance(기본 30%±20%p)
-                            안에 드는 요일의 비율. 배정이 없는 요일은 평가 제외.
+rule1_grad_balance (SOFT) : 일차별 대학원 비율이 target±tolerance(기본 30%±20%p)
+                            안에 드는 날의 비율. 배정이 없는 날은 평가 제외.
 rule2_team_conflict (HARD): 같은 팀이 동시간에 중복 배치된 건수.
                             100 × (1 − 중복건수 / 전체 배정수).
-rule3_vertical_group(SOFT): (팀, 요일)별로 사용한 시간대가 HOURS 순서상 연속인 그룹의 비율.
+rule3_vertical_group(SOFT): (팀, 면접일)별로 사용한 시간대가 HOURS 순서상 연속인 그룹의 비율.
                             Webex 방 재입장을 최소화하는 "세로 연속" 규칙.
 rule4_first_slot   (SOFT): 그날 첫 타임의 동시 진행 건수가 그날의 다른 타임보다
                             많지 않아야 한다("첫 타임은 소규모 조").

@@ -78,8 +78,8 @@ def test_distribution_approved_broadcasts_applicant_invite(session):
                 "approver": "hr01",
                 "total_applicants": 2,
                 "recipients": [
-                    {"email": "a1@x.com", "context": {"name": "새한별", "day": "월", "hour": "09시"}},
-                    {"email": "a2@x.com", "context": {"name": "홍길동", "day": "화", "hour": "10시"}},
+                    {"email": "a1@x.com", "context": {"name": "새한별", "day": "1일차", "hour": "09시"}},
+                    {"email": "a2@x.com", "context": {"name": "홍길동", "day": "2일차", "hour": "10시"}},
                 ],
             },
         )
@@ -257,7 +257,7 @@ def test_schedule_locked_sends_both_templates(session):
                 "assignments_count": 42,
                 "interviewers": [{"email": "iv1@lge.com", "name": "이지훈"}],
                 "applicants": [
-                    {"email": "a1@x.com", "name": "새한별", "day": "화", "hour": "10시"}
+                    {"email": "a1@x.com", "name": "새한별", "day": "2일차", "hour": "10시"}
                 ],
             },
         )
@@ -267,7 +267,7 @@ def test_schedule_locked_sends_both_templates(session):
     assert confirm.recipient == "iv1@lge.com"
     assert "42" in confirm.body
     invite = _rows(session, "applicant_invite")[0]
-    assert "화 10시" in invite.body
+    assert "2일차 10시" in invite.body
 
 
 def test_repair_executed_routes_change_and_defer(session):
@@ -280,7 +280,7 @@ def test_repair_executed_routes_change_and_defer(session):
                 "rebooked": 1,
                 "deferred": 1,
                 "rebooked_recipients": [
-                    {"email": "a1@x.com", "name": "새한별", "new_slot": "수 14시"}
+                    {"email": "a1@x.com", "name": "새한별", "new_slot": "3일차 14시"}
                 ],
                 "deferred_recipients": [{"email": "a2@x.com", "name": "홍길동"}],
                 "next_round": "R2026-Q4-01",
@@ -289,7 +289,7 @@ def test_repair_executed_routes_change_and_defer(session):
     )
     assert len(ids) == 2
     change = _rows(session, "applicant_change")[0]
-    assert "수 14시" in change.body
+    assert "3일차 14시" in change.body
     defer = _rows(session, "applicant_defer")[0]
     assert "R2026-Q4-01" in defer.body
 
@@ -340,7 +340,7 @@ def test_handler_skips_unrenderable_recipient(session):
             {
                 "recipients": [
                     {"email": "bad@x.com"},  # name/day/hour 없음 → 렌더 실패
-                    {"email": "good@x.com", "name": "새한별", "day": "월", "hour": "09시"},
+                    {"email": "good@x.com", "name": "새한별", "day": "1일차", "hour": "09시"},
                 ]
             },
         )

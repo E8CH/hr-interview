@@ -18,4 +18,4 @@ class Interviewer(Base):
     priority: Mapped[int] = mapped_column(Integer, default=2)  # 1=리더, 2=실무
     email: Mapped[str] = mapped_column(String(255), default="")
     backup_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    availability: Mapped[dict] = mapped_column(JSON, default=dict)  # {"월": ["09시", ...]}
+    availability: Mapped[dict] = mapped_column(JSON, default=dict)  # {"1일차": ["1타임", ...]}

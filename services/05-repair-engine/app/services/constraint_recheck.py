@@ -4,14 +4,14 @@
 v3 에서는 재검증이 없어 하드 위반이 발생했다 — v3.1 의 핵심 수정점.
 
 하드 제약
-  H1 (규칙2)  같은 팀 · 같은 (요일,시간) 중복 금지
+  H1 (규칙2)  같은 팀 · 같은 (날,시간) 중복 금지
   H2          면접위원 동시간 이중 예약 금지
   H3          지원자 동시간 이중 예약 금지
   H4          면접위원 일일 최대 면접 수(max_daily) 초과 금지
 
 소프트 규칙 (페널티만 부여, 배정을 막지 않음)
-  S1 (규칙1)  요일별 대학원 비율 30% ±20%p
-  S3 (규칙3)  동일 팀 세로(같은 요일 연속 시간) 배치
+  S1 (규칙1)  날별 대학원 비율 30% ±20%p
+  S3 (규칙3)  동일 팀 세로(같은 날 연속 시간) 배치
   S4 (규칙4)  그날 첫 타임은 소규모 조 우선
 """
 from __future__ import annotations
@@ -35,7 +35,7 @@ GRAD_TOLERANCE = 0.20
 
 # 소프트 페널티 가중치
 W_GRAD_BALANCE = 20      # 허용 범위를 벗어난 비율 1.0 당
-W_VERTICAL_GAP = 3       # 팀-요일 단위 추가 블록 1개 당
+W_VERTICAL_GAP = 3       # 팀-날 단위 추가 블록 1개 당
 W_FIRST_SLOT = 2         # 대형 조가 첫 타임을 차지한 건수 당
 
 
@@ -180,7 +180,7 @@ def _grad_balance_penalty(assignments: list[ScheduleAssignment],
 
 def _vertical_group_penalty(assignments: list[ScheduleAssignment],
                             interviewers: dict[str, InterviewerInfo]) -> int:
-    """같은 팀이 같은 요일에 흩어져 있을수록 Webex 재입장이 늘어난다."""
+    """같은 팀이 같은 날에 흩어져 있을수록 Webex 재입장이 늘어난다."""
     per_team_day: dict[tuple[str, str], set[str]] = defaultdict(set)
     for a in assignments:
         iv = interviewers.get(a.interviewer_id)

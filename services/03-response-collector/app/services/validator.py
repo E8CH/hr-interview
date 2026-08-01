@@ -6,10 +6,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from shared.contracts.constants import DAYS, HOURS
+from shared.contracts.constants import DAYS, HOURS, day_name
 
 REQUIRED_FIELDS = ("job_role", "available_slots")
-MAX_SLOTS = len(DAYS) * len(HOURS)  # 요일 5 × 하루 8칸 = 40
+MAX_SLOTS = len(DAYS) * len(HOURS)  # 닷새 × 하루 8칸 = 40
 
 
 def validate_form_response(payload: Any) -> tuple[bool, str]:
@@ -41,9 +41,11 @@ def validate_form_response(payload: Any) -> tuple[bool, str]:
     for slot in slots:
         if not isinstance(slot, dict) or "day" not in slot or "hour" not in slot:
             return False, f"슬롯 형식 오류: {slot}"
-        day, hour = slot["day"], slot["hour"]
+        # 날은 '1일차 … 5일차'. 옛 회차가 요일('월')로 적어 보낸 것은 같은 뜻으로
+        # 받아 준다 — 옛 폼 링크로 다시 내신 분의 답을 여기서 물리지 않게.
+        day, hour = day_name(slot["day"]), slot["hour"]
         if day not in DAYS:
-            return False, f"허용되지 않은 요일: {day}"
+            return False, f"알 수 없는 날: {slot['day']}"
         if hour not in HOURS:
             return False, f"허용되지 않은 시간대: {hour}"
         if (day, hour) in seen:
@@ -69,7 +71,8 @@ def normalize_payload(payload: dict) -> dict:
     normalized = dict(payload)
     normalized["job_role"] = str(normalized["job_role"]).strip()
     normalized["available_slots"] = [
-        {"day": s["day"], "hour": s["hour"]} for s in normalized["available_slots"]
+        {"day": day_name(s["day"]), "hour": s["hour"]}
+        for s in normalized["available_slots"]
     ]
     normalized.setdefault("max_daily", len(HOURS))
     normalized.setdefault("backup_contact", None)

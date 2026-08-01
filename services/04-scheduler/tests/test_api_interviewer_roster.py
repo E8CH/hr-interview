@@ -118,12 +118,12 @@ def test_import_keeps_existing_availability(client, db, roster_bytes):
     """회신으로 채워진 가용성을 재업로드가 지우면 안 된다."""
     _upload(client, roster_bytes)
     row = db.get(Interviewer, "IV101")
-    row.availability = {"월": [HOURS[1]]}
+    row.availability = {"1일차": [HOURS[1]]}
     db.commit()
 
     _upload(client, roster_bytes)
     db.expire_all()
-    assert db.get(Interviewer, "IV101").availability == {"월": [HOURS[1]]}
+    assert db.get(Interviewer, "IV101").availability == {"1일차": [HOURS[1]]}
 
 
 def test_import_accepts_alias_columns(client):
@@ -189,8 +189,8 @@ def test_import_reads_time_band_column(client, db):
     assert [p["time_band"] for p in parsed] == ["앞타임", "뒤타임", ""]
 
     listed = {i["interviewer_id"]: i for i in client.get("/api/v1/interviewers").json()["data"]}
-    assert listed["A1"]["availability"]["월"] == FRONT
-    assert listed["A2"]["availability"]["금"] == BACK
+    assert listed["A1"]["availability"]["1일차"] == FRONT
+    assert listed["A2"]["availability"]["5일차"] == BACK
     assert listed["A3"]["availability"] == {}   # 안 적었으면 건드리지 않는다
     # 되읽은 표기는 저장된 칸에서 거꾸로 알아낸다. 기본 조건에서는 앞타임이 하루
     # 전체라 '모든타임' 과 구별되지 않으므로 그렇게 나오는 게 맞다.
@@ -206,11 +206,11 @@ def test_set_bands_updates_availability_and_cap(client, roster_bytes):
     assert r.json()["data"]["updated"] == 2
 
     listed = {i["interviewer_id"]: i for i in client.get("/api/v1/interviewers").json()["data"]}
-    assert listed["IV101"]["availability"]["월"] == FRONT
+    assert listed["IV101"]["availability"]["1일차"] == FRONT
     assert listed["IV102"]["time_band"] == "뒤타임"
     # 고른 덩어리가 곧 하루 최대 인원의 천장이다
     assert listed["IV101"]["max_daily"] == len(FRONT)
-    assert listed["IV102"]["availability"]["수"] == BACK
+    assert listed["IV102"]["availability"]["3일차"] == BACK
     assert listed["IV102"]["max_daily"] == len(BACK)
 
 
@@ -221,7 +221,7 @@ def test_set_bands_accepts_legacy_names(client, roster_bytes):
                    json={"bands": {"IV101": "오전만", "IV102": "오후만"}})
     assert r.status_code == 200, r.text
     listed = {i["interviewer_id"]: i for i in client.get("/api/v1/interviewers").json()["data"]}
-    assert listed["IV101"]["availability"]["월"] == FRONT     # 오전만 → 앞타임
+    assert listed["IV101"]["availability"]["1일차"] == FRONT     # 오전만 → 앞타임
     assert listed["IV102"]["time_band"] == "뒤타임"           # 오후만 → 뒤타임
 
 
@@ -284,8 +284,8 @@ def test_band_limits_schedule_hours(client, db, roster_bytes, sample_round_id):
 
     loaded = {iv.interviewer_id: iv for iv in
               schedule_service.load_interviewers(db, sample_round_id)}
-    assert loaded["IV101"].availability["월"] == BACK
-    assert not loaded["IV101"].is_available("월", HOURS[0])   # 첫 칸은 뒤타임이 아니다
+    assert loaded["IV101"].availability["1일차"] == BACK
+    assert not loaded["IV101"].is_available("1일차", HOURS[0])   # 첫 칸은 뒤타임이 아니다
 
 
 # ------------------------------------------------------------------ 회차 선별
@@ -337,7 +337,7 @@ def test_schedule_uses_only_selected_interviewers(client, db, roster_bytes, samp
 
     loaded = schedule_service.load_interviewers(db, sample_round_id)
     assert sorted(i.interviewer_id for i in loaded) == sorted(picked)
-    # 03 회신이 없으면 제약 없음(전 요일·전 시간대)으로 둔다
+    # 03 회신이 없으면 제약 없음(전 날·전 시간대)으로 둔다
     assert all(iv.availability for iv in loaded)
 
 
@@ -353,8 +353,8 @@ def test_master_hours_survive_when_nobody_answered(client, db, roster_bytes,
 
     03이 죽어 있거나 아직 아무도 회신을 안 하면 목 면접관으로 폴백하게 되어
     있었는데, 여기서는 그 결과를 마스터 가용성과 교집합으로 잡는다. 지어낸
-    시간과 실제 시간이 겹치는 칸만 남아, 부서 화면이 보여 준 '수 3~7타임' 이
-    스케줄러 안에서는 '수 7타임' 한 칸으로 쪼그라들었다. 그러면 부서가 잡아
+    시간과 실제 시간이 겹치는 칸만 남아, 부서 화면이 보여 준 '3~7타임' 이
+    스케줄러 안에서는 '7타임' 한 칸으로 쪼그라들었다. 그러면 부서가 잡아
     보낸 자리가 절반 넘게 담당자 시간 밖으로 몰려 도로 옮겨진다.
     """
     _upload(client, roster_bytes)
@@ -362,15 +362,15 @@ def test_master_hours_survive_when_nobody_answered(client, db, roster_bytes,
     # 걸치면 교집합이 비지 않아 그 한 칸만 남는다 — 아예 안 겹칠 때만 마스터로
     # 되돌리는 지금 규칙에 가려져 있던 자리다.
     wanted = [HOURS[2], HOURS[3], HOURS[4], HOURS[5], HOURS[6]]
-    db.get(Interviewer, "IV101").availability = {"수": list(wanted)}
+    db.get(Interviewer, "IV101").availability = {"3일차": list(wanted)}
     db.commit()
     interviewer_roster.select_for_round(db, sample_round_id, ["IV101", "IV102"])
 
     loaded = {iv.interviewer_id: iv for iv in
               schedule_service.load_interviewers(db, sample_round_id)}
 
-    # 적어 낸 요일('수')은 살아 남지 않는다 — 우리 모델에 담당자 가능 요일이
-    # 없어서, 고른 칸이 모든 요일에 그대로 펴진다. 살아 남아야 하는 것은 칸이다.
+    # 적어 낸 날('3일차')은 살아 남지 않는다 — 우리 모델에 담당자 가능 날이
+    # 없어서, 고른 칸이 모든 날에 그대로 펴진다. 살아 남아야 하는 것은 칸이다.
     assert loaded["IV101"].availability == {day: list(wanted) for day in DAYS}
 
 
@@ -385,16 +385,16 @@ def test_legacy_clock_hours_are_moved_into_current_slots(client, db, roster_byte
     그 이름이 뜻하던 앞/뒤만 살려 지금 칸으로 옮긴다.
     """
     _upload(client, roster_bytes)
-    db.get(Interviewer, "IV101").availability = {"월": ["09시", "10시", "11시"]}
-    db.get(Interviewer, "IV102").availability = {"화": ["14시", "15시"]}
-    db.get(Interviewer, "IV103").availability = {"수": ["09시", "15시"]}
+    db.get(Interviewer, "IV101").availability = {"1일차": ["09시", "10시", "11시"]}
+    db.get(Interviewer, "IV102").availability = {"2일차": ["14시", "15시"]}
+    db.get(Interviewer, "IV103").availability = {"3일차": ["09시", "15시"]}
     db.commit()
     interviewer_roster.select_for_round(db, sample_round_id, ["IV101", "IV102", "IV103"])
 
-    # 옮기는 규칙 자체 — 적어 낸 요일은 지우고 모든 요일로 편다
-    assert normalize_availability({"월": ["09시", "10시", "11시"]}) == {d: FRONT for d in DAYS}
-    assert normalize_availability({"화": ["14시", "15시"]}) == {d: BACK for d in DAYS}
-    assert normalize_availability({"수": ["09시", "15시"]}) == {d: list(HOURS) for d in DAYS}
+    # 옮기는 규칙 자체 — 적어 낸 날은 지우고 모든 날로 편다
+    assert normalize_availability({"1일차": ["09시", "10시", "11시"]}) == {d: FRONT for d in DAYS}
+    assert normalize_availability({"2일차": ["14시", "15시"]}) == {d: BACK for d in DAYS}
+    assert normalize_availability({"3일차": ["09시", "15시"]}) == {d: list(HOURS) for d in DAYS}
 
     # 읽어 들인 뒤에도 옛 이름이 남지 않고, 그 사람이 통째로 빠지지도 않는다.
     # (회신이 함께 오면 교집합을 잡으므로 칸이 더 줄어들 수는 있다.)
@@ -402,8 +402,8 @@ def test_legacy_clock_hours_are_moved_into_current_slots(client, db, roster_byte
               schedule_service.load_interviewers(db, sample_round_id)}
     for interviewer_id in ("IV101", "IV102", "IV103"):
         availability = loaded[interviewer_id].availability
-        assert sorted(availability) == sorted(DAYS), interviewer_id   # 요일을 안 가린다
+        assert sorted(availability) == sorted(DAYS), interviewer_id   # 날을 안 가린다
         for day in DAYS:
             assert availability[day], (interviewer_id, day)
             assert set(availability[day]) <= set(HOURS), (interviewer_id, day)
-    assert set(loaded["IV102"].availability["화"]) <= set(BACK)
+    assert set(loaded["IV102"].availability["2일차"]) <= set(BACK)

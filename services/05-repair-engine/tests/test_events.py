@@ -23,7 +23,7 @@ def test_all_published_event_types():
     events.publish_noshow_reported(ROUND_ID, "c", ["1"], "HR")
     events.publish_repair_executed(ROUND_ID, "c", "ev", "A_safe", 1, 0, SCHEDULE_ID, "HR")
     events.publish_participant_deferred(ROUND_ID, "c", "ev", ["1"], "이월")
-    events.publish_slot_reopened(ROUND_ID, "c", "ev", [{"day": "월", "hour": "09시",
+    events.publish_slot_reopened(ROUND_ID, "c", "ev", [{"day": "1일차", "hour": "09시",
                                                         "interviewer_id": "IV001",
                                                         "team": "AI솔루션팀"}])
     types = [e["event_type"] for e in event_bus.published()]

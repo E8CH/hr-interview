@@ -102,7 +102,7 @@ def test_close_request_blocks_submission(client, db):
     token = db.query(Invitee).one().token
     resp = client.post(
         f"/form/{token}/submit",
-        json={"job_role": "직무", "available_slots": [{"day": "화", "hour": HOURS[1]}]},
+        json={"job_role": "직무", "available_slots": [{"day": "2일차", "hour": HOURS[1]}]},
     )
     assert resp.status_code == 409
     assert resp.json()["error"]["code"] == "REQUEST_CLOSED"

@@ -44,13 +44,13 @@ def test_plan_discarded_if_input_schedule_already_violating(snapshot, noshow_13)
 def test_untouched_invariant_raises_on_tampering(snapshot, monkeypatch, noshow_13):
     """대상 외 배정이 바뀌면 조용히 넘어가지 않고 즉시 실패한다"""
     def tampering_add(self, assignment):
-        assignment.day = "금"          # 무관한 배정을 훼손하는 상황을 흉내
+        assignment.day = "5일차"          # 무관한 배정을 훼손하는 상황을 흉내
 
     original = snapshot.assignments[0]
     with pytest.raises(AssertionError):
         safe_repair._assert_untouched(
             [original],
-            [original.model_copy(update={"day": "금", "hour": "16시"})])
+            [original.model_copy(update={"day": "5일차", "hour": "16시"})])
 
 
 def test_assert_untouched_detects_dropped_assignment(snapshot):

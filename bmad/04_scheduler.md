@@ -10,8 +10,8 @@
 
 ### 해결하는 문제
 - 500명 규모 배치를 사람이 엑셀로 짜서 16~48시간 소요
-- PPT 4대 규칙(요일 분산·팀 중복·세로 연속·첫 타임)이 서로 상충
-- 리더 과부하, 학사/대학원 요일 편중 등 품질 문제
+- PPT 4대 규칙(날 분산·팀 중복·세로 연속·첫 타임)이 서로 상충
+- 리더 과부하, 학사/대학원 날 편중 등 품질 문제
 
 ### 비즈니스 가치
 - 2단계 계층적 배치로 4대 규칙 준수율 90% 달성 (v4 검증됨)
@@ -48,7 +48,7 @@ CREATE TABLE assignments (
     schedule_id     UUID REFERENCES schedules(schedule_id),
     applicant_id    VARCHAR(32) NOT NULL,
     interviewer_id  VARCHAR(32) NOT NULL,
-    day             VARCHAR(4) NOT NULL,  -- 월|화|수|목|금
+    day             VARCHAR(8) NOT NULL,  -- 1일차|2일차|…|5일차 (요일이 아니다)
     hour            VARCHAR(8) NOT NULL,  -- 1타임|2타임|... (자리 번호)
     lock_level      VARCHAR(16) DEFAULT 'DRAFT',  -- DRAFT|CONFIRMED|LOCKED
     reason_tags     TEXT[],
@@ -73,7 +73,7 @@ CREATE TABLE interviewers (
     max_daily       INTEGER DEFAULT 8,    -- 하루 칸 수(HOURS)와 같다
     priority        INTEGER DEFAULT 2,    -- 1=리더, 2=실무
     email           VARCHAR(255),
-    availability    JSONB                 -- {"월":["1타임","2타임"],...}
+    availability    JSONB                 -- {"1일차":["1타임","2타임"],...}
 );
 ```
 
@@ -104,18 +104,22 @@ body:
 }
 ```
 
-`seats_by_team` 은 **몇 일차 · 몇 번째 칸**이다. 부서 화면은 요일 이름을 모르고
-하루 몇 칸씩 끊어 세기만 하며, 어느 요일에 볼지는 인사팀이 정한다(Stage 1).
-안 주면 예전처럼 요일 · 시각을 처음부터 새로 짠다.
+`seats_by_team` 은 **몇 일차 · 몇 번째 칸**이다. 부서 화면은 실제 달력을 모르고
+하루 몇 칸씩 끊어 세기만 하며, 그 날을 언제로 잡을지는 인사팀이 정한다(Stage 1).
+안 주면 예전처럼 날 · 시각을 처음부터 새로 짠다.
 
-**팀별 요일을 고르는 기준** — `plan_team_days(sizes, days_per_team, slots_per_day)`
-는 **인원 수와 요일별 부하만** 본다. 큰 팀부터 한산한 요일을 가져가고, 같은
-명단이면 언제 돌려도 같은 답이 나온다.
+**팀별 면접일을 고르는 기준** — `plan_team_days(sizes, days_per_team)` 은
+**어느 팀에나 1일차부터** `days_per_team` 일을 준다. 인원 수도, 날별 부하도
+보지 않는다. 한때는 큰 팀부터 한산한 날을 골라 가게 했는데, 그러면 뒤에 남은
+팀은 앞날이 이미 차 있어 3일차에야 첫 면접을 보게 됐다 — "우리 팀은 왜 첫날
+면접이 없나" 가 거기서 나왔다. 날을 비켜 준다고 얻는 것이 없다: 같은 팀이 같은
+시각에 두 명을 볼 수 없다는 규칙2는 (팀, 날, 칸) 단위라 팀끼리는 애초에 안
+부딪히고, 담당자는 자기 팀 면접만 본다.
 
-담당자가 **어느 요일에 나올 수 있는지는 보지 않는다.** 우리 모델에 담당자 가능
-요일이라는 것이 없다 — 가능 시간은 앞타임 · 뒤타임 · 모든타임 세 덩어리뿐이고,
-그 덩어리는 어느 요일에나 똑같이 적용된다. 저장 형식이 `{요일: [칸]}` 이라
-요일이 딸려 들어가지만 `normalize_availability()` 가 읽는 순간 지운다. 한때 그
+담당자가 **어느 날에 나올 수 있는지는 보지 않는다.** 우리 모델에 담당자 가능
+날이라는 것이 없다 — 가능 시간은 앞타임 · 뒤타임 · 모든타임 세 덩어리뿐이고,
+그 덩어리는 어느 날에나 똑같이 적용된다. 저장 형식이 `{날: [칸]}` 이라
+날이 딸려 들어가지만 `normalize_availability()` 가 읽는 순간 지운다. 한때 그
 부산물을 사람의 뜻인 양 읽어 "모든 시간이 된다고 했는데 왜 빈 자리가 없나" 가
 나왔다. 회귀 시험은 `services/04-scheduler/tests/test_team_days.py`.
 
@@ -128,7 +132,7 @@ response 201:
     "coverage_pct": 100.0,
     "hard_violations": 0,
     "off_band_count": 0,           # 담당자 사정과 어긋난 자리 (일정 무시로 만들었을 때만)
-    "off_band": [],                # 위 자리의 담당자·면접자·요일·칸 — 개별 조율용
+    "off_band": [],                # 위 자리의 담당자·면접자·날·칸 — 개별 조율용
     "dept_seats": 88,              # 부서가 보낸 자리 수
     "dept_seats_kept": 84,         # 그대로 지킨 자리 수
     "dept_seats_moved": {          # 옮긴 사람과 그 까닭 (SEAT_MOVED_*)
@@ -148,7 +152,7 @@ response 201:
 ### 시간표 조회
 ```
 GET /api/v1/schedules/{schedule_id}
-GET /api/v1/schedules/{schedule_id}/heatmap   # 요일×시간 히트맵 JSON
+GET /api/v1/schedules/{schedule_id}/heatmap   # 날×시간 히트맵 JSON
 GET /api/v1/schedules/{schedule_id}/by-team   # 팀별 그룹핑
 ```
 
@@ -159,7 +163,7 @@ GET /api/v1/schedules/{schedule_id}/rules
 response 200:
 {
   "data": {
-    "rule1_grad_balance": {"score":60, "detail":{"월":0.45,"금":0.00}},
+    "rule1_grad_balance": {"score":60, "detail":{"1일차":0.45,"5일차":0.00}},
     ...
   }
 }
@@ -205,8 +209,8 @@ body: {"bands": {"IV101": "앞타임", "IV102": "뒤타임"}, "actor": "console"
 | `모든타임` | 하루 종일 |
 | `어려움` | 이번 회차는 못 들어간다 |
 
-**요일은 묻지 않는다.** 고른 덩어리는 면접 요일 어느 날에나 그대로 적용된다.
-예전 이름이 `둘 다` 였는데 "요일도 둘 다인가" 로 읽히는 일이 있어 `모든타임`
+**날은 묻지 않는다.** 고른 덩어리는 면접 기간 어느 날에나 그대로 적용된다.
+예전 이름이 `둘 다` 였는데 "날도 둘 다인가" 로 읽히는 일이 있어 `모든타임`
 으로 바꿨다 — 저장된 자료의 옛 이름은 `LEGACY_BANDS` 가 받아 준다.
 
 두 덩어리는 **12시 ~ 14시에서 일부러 겹친다**. 예전처럼 오전 · 오후로 갈라
@@ -232,8 +236,8 @@ body: {"bands": {"IV101": "앞타임", "IV102": "뒤타임"}, "actor": "console"
 여기에 목 데이터가 끼면 안 된다. `AvailabilitySource.fetch()` 는 03 이 죽어
 있거나 회신이 0건이면 `USE_MOCK=true` 일 때 목 면접관으로 폴백하는데, 그 값을
 교집합에 넣으면 **지어낸 시간과 실제 시간이 겹치는 칸만** 남는다. 목 IV101 은
-7 · 8타임만 되는 사람이라, 마스터에 `수 3~7타임` 이라고 적어 낸 분이 스케줄러
-안에서는 `수 7타임` 한 칸으로 쪼그라들었다. 그러면 부서 화면이 보고 보낸 자리가
+7 · 8타임만 되는 사람이라, 마스터에 `3~7타임` 이라고 적어 낸 분이 스케줄러
+안에서는 `7타임` 한 칸으로 쪼그라들었다. 그러면 부서 화면이 보고 보낸 자리가
 절반 넘게 "담당자 시간 밖" 이 되어 도로 옮겨진다 — 부서가 짠 시간표와 최종
 시간표가 서로 다른 물건이 되는 경로였다.
 
@@ -265,20 +269,20 @@ body: {"bands": {"IV101": "앞타임", "IV102": "뒤타임"}, "actor": "console"
 - 소프트 페널티 23점, 리더 90% 부하 문제
 
 **v4 (2단계 계층적, 규칙 준수 90%)**
-- Stage 1: 팀 × 요일 배정
-- Stage 1b: 요일별 학사/대학원 쿼터
+- Stage 1: 팀 × 날 배정
+- Stage 1b: 날별 학사/대학원 쿼터
 - Stage 2: 시간대 세부 최적화
 - 커버리지 68%로 하락
 
 **v5 (통합, 두 지표 모두 90% 목표)**
-- Stage 1 완화: 팀별 요일을 2~3개 허용
+- Stage 1 완화: 팀별 면접일을 2~3일 허용
 - Stage 3 (신규): Fallback 배치로 미배정자 흡수
 - 소프트 페널티 감수하며 커버리지 확보
 
 **Stage 0 — 부서가 잡아 둔 자리 (`seats_by_team` 을 줬을 때만)**
 
-Stage 1 로 팀별 요일을 정한 뒤, Stage 1b 로 넘어가기 전에 먼저 돈다. 부서가
-말한 n일차를 그 팀에 잡힌 요일 중 n 번째로 옮겨 읽고 그 칸에 앉힌다. 여기서
+Stage 1 로 팀별 면접일을 정한 뒤, Stage 1b 로 넘어가기 전에 먼저 돈다. 부서가
+말한 n일차를 그 팀에 잡힌 날 중 n 번째로 옮겨 읽고 그 칸에 앉힌다. 여기서
 앉은 사람은 `DEPT_SEAT` 사유가 붙고 뒤 단계는 건드리지 않는다.
 
 못 앉히면 **억지로 밀어 넣지 않는다** — 부서 결정을 시간표가 뒤집지 않는다는
@@ -293,7 +297,7 @@ Stage 1 로 팀별 요일을 정한 뒤, Stage 1b 로 넘어가기 전에 먼저
 | `SEAT_MOVED_CAP` | 담당자 하루 한도가 참 |
 | `SEAT_MOVED_BUSY` | 담당자가 그 시각에 다른 면접 중 |
 | `SEAT_MOVED_OWNER` | 그 자리 담당자를 못 찾음 (남의 팀 · 명단에 없음) |
-| `SEAT_MOVED_DAY` | 부서가 적은 일차가 이 팀 면접 요일 수보다 큼 |
+| `SEAT_MOVED_DAY` | 부서가 적은 일차가 이 팀 면접일 수보다 큼 |
 
 ### 시작할 때 도는 보정 — `rederive_bands`
 
@@ -307,9 +311,9 @@ Stage 1 로 팀별 요일을 정한 뒤, Stage 1b 로 넘어가기 전에 먼저
 ### 4대 규칙 준수율 계산
 ```python
 def rule_compliance(assignments, interviewers, applicants) -> dict:
-    # rule1: 요일별 대학원 비율 편차
+    # rule1: 날별 대학원 비율 편차
     # rule2: 팀 동시간 중복 개수
-    # rule3: 팀별 요일 내 슬롯 간격
+    # rule3: 팀별 하루 안 슬롯 간격
     # rule4: 첫 타임(1타임) 소규모 조 여부
     return {
         "rule1_grad_balance": ...,
@@ -346,7 +350,7 @@ scheduler/
 ### 테스트 요구사항
 - `test_algorithm_v1`: 88명 100% 배정, 하드 위반 0
 - `test_algorithm_v4`: 4대 규칙 90%, 세로 연속 100%
-- `test_rule1_grad`: 월요일 대학원 45% 상황에서 편차 감지
+- `test_rule1_grad`: 1일차 대학원 45% 상황에서 편차 감지
 - `test_lock_upgrade`: DRAFT → CONFIRMED → LOCKED 순만 가능
 - `test_hard_violation_zero`: 어떤 알고리즘도 하드 위반 발생 안 시킴
 

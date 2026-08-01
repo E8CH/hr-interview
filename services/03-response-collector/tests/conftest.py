@@ -134,9 +134,9 @@ def valid_payload():
     return {
         "job_role": "배터리 소재 연구",
         "available_slots": [
-            {"day": "화", "hour": HOURS[1]},
-            {"day": "화", "hour": HOURS[2]},
-            {"day": "수", "hour": HOURS[3]},
+            {"day": "2일차", "hour": HOURS[1]},
+            {"day": "2일차", "hour": HOURS[2]},
+            {"day": "3일차", "hour": HOURS[3]},
         ],
         "max_daily": 6,
         "backup_contact": "backup@lge.com",

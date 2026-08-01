@@ -25,7 +25,7 @@ def IV(iv_id="IV101", team="AI솔루션팀", max_daily=6, priority=2, availabili
     )
 
 
-def A(applicant_id, iv_id="IV101", team="AI솔루션팀", day="월", hour=H[0], degree="학사"):
+def A(applicant_id, iv_id="IV101", team="AI솔루션팀", day="1일차", hour=H[0], degree="학사"):
     return {
         "applicant_id": applicant_id,
         "interviewer_id": iv_id,
@@ -70,19 +70,19 @@ def test_detects_daily_limit_exceeded():
 
 
 def test_detects_availability_violation():
-    iv = IV(availability={"월": [H[3], H[4]]})
+    iv = IV(availability={"1일차": [H[3], H[4]]})
     violations = check_hard_constraints([A("1", hour=H[0])], [iv])
     assert "AVAILABILITY_VIOLATION" in _codes(violations)
 
 
 def test_detects_unavailable_day():
-    iv = IV(availability={"화": list(HOURS)})
-    violations = check_hard_constraints([A("1", day="월")], [iv])
+    iv = IV(availability={"2일차": list(HOURS)})
+    violations = check_hard_constraints([A("1", day="1일차")], [iv])
     assert "AVAILABILITY_VIOLATION" in _codes(violations)
 
 
 def test_detects_unknown_slot():
-    violations = check_hard_constraints([A("1", day="토", hour="20시")], [IV()])
+    violations = check_hard_constraints([A("1", day="8일차", hour="20시")], [IV()])
     assert "UNKNOWN_SLOT" in _codes(violations)
 
 
@@ -122,7 +122,7 @@ def test_ignoring_availability_is_not_a_violation():
     자리를 채우려고 '담당자 일정 무시하고 배치하기'를 켠 것이므로, 이걸
     규칙 위반으로 세면 인사가 스스로 고른 결과를 놓고 경고를 받게 된다.
     """
-    iv = IV(availability={"월": [H[3], H[4]]})
+    iv = IV(availability={"1일차": [H[3], H[4]]})
     assert check_hard_constraints([A("1", hour=H[0])], [iv], ignore_availability=True) == []
 
 
@@ -137,15 +137,16 @@ def test_ignoring_availability_still_catches_real_conflicts():
 
 def test_off_band_lists_who_to_call():
     """어긋난 자리는 위반이 아니어도 명단으로 남는다 — 개별 조율용."""
-    iv = IV(availability={"월": [H[3], H[4]]})
+    iv = IV(availability={"1일차": [H[3], H[4]]})
     rows = off_band([A("1", hour=H[0]), A("2", hour=H[3])], [iv])
     assert [r["applicant_id"] for r in rows] == ["1"]
     assert rows[0]["interviewer_id"] == "IV101" and rows[0]["hour"] == H[0]
 
 
-def test_off_band_flags_a_day_the_person_cannot_do():
-    rows = off_band([A("1", day="월")], [IV(availability={"화": list(HOURS)})])
-    assert len(rows) == 1 and "요일" in rows[0]["message"]
+def test_off_band_flags_a_day_with_no_slot_at_all():
+    """그날 칸이 하나도 없는 담당자에게 자리가 갔으면 명단에 남는다."""
+    rows = off_band([A("1", day="1일차")], [IV(availability={"2일차": list(HOURS)})])
+    assert len(rows) == 1 and "그날 맡을 수 있는 칸이 없음" in rows[0]["message"]
 
 
 def test_off_band_is_empty_when_everyone_fits():
@@ -153,7 +154,7 @@ def test_off_band_is_empty_when_everyone_fits():
 
 
 def test_validate_reports_off_band_when_ignoring():
-    iv = IV(availability={"월": [H[3]]})
+    iv = IV(availability={"1일차": [H[3]]})
     result = validate([A("1", hour=H[0])], [iv], ignore_availability=True)
     assert result["hard_violations"] == []
     assert len(result["off_band"]) == 1

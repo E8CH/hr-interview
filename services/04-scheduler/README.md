@@ -1,6 +1,6 @@
 # Service 04 — Scheduler
 
-면접 일정 배치 엔진. PPT 4대 규칙을 지키면서 지원자를 요일 × 시간대 × 면접관 슬롯에 배치한다.
+면접 일정 배치 엔진. PPT 4대 규칙을 지키면서 지원자를 날(1일차…) × 시간대 × 면접관 슬롯에 배치한다.
 
 - 포트: **8004** · DB 스키마: **sched_db**
 - BMAD 명세: `../../bmad/04_scheduler.md` · 공통 계약: `../../bmad/00_SHARED_CONTRACT.md`
@@ -26,16 +26,16 @@ pytest
 | | 전략 | 커버리지 | 규칙 준수(overall) |
 |---|---|---|---|
 | **v1** | 면접관 우선 · 최단 적합 그리디 | 100% | 83.3 |
-| **v4** | 2단계 계층적 (팀당 요일 2개) | 68.2% | 100 |
-| **v5** | v4 완화(요일 3개) + Stage 3 Fallback | 100% | 100 |
+| **v4** | 2단계 계층적 (팀당 면접일 2일) | 68.2% | 100 |
+| **v5** | v4 완화(면접일 3일) + Stage 3 Fallback | 100% | 100 |
 
 *지원자 88명 / 면접관 20명 기준 실측값. 세 알고리즘 모두 하드 위반 0건, 실행 1ms 미만.*
 
-- **v1** — 우선순위 상위(대학원·타겟랩) 지원자가 월요일에 몰려 규칙1이 무너진다. 비교 기준선.
-- **v4** — Stage 1(팀×요일) → Stage 1b(요일별 학사/대학원 쿼터) → Stage 2(연속 시간대 배치).
-  규칙은 완벽하지만 팀당 수용량이 2요일 × 8타임 = 16슬롯으로 제한돼 커버리지가 떨어진다.
-- **v5** — Stage 1을 3요일로 완화(팀당 18슬롯, 5팀 = 90 ≥ 88명)하고, 남는 인원은
-  Stage 3 Fallback이 세로 연속을 깨지 않고 요일 대학원 비율을 목표에 가깝게 유지하는 슬롯에 흡수한다.
+- **v1** — 우선순위 상위(대학원·타겟랩) 지원자가 1일차에 몰려 규칙1이 무너진다. 비교 기준선.
+- **v4** — Stage 1(팀×날) → Stage 1b(날별 학사/대학원 쿼터) → Stage 2(연속 시간대 배치).
+  규칙은 완벽하지만 팀당 수용량이 이틀 × 8타임 = 16슬롯으로 제한돼 커버리지가 떨어진다.
+- **v5** — Stage 1을 사흘로 완화(팀당 18슬롯, 5팀 = 90 ≥ 88명)하고, 남는 인원은
+  Stage 3 Fallback이 세로 연속을 깨지 않고 날별 대학원 비율을 목표에 가깝게 유지하는 슬롯에 흡수한다.
 
 ## 4대 규칙 점수 정의
 
@@ -43,9 +43,9 @@ pytest
 
 | 규칙 | 종류 | 점수 산식 |
 |---|---|---|
-| `rule1_grad_balance` | SOFT | 요일별 대학원 비율이 `target ± tolerance`(기본 30%±20%p) 안에 드는 요일의 비율 |
+| `rule1_grad_balance` | SOFT | 날별 대학원 비율이 `target ± tolerance`(기본 30%±20%p) 안에 드는 날의 비율 |
 | `rule2_team_conflict` | **HARD** | `100 × (1 − 같은 팀 동시간 중복 건수 / 전체 배정 수)` |
-| `rule3_vertical_group` | SOFT | (팀, 요일)별 사용 시간대가 연속인 그룹의 비율 — Webex 재입장 최소화 |
+| `rule3_vertical_group` | SOFT | (팀, 날)별 사용 시간대가 연속인 그룹의 비율 — Webex 재입장 최소화 |
 | `rule4_first_slot` | SOFT | 첫 타임(1타임) 동시 진행 건수가 그날의 다른 타임 이하인 비율. 점유 시간대가 2개 미만인 날은 평가 제외 |
 
 ## 하드 제약
@@ -68,7 +68,7 @@ pytest
 ```
 POST /api/v1/schedules/generate            # algorithm: v1 | v4_hierarchical | v5
 GET  /api/v1/schedules/{id}
-GET  /api/v1/schedules/{id}/heatmap        # 요일 × 시간 히트맵
+GET  /api/v1/schedules/{id}/heatmap        # 날 × 시간 히트맵
 GET  /api/v1/schedules/{id}/by-team        # 팀별 그룹핑
 GET  /api/v1/schedules/{id}/rules          # ?recompute=true 로 재계산
 POST /api/v1/schedules/{id}/validate       # 하드 위반 + 소프트 페널티

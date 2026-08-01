@@ -197,7 +197,7 @@ def test_by_team(client, generated):
     assert sum(data["counts"].values()) == generated["total_assigned"]
     for team, rows in data["teams"].items():
         assert all(r["day"] in DAYS for r in rows)
-        # 팀 내 (요일, 시간) 조합은 유일해야 한다 — 규칙2
+        # 팀 내 (날, 시간) 조합은 유일해야 한다 — 규칙2
         slots = [(r["day"], r["hour"]) for r in rows]
         assert len(slots) == len(set(slots)), team
 

@@ -26,7 +26,7 @@ from shared.contracts.constants import (
 router = APIRouter(tags=["form"])
 templates = Jinja2Templates(directory=str(SERVICE_ROOT / "app" / "templates"))
 
-#: 폼에서 고를 수 있는 것 — 요일은 묻지 않는다. 고른 덩어리가 모든 요일에 그대로 간다.
+#: 폼에서 고를 수 있는 것 — 어느 날인지는 묻지 않는다. 고른 덩어리가 모든 날에 그대로 간다.
 BAND_CHOICES = [BAND_ALL, BAND_FRONT, BAND_BACK]
 
 
@@ -40,7 +40,7 @@ def _bands(timing=None) -> list[dict]:
         out.append({
             "name": band,
             "hours": hours,
-            "help": f"{hours[0]} ~ {hours[-1]} · 하루 {len(hours)}칸 (요일은 가리지 않습니다)",
+            "help": f"{hours[0]} ~ {hours[-1]} · 하루 {len(hours)}칸 (날은 가리지 않습니다)",
         })
     return out
 

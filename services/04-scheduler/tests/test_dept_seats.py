@@ -1,7 +1,7 @@
 """부서가 잡아 준 자리를 최종 시간표가 물려받는다
 
 부서 화면(② 매칭 · ③ 우리 팀 시간표)에서 확인하고 보낸 자리가 최종 시간표의
-출발점이 되어야 한다. 예전에는 짝만 넘어가고 요일 · 시각은 여기서 처음부터
+출발점이 되어야 한다. 예전에는 짝만 넘어가고 날 · 시각은 여기서 처음부터
 새로 짜서, 부서가 보고 보낸 시간표와 최종본이 서로 다른 물건이었다.
 
 원칙은 둘이다.
@@ -47,28 +47,28 @@ def test_dept_seat_is_kept_as_sent():
     board = Board([_interviewer("IV_ALL")], pinned_by_team=_pairs(people, "IV_ALL"),
                   seats={TEAM: {"S01": (1, 4), "S02": (1, 2), "S03": (1, 0)}})
 
-    left = hierarchical.place_dept_seats(board, TEAM, ["수"], people)
+    left = hierarchical.place_dept_seats(board, TEAM, ["3일차"], people)
 
     assert left == []
     placed = {a.applicant_id: (a.day, a.hour) for a in board.assignments}
-    assert placed["S01"] == ("수", HOURS[4])
-    assert placed["S02"] == ("수", HOURS[2])
-    assert placed["S03"] == ("수", HOURS[0])
+    assert placed["S01"] == ("3일차", HOURS[4])
+    assert placed["S02"] == ("3일차", HOURS[2])
+    assert placed["S03"] == ("3일차", HOURS[0])
     for assignment in board.assignments:
         assert "DEPT_SEAT" in assignment.reason_tags
 
 
 def test_dept_day_number_follows_the_days_hr_picked():
-    """부서는 '몇 일차' 로만 세고, 어느 요일인지는 인사팀이 정한다."""
+    """부서는 '몇 번째 면접일' 로만 세고, 그게 며칟날인지는 인사팀이 정한다."""
     people = _people(2)
     board = Board([_interviewer("IV_ALL")], pinned_by_team=_pairs(people, "IV_ALL"),
                   seats={TEAM: {"S01": (1, 0), "S02": (2, 0)}})
 
-    assert hierarchical.place_dept_seats(board, TEAM, ["화", "목"], people) == []
+    assert hierarchical.place_dept_seats(board, TEAM, ["2일차", "4일차"], people) == []
 
     placed = {a.applicant_id: a.day for a in board.assignments}
-    assert placed["S01"] == "화"      # 1일차 → 그 팀의 첫 면접 요일
-    assert placed["S02"] == "목"      # 2일차 → 두 번째 면접 요일
+    assert placed["S01"] == "2일차"      # 부서가 센 1일차 → 그 팀의 첫 면접일
+    assert placed["S02"] == "4일차"      # 부서가 센 2일차 → 그 팀의 두 번째 면접일
 
 
 # ------------------------------------------------------- 못 지킬 때 까닭을 남기는가
@@ -80,7 +80,7 @@ def test_seat_outside_interviewer_hours_moves_and_says_why():
                   pinned_by_team=_pairs(people, "IV_BACK"),
                   seats={TEAM: {"S01": (1, 0)}})   # 첫 칸 = 뒤타임 밖
 
-    left = hierarchical.place_dept_seats(board, TEAM, ["월"], people)
+    left = hierarchical.place_dept_seats(board, TEAM, ["1일차"], people)
 
     assert left == []                                    # 여기서 앉혔다
     assert board.seat_miss["S01"] == "SEAT_MOVED_BAND"
@@ -98,7 +98,7 @@ def test_seat_already_taken_says_so():
     board = Board([_interviewer("IV_ALL")], pinned_by_team=_pairs(people, "IV_ALL"),
                   seats={TEAM: {"S01": (1, 3), "S02": (1, 3)}})
 
-    left = hierarchical.place_dept_seats(board, TEAM, ["월"], people)
+    left = hierarchical.place_dept_seats(board, TEAM, ["1일차"], people)
 
     assert left == []
     assert board.seat_miss["S02"] == "SEAT_MOVED_TAKEN"
@@ -117,7 +117,7 @@ def test_seat_over_the_daily_cap_says_so():
     board = Board([tight], pinned_by_team=_pairs(people, "IV_CAP"),
                   seats={TEAM: {"S01": (1, 0), "S02": (1, 2), "S03": (1, 4)}})
 
-    left = hierarchical.place_dept_seats(board, TEAM, ["월"], people)
+    left = hierarchical.place_dept_seats(board, TEAM, ["1일차"], people)
 
     assert [a.applicant_id for a in left] == ["S03"]
     assert board.seat_miss["S03"] == "SEAT_MOVED_CAP"
@@ -129,12 +129,12 @@ def test_day_beyond_the_teams_interview_days_moves():
     board = Board([_interviewer("IV_ALL")], pinned_by_team=_pairs(people, "IV_ALL"),
                   seats={TEAM: {"S01": (4, 0)}})
 
-    left = hierarchical.place_dept_seats(board, TEAM, ["월", "화"], people)
+    left = hierarchical.place_dept_seats(board, TEAM, ["1일차", "2일차"], people)
 
     assert left == []
     assert board.seat_miss["S01"] == "SEAT_MOVED_DAY"
     moved = board.assignments[0]
-    assert (moved.day, moved.hour) == ("화", HOURS[0])   # 4일차에 가장 가까운 날
+    assert (moved.day, moved.hour) == ("2일차", HOURS[0])   # 4일차에 가장 가까운 날
     assert "SEAT_MOVED_DAY" in moved.reason_tags
 
 

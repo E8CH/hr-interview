@@ -98,9 +98,9 @@ def test_every_seed_template_renders(spec):
         "name": "홍길동",
         "deadline": "2026-07-31 18:00",
         "form_link": "https://hr.lge.com/form/x",
-        "day": "화",
+        "day": "2일차",
         "hour": "10시",
-        "new_slot": "수 14시",
+        "new_slot": "3일차 14시",
     }
     renderer = TemplateRenderer()
     subject, body = renderer.render(

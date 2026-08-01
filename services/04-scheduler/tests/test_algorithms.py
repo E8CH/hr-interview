@@ -30,7 +30,7 @@ def test_algorithm_v1_full_coverage_no_hard_violation(applicants, interviewers):
 
 
 def test_algorithm_v1_shows_grad_imbalance_tradeoff(applicants, interviewers):
-    """v1은 커버리지를 얻는 대신 규칙1(요일 분산)이 무너진다 — v4/v5의 존재 이유"""
+    """v1은 커버리지를 얻는 대신 규칙1(날 분산)이 무너진다 — v4/v5의 존재 이유"""
     plan = algorithm_v1.run(applicants, interviewers)
     report = rule_compliance(plan.assignments, interviewers, applicants)
 
@@ -50,9 +50,9 @@ def test_algorithm_v4_rule_compliance_and_vertical_group(applicants, interviewer
 
 
 def test_algorithm_v4_trades_coverage(applicants, interviewers):
-    """팀당 요일 2개 제한 → 커버리지가 100%에 못 미친다.
+    """팀당 면접일 2일 제한 → 커버리지가 100%에 못 미친다.
 
-    2요일 × 8타임 = 16슬롯, 5팀이면 80석인데 지원자는 88명이다.
+    이틀 × 8타임 = 16슬롯, 5팀이면 80석인데 지원자는 88명이다.
     """
     plan = algorithm_v4.run(applicants, interviewers)
     coverage = _coverage(plan, applicants)
@@ -109,7 +109,7 @@ def test_no_duplicate_applicant(algorithm, applicants, interviewers):
 
 
 def _interviewer_blocks(assignments) -> list[tuple[str, str, str, list[int]]]:
-    """(면접관, 요일)별로 맡은 시간을 시간표 순서 번호로 편다.
+    """(면접관, 날)별로 맡은 시간을 시간표 순서 번호로 편다.
 
     점심 시간을 따로 두지 않으므로 하루는 1타임~8타임 한 덩어리다.
     """
@@ -138,9 +138,9 @@ def test_interviewer_slots_are_back_to_back(algorithm, applicants, interviewers)
 
 
 def test_stage3_fallback_absorbs_overflow(interviewers):
-    """한 팀이 3요일 수용량(3 × 8 = 24)을 넘기면 Stage 3가 남은 요일로 흡수한다"""
+    """한 팀이 사흘 수용량(3 × 8 = 24)을 넘기면 Stage 3가 남은 날로 흡수한다"""
     team = "AI솔루션팀"
-    over_capacity = 3 * len(HOURS) + 4  # 28명 — 3요일로는 4명이 남는다
+    over_capacity = 3 * len(HOURS) + 4  # 28명 — 사흘로는 4명이 남는다
     overflow = [
         ApplicantIn(
             applicant_id=f"OV{i:03d}",
@@ -163,7 +163,7 @@ def test_stage3_fallback_absorbs_overflow(interviewers):
 
 
 def test_capacity_limit_leaves_unassigned(interviewers):
-    """팀 수용량(5요일 × 8타임 = 40)을 넘으면 남는 지원자가 생긴다"""
+    """팀 수용량(닷새 × 8타임 = 40)을 넘으면 남는 지원자가 생긴다"""
     team = "전극기술팀"
     capacity = len(DAYS) * len(HOURS)
     crowd = [

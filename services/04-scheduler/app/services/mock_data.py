@@ -7,9 +7,9 @@ Service 02(지원자 명단) / Service 03(면접관 가용성)을 대체한다.
 --------------
 - 지원자 88명 / 5팀 → 팀당 17~18명, 대학원 비율 29.5% (규칙1 목표 30%에 근접)
 - 규칙2(같은 팀 동시간 중복 금지)가 HARD이므로 팀별 동시 진행은 1건 →
-  팀당 수용량 = 5요일 × 8타임 = 40슬롯, 전체 200슬롯 ≫ 88명
-- v4는 팀당 요일 2개(16슬롯 × 5팀 = 80)로 제한 → 88명을 다 못 앉힌다
-- v5는 팀당 요일 3개(24슬롯 × 5팀 = 120) + Fallback → 커버리지 90%+
+  팀당 수용량 = 5일 × 8타임 = 40슬롯, 전체 200슬롯 ≫ 88명
+- v4는 팀당 2일(16슬롯 × 5팀 = 80)로 제한 → 88명을 다 못 앉힌다
+- v5는 팀당 3일(24슬롯 × 5팀 = 120) + Fallback → 커버리지 90%+
 """
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ def build_applicants(round_id: str = "R2026-Q3-01", plan_id: str = "mock-plan") 
 def build_interviewers() -> list[InterviewerIn]:
     """팀당 4명(리더 1 + 실무 3).
 
-    가능 시간은 덩어리(앞타임 · 뒤타임 · 모든타임)로만 준다. **휴무 요일은
+    가능 시간은 덩어리(앞타임 · 뒤타임 · 모든타임)로만 준다. **못 나오는 날은
     두지 않는다** — 우리 모델에 담당자 가능 요일이라는 것이 없어서다. 리더만
     뒤타임으로 두어 부하가 한쪽으로 몰리는지 볼 수 있게 하고, 실무진은
     모든타임이라 가용성 때문에 칸이 막히는 일이 없다.
@@ -98,7 +98,7 @@ def build_interviewers() -> list[InterviewerIn]:
     full = {day: list(HOURS) for day in DAYS}
 
     for t_idx, team in enumerate(TEAMS, start=1):
-        # 리더: 뒤타임만 (부하 집중 방지) — 요일은 가리지 않는다
+        # 리더: 뒤타임만 (부하 집중 방지) — 날은 가리지 않는다
         interviewers.append(
             InterviewerIn(
                 interviewer_id=f"IV{t_idx}01",

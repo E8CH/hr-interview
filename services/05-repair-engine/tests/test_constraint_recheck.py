@@ -21,63 +21,63 @@ def _a(aid, ap, iv, day, hour, team, lock="DRAFT"):
 
 
 def test_no_violation_on_clean_schedule():
-    rows = [_a("1", "P1", "IV001", "월", "09시", "AI솔루션팀"),
-            _a("2", "P2", "IV003", "월", "09시", "미래혁신팀")]
+    rows = [_a("1", "P1", "IV001", "1일차", "09시", "AI솔루션팀"),
+            _a("2", "P2", "IV003", "1일차", "09시", "미래혁신팀")]
     assert check_hard_constraints(rows, IVS) == []
 
 
 def test_rule2_same_team_same_slot_detected():
     """규칙2(HARD): 같은 팀 동시간 중복"""
-    rows = [_a("1", "P1", "IV001", "월", "09시", "AI솔루션팀"),
-            _a("2", "P2", "IV002", "월", "09시", "AI솔루션팀")]
+    rows = [_a("1", "P1", "IV001", "1일차", "09시", "AI솔루션팀"),
+            _a("2", "P2", "IV002", "1일차", "09시", "AI솔루션팀")]
     violations = check_hard_constraints(rows, IVS)
     assert [v.rule for v in violations] == ["RULE2_TEAM_CONFLICT"]
     assert violations[0].severity == "HARD"
 
 
 def test_interviewer_double_booking_detected():
-    rows = [_a("1", "P1", "IV003", "화", "10시", "미래혁신팀"),
-            _a("2", "P2", "IV003", "화", "10시", "미래혁신팀")]
+    rows = [_a("1", "P1", "IV003", "2일차", "10시", "미래혁신팀"),
+            _a("2", "P2", "IV003", "2일차", "10시", "미래혁신팀")]
     rules = {v.rule for v in check_hard_constraints(rows, IVS)}
     assert "H2_INTERVIEWER_DOUBLE_BOOK" in rules
 
 
 def test_applicant_double_booking_detected():
-    rows = [_a("1", "P1", "IV001", "수", "11시", "AI솔루션팀"),
-            _a("2", "P1", "IV003", "수", "11시", "미래혁신팀")]
+    rows = [_a("1", "P1", "IV001", "3일차", "11시", "AI솔루션팀"),
+            _a("2", "P1", "IV003", "3일차", "11시", "미래혁신팀")]
     rules = {v.rule for v in check_hard_constraints(rows, IVS)}
     assert "H3_APPLICANT_DOUBLE_BOOK" in rules
 
 
 def test_max_daily_exceeded_detected():
-    rows = [_a("1", "P1", "IV001", "목", "09시", "AI솔루션팀"),
-            _a("2", "P2", "IV001", "목", "10시", "AI솔루션팀"),
-            _a("3", "P3", "IV001", "목", "11시", "AI솔루션팀")]
+    rows = [_a("1", "P1", "IV001", "4일차", "09시", "AI솔루션팀"),
+            _a("2", "P2", "IV001", "4일차", "10시", "AI솔루션팀"),
+            _a("3", "P3", "IV001", "4일차", "11시", "AI솔루션팀")]
     rules = {v.rule for v in check_hard_constraints(rows, IVS)}
     assert "H4_MAX_DAILY_EXCEEDED" in rules   # max_daily=2 인데 3건
 
 
 def test_index_blocks_team_conflict():
-    idx = ConstraintIndex.build([_a("1", "P1", "IV001", "월", "09시", "AI솔루션팀")], IVS)
-    assert not idx.is_safe("P9", "월", "09시", "IV002", "AI솔루션팀")
-    assert "H1_TEAM_CONFLICT" in idx.blocking_reasons("P9", "월", "09시", "IV002", "AI솔루션팀")
-    assert idx.is_safe("P9", "월", "10시", "IV002", "AI솔루션팀")
+    idx = ConstraintIndex.build([_a("1", "P1", "IV001", "1일차", "09시", "AI솔루션팀")], IVS)
+    assert not idx.is_safe("P9", "1일차", "09시", "IV002", "AI솔루션팀")
+    assert "H1_TEAM_CONFLICT" in idx.blocking_reasons("P9", "1일차", "09시", "IV002", "AI솔루션팀")
+    assert idx.is_safe("P9", "1일차", "10시", "IV002", "AI솔루션팀")
 
 
 def test_index_blocks_max_daily():
-    rows = [_a("1", "P1", "IV001", "월", "09시", "AI솔루션팀"),
-            _a("2", "P2", "IV001", "월", "10시", "AI솔루션팀")]
+    rows = [_a("1", "P1", "IV001", "1일차", "09시", "AI솔루션팀"),
+            _a("2", "P2", "IV001", "1일차", "10시", "AI솔루션팀")]
     idx = ConstraintIndex.build(rows, IVS)
     assert "H4_MAX_DAILY_EXCEEDED" in idx.blocking_reasons(
-        "P9", "월", "11시", "IV001", "AI솔루션팀")
+        "P9", "1일차", "11시", "IV001", "AI솔루션팀")
 
 
 def test_index_add_remove_symmetry():
-    row = _a("1", "P1", "IV001", "월", "09시", "AI솔루션팀")
+    row = _a("1", "P1", "IV001", "1일차", "09시", "AI솔루션팀")
     idx = ConstraintIndex.build([row], IVS)
-    assert not idx.is_safe("P9", "월", "09시", "IV002", "AI솔루션팀")
+    assert not idx.is_safe("P9", "1일차", "09시", "IV002", "AI솔루션팀")
     idx.remove(row)
-    assert idx.is_safe("P9", "월", "09시", "IV002", "AI솔루션팀")
+    assert idx.is_safe("P9", "1일차", "09시", "IV002", "AI솔루션팀")
 
 
 def test_soft_penalty_is_non_negative(snapshot):
@@ -92,10 +92,10 @@ def test_soft_penalty_is_non_negative(snapshot):
 
 
 def test_grad_balance_penalty_triggers_on_skew(snapshot):
-    """한 요일을 대학원생으로만 채우면 규칙1 페널티가 올라간다"""
+    """하루를 대학원생으로만 채우면 규칙1 페널티가 올라간다"""
     ap_map = snapshot.applicant_map()
     for a in snapshot.assignments:
-        if a.day == "월":
+        if a.day == "1일차":
             ap_map[a.applicant_id].degree_type = "대학원"
     breakdown = soft_penalty_breakdown(snapshot.assignments, snapshot.interviewers,
                                        list(ap_map.values()))

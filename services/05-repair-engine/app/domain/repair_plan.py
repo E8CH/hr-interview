@@ -17,7 +17,7 @@ PLAN_DESCRIPTIONS: dict[str, str] = {
 
 
 class SlotRef(BaseModel):
-    """면접 슬롯 좌표 (요일 × 시간 × 면접위원)"""
+    """면접 슬롯 좌표 (날 × 시간 × 면접위원)"""
     day: str
     hour: str
     interviewer_id: str

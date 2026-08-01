@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from typing import Any, Iterable
 
-from app.infrastructure.contracts import DAYS, HOURS
+from app.infrastructure.contracts import DAYS, HOURS, day_name
 from app.services.board import MAX_SLOTS_PER_DAY
 from app.services.rule_evaluator import _get
 
@@ -32,7 +32,8 @@ def _row(index: int, item: Any) -> dict:
         "applicant_name": _get(item, "applicant_name", "") or "",
         "team": _get(item, "team"),
         "interviewer_id": _get(item, "interviewer_id"),
-        "day": _get(item, "day"),
+        # 옛 회차는 날이 요일('월')로 저장돼 있다 — 읽을 때 일차로 맞춘다
+        "day": day_name(_get(item, "day")),
         "hour": _get(item, "hour"),
         "lock_level": _get(item, "lock_level", "DRAFT") or "DRAFT",
     }
@@ -132,13 +133,14 @@ class _Space:
 
 
 def _team_days(days_by_team: dict | None, team: str) -> list[str]:
-    """그 팀이 면접을 보기로 한 요일 — 모르면 닷새 전부."""
-    days = [d for d in ((days_by_team or {}).get(team) or []) if d in DAYS]
+    """그 팀이 면접을 보기로 한 날 — 모르면 닷새 전부."""
+    given = [day_name(d) for d in ((days_by_team or {}).get(team) or [])]
+    days = [d for d in given if d in DAYS]
     return days or list(DAYS)
 
 
 def _nearest(space: _Space, row: dict, days: list[str]) -> tuple[str, str] | None:
-    """지금 자리에서 가장 가까운 빈 칸 — 그 팀 면접 요일 안에서만 찾는다."""
+    """지금 자리에서 가장 가까운 빈 칸 — 그 팀 면접일 안에서만 찾는다."""
     here_day = DAYS.index(row["day"]) if row["day"] in DAYS else 0
     here_hour = HOURS.index(row["hour"]) if row["hour"] in HOURS else 0
     open_slots = [

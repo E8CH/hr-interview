@@ -7,10 +7,10 @@ from shared.contracts.constants import (BAND_ALL, BAND_BACK, BAND_FRONT, DAYS,
 
 
 def test_form_offers_bands_and_never_a_day(client, first_invitee):
-    """폼은 시간 덩어리 셋만 묻는다 — 요일을 고르게 하지 않는다.
+    """폼은 시간 덩어리 셋만 묻는다 — 날을 고르게 하지 않는다.
 
-    예전에는 요일 × 칸 격자를 그렸는데, 우리 계산에는 담당자 가능 요일이라는
-    것이 없어서 거기 찍힌 요일이 아무 뜻 없이 자리만 막았다.
+    예전에는 날 × 칸 격자를 그렸는데, 우리 계산에는 담당자 가능 날이라는
+    것이 없어서 거기 찍힌 날이 아무 뜻 없이 자리만 막았다.
     """
     resp = client.get(f"/form/{first_invitee.token}")
     assert resp.status_code == 200
@@ -22,7 +22,7 @@ def test_form_offers_bands_and_never_a_day(client, first_invitee):
     for band in (BAND_ALL, BAND_FRONT, BAND_BACK):
         assert f'data-band="{band}"' in html
         assert f'data-hours="{",".join(band_hours(band))}"' in html
-    assert "data-day=" not in html          # 요일을 고르는 자리가 없다
+    assert "data-day=" not in html          # 날을 고르는 자리가 없다
     assert "data-hour=" not in html         # 칸 하나하나를 고르는 자리도 없다
 
 
@@ -96,9 +96,9 @@ def test_duplicate_submission_rejected(client, first_invitee, valid_payload):
     "payload,expected_code",
     [
         ({"job_role": "직무", "available_slots": []}, 422),
-        ({"available_slots": [{"day": "화", "hour": HOURS[1]}]}, 422),
-        ({"job_role": "직무", "available_slots": [{"day": "토", "hour": HOURS[1]}]}, 422),
-        ({"job_role": "직무", "available_slots": [{"day": "화", "hour": "13시"}]}, 422),
+        ({"available_slots": [{"day": "2일차", "hour": HOURS[1]}]}, 422),
+        ({"job_role": "직무", "available_slots": [{"day": "8일차", "hour": HOURS[1]}]}, 422),
+        ({"job_role": "직무", "available_slots": [{"day": "2일차", "hour": "13시"}]}, 422),
     ],
 )
 def test_invalid_submission_rejected(client, first_invitee, payload, expected_code):

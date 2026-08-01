@@ -38,8 +38,8 @@ CREW = [_iv("IV_가", "가팀"), _iv("IV_나", "나팀")]
 
 def test_same_person_same_time_in_two_teams_is_a_conflict():
     rows = [
-        _row("A01", "가팀", "IV_가", "화", HOURS[2]),
-        _row("A01", "나팀", "IV_나", "화", HOURS[2]),
+        _row("A01", "가팀", "IV_가", "2일차", HOURS[2]),
+        _row("A01", "나팀", "IV_나", "2일차", HOURS[2]),
     ]
 
     found = duplicate_fix.conflicts(rows)
@@ -52,8 +52,8 @@ def test_same_person_same_time_in_two_teams_is_a_conflict():
 def test_two_interviews_at_different_times_are_fine():
     """같이 보는 사람 자체는 정상이다 — 시각만 다르면 된다."""
     rows = [
-        _row("A01", "가팀", "IV_가", "화", HOURS[2]),
-        _row("A01", "나팀", "IV_나", "화", HOURS[5]),
+        _row("A01", "가팀", "IV_가", "2일차", HOURS[2]),
+        _row("A01", "나팀", "IV_나", "2일차", HOURS[5]),
     ]
 
     assert duplicate_fix.conflicts(rows) == []
@@ -61,8 +61,8 @@ def test_two_interviews_at_different_times_are_fine():
 
 def test_different_people_at_the_same_time_are_fine():
     rows = [
-        _row("A01", "가팀", "IV_가", "화", HOURS[2]),
-        _row("A02", "나팀", "IV_나", "화", HOURS[2]),
+        _row("A01", "가팀", "IV_가", "2일차", HOURS[2]),
+        _row("A02", "나팀", "IV_나", "2일차", HOURS[2]),
     ]
 
     assert duplicate_fix.conflicts(rows) == []
@@ -73,10 +73,10 @@ def test_different_people_at_the_same_time_are_fine():
 def test_only_the_clashing_person_moves():
     """겹치지 않은 사람의 자리는 손대지 않는다."""
     rows = [
-        _row("A01", "가팀", "IV_가", "화", HOURS[2]),
-        _row("A01", "나팀", "IV_나", "화", HOURS[2]),
-        _row("A02", "가팀", "IV_가", "화", HOURS[0]),
-        _row("A03", "나팀", "IV_나", "화", HOURS[1]),
+        _row("A01", "가팀", "IV_가", "2일차", HOURS[2]),
+        _row("A01", "나팀", "IV_나", "2일차", HOURS[2]),
+        _row("A02", "가팀", "IV_가", "2일차", HOURS[0]),
+        _row("A03", "나팀", "IV_나", "2일차", HOURS[1]),
     ]
 
     moved, stuck = duplicate_fix.plan_fix(rows, CREW)
@@ -89,28 +89,28 @@ def test_only_the_clashing_person_moves():
 def test_the_moved_seat_keeps_its_team_and_interviewer():
     """시각만 바꾼다 — 부서가 정한 팀 · 담당자는 그대로."""
     rows = [
-        _row("A01", "가팀", "IV_가", "화", HOURS[2]),
-        _row("A01", "나팀", "IV_나", "화", HOURS[2]),
+        _row("A01", "가팀", "IV_가", "2일차", HOURS[2]),
+        _row("A01", "나팀", "IV_나", "2일차", HOURS[2]),
     ]
 
     moved, _ = duplicate_fix.plan_fix(rows, CREW)
 
     assert moved[0]["interviewer_id"] == "IV_나"
     assert moved[0]["team"] == "나팀"
-    assert (moved[0]["day"], moved[0]["hour"]) != ("화", HOURS[2])
+    assert (moved[0]["day"], moved[0]["hour"]) != ("2일차", HOURS[2])
 
 
 def test_fixing_actually_clears_the_conflict():
     rows = [
-        _row("A01", "가팀", "IV_가", "화", HOURS[2]),
-        _row("A01", "나팀", "IV_나", "화", HOURS[2]),
+        _row("A01", "가팀", "IV_가", "2일차", HOURS[2]),
+        _row("A01", "나팀", "IV_나", "2일차", HOURS[2]),
     ]
 
     duplicate_fix.plan_fix(rows, CREW)     # rows 는 계획대로 손질된 사본을 만든다
 
     fixed = [
-        _row("A01", "가팀", "IV_가", "화", HOURS[2]),
-        _row("A01", "나팀", "IV_나", "화", HOURS[3]),
+        _row("A01", "가팀", "IV_가", "2일차", HOURS[2]),
+        _row("A01", "나팀", "IV_나", "2일차", HOURS[3]),
     ]
     assert duplicate_fix.conflicts(fixed) == []
 
@@ -118,13 +118,13 @@ def test_fixing_actually_clears_the_conflict():
 def test_it_moves_to_the_nearest_open_slot():
     """멀리 던지지 않고 바로 옆 칸으로 옮긴다."""
     rows = [
-        _row("A01", "가팀", "IV_가", "화", HOURS[4]),
-        _row("A01", "나팀", "IV_나", "화", HOURS[4]),
+        _row("A01", "가팀", "IV_가", "2일차", HOURS[4]),
+        _row("A01", "나팀", "IV_나", "2일차", HOURS[4]),
     ]
 
     moved, _ = duplicate_fix.plan_fix(rows, CREW)
 
-    assert moved[0]["day"] == "화"
+    assert moved[0]["day"] == "2일차"
     assert abs(HOURS.index(moved[0]["hour"]) - 4) == 1
 
 
@@ -135,8 +135,8 @@ def test_it_does_not_move_outside_the_interviewer_hours():
     front = band_hours("앞타임")
     crew = [_iv("IV_가", "가팀"), _iv("IV_나", "나팀", hours=front)]
     rows = [
-        _row("A01", "가팀", "IV_가", "화", front[0]),
-        _row("A01", "나팀", "IV_나", "화", front[0]),
+        _row("A01", "가팀", "IV_가", "2일차", front[0]),
+        _row("A01", "나팀", "IV_나", "2일차", front[0]),
     ]
 
     moved, _ = duplicate_fix.plan_fix(rows, crew)
@@ -145,51 +145,51 @@ def test_it_does_not_move_outside_the_interviewer_hours():
 
 
 def test_a_day_at_the_daily_cap_is_not_offered():
-    """하루 한도가 찬 요일은 옮길 곳으로 치지 않는다."""
+    """하루 한도가 찬 날은 옮길 곳으로 치지 않는다."""
     crew = [_iv("IV_나", "나팀", max_daily=1)]
-    space = duplicate_fix._Space([_row("A09", "나팀", "IV_나", "화", HOURS[3])], crew)
-    row = _row("A01", "나팀", "IV_나", "수", HOURS[0])
+    space = duplicate_fix._Space([_row("A09", "나팀", "IV_나", "2일차", HOURS[3])], crew)
+    row = _row("A01", "나팀", "IV_나", "3일차", HOURS[0])
 
-    assert space.why_not(row, "화", HOURS[6]) == "IV_CAP"
-    assert space.why_not(row, "수", HOURS[6]) is None
+    assert space.why_not(row, "2일차", HOURS[6]) == "IV_CAP"
+    assert space.why_not(row, "3일차", HOURS[6]) is None
 
 
 def test_a_full_day_pushes_the_move_to_the_next_interview_day():
-    """제 요일이 꽉 찼으면 그 팀의 다음 면접 요일로 넘어간다."""
+    """제 날이 꽉 찼으면 그 팀의 다음 면접일로 넘어간다."""
     crew = [_iv("IV_가", "가팀"), _iv("IV_나", "나팀")]
-    rows = [_row("A01", "가팀", "IV_가", "화", HOURS[2])]
-    # 나팀 화요일은 여덟 칸이 모두 찼다 — 그중 한 칸이 겹친 자리다
-    rows += [_row(f"B{i:02d}" if i != 2 else "A01", "나팀", "IV_나", "화", HOURS[i])
+    rows = [_row("A01", "가팀", "IV_가", "2일차", HOURS[2])]
+    # 나팀 2일차는 여덟 칸이 모두 찼다 — 그중 한 칸이 겹친 자리다
+    rows += [_row(f"B{i:02d}" if i != 2 else "A01", "나팀", "IV_나", "2일차", HOURS[i])
              for i in range(len(HOURS))]
 
-    moved, stuck = duplicate_fix.plan_fix(rows, crew, days_by_team={"나팀": ["화", "목"]})
+    moved, stuck = duplicate_fix.plan_fix(rows, crew, days_by_team={"나팀": ["2일차", "4일차"]})
 
     assert stuck == []
     assert [m["applicant_id"] for m in moved] == ["A01"]
-    assert moved[0]["day"] == "목"
+    assert moved[0]["day"] == "4일차"
 
 
 def test_it_stays_inside_the_teams_interview_days():
-    """그 팀이 안 보는 요일로는 넘어가지 않는다."""
+    """그 팀이 안 보는 날로는 넘어가지 않는다."""
     rows = [
-        _row("A01", "가팀", "IV_가", "화", HOURS[2]),
-        _row("A01", "나팀", "IV_나", "화", HOURS[2]),
+        _row("A01", "가팀", "IV_가", "2일차", HOURS[2]),
+        _row("A01", "나팀", "IV_나", "2일차", HOURS[2]),
     ]
 
-    moved, _ = duplicate_fix.plan_fix(rows, CREW, days_by_team={"나팀": ["화", "목"]})
+    moved, _ = duplicate_fix.plan_fix(rows, CREW, days_by_team={"나팀": ["2일차", "4일차"]})
 
-    assert moved[0]["day"] in ("화", "목")
+    assert moved[0]["day"] in ("2일차", "4일차")
 
 
 def test_no_room_is_reported_not_silently_left():
     """옮길 칸이 없으면 그렇다고 말한다 — 조용히 겹친 채로 두지 않는다."""
     crew = [_iv("IV_가", "가팀"), _iv("IV_나", "나팀", hours=[HOURS[2]])]
     rows = [
-        _row("A01", "가팀", "IV_가", "화", HOURS[2]),
-        _row("A01", "나팀", "IV_나", "화", HOURS[2]),
+        _row("A01", "가팀", "IV_가", "2일차", HOURS[2]),
+        _row("A01", "나팀", "IV_나", "2일차", HOURS[2]),
     ]
 
-    moved, stuck = duplicate_fix.plan_fix(rows, crew, days_by_team={"나팀": ["화"]})
+    moved, stuck = duplicate_fix.plan_fix(rows, crew, days_by_team={"나팀": ["2일차"]})
 
     assert moved == []
     assert [s["reason"] for s in stuck] == ["NO_ROOM"]
@@ -201,8 +201,8 @@ def test_no_room_is_reported_not_silently_left():
 def test_a_locked_seat_is_never_moved():
     """확정해 둔 자리는 그대로 두고 다른 쪽을 옮긴다."""
     rows = [
-        _row("A01", "가팀", "IV_가", "화", HOURS[2]),
-        _row("A01", "나팀", "IV_나", "화", HOURS[2], lock_level="LOCKED"),
+        _row("A01", "가팀", "IV_가", "2일차", HOURS[2]),
+        _row("A01", "나팀", "IV_나", "2일차", HOURS[2], lock_level="LOCKED"),
     ]
 
     moved, stuck = duplicate_fix.plan_fix(rows, CREW)
@@ -213,8 +213,8 @@ def test_a_locked_seat_is_never_moved():
 
 def test_both_locked_says_it_cannot_be_fixed():
     rows = [
-        _row("A01", "가팀", "IV_가", "화", HOURS[2], lock_level="LOCKED"),
-        _row("A01", "나팀", "IV_나", "화", HOURS[2], lock_level="LOCKED"),
+        _row("A01", "가팀", "IV_가", "2일차", HOURS[2], lock_level="LOCKED"),
+        _row("A01", "나팀", "IV_나", "2일차", HOURS[2], lock_level="LOCKED"),
     ]
 
     moved, stuck = duplicate_fix.plan_fix(rows, CREW)
@@ -228,8 +228,8 @@ def test_both_locked_says_it_cannot_be_fixed():
 def test_a_clean_schedule_is_left_alone():
     """겹친 데가 없으면 아무것도 옮기지 않는다."""
     rows = [
-        _row("A01", "가팀", "IV_가", "화", HOURS[0]),
-        _row("A02", "나팀", "IV_나", "화", HOURS[1]),
+        _row("A01", "가팀", "IV_가", "2일차", HOURS[0]),
+        _row("A02", "나팀", "IV_나", "2일차", HOURS[1]),
     ]
 
     assert duplicate_fix.plan_fix(rows, CREW) == ([], [])

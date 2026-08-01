@@ -51,7 +51,7 @@ def test_old_morning_only_row_is_widened(db):
     # 지금의 앞타임은 14시까지 — 기본 진행 조건에서는 하루 여덟 칸 전부다
     assert widened == {day: list(band_hours(BAND_FRONT)) for day in DAYS}
     # 정오 언저리 칸이 되살아났는지가 이 보정의 목적이다
-    assert HOURS[5] in widened["월"]
+    assert HOURS[5] in widened["1일차"]
 
 
 def test_daily_cap_is_never_touched(db):

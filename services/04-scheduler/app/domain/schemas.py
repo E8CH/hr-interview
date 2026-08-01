@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.infrastructure.contracts import DAYS, HOURS
+from app.infrastructure.contracts import HOURS
 
 LOCK_ORDER = ["DRAFT", "CONFIRMED", "LOCKED"]
 
@@ -72,8 +72,8 @@ class PlanResult:
 class DeptSeat(BaseModel):
     """부서 시간표에서의 자리 — 며칠째(1부터) 몇 번째 칸(0부터).
 
-    부서 화면은 요일 이름을 모르고 하루 몇 칸씩 끊어 세기만 한다. 요일은
-    인사팀이 정하므로 여기서는 일차로만 주고받는다.
+    부서 화면은 하루 몇 칸씩 끊어 세기만 한다. 그 일차가 이 팀 면접일 중
+    몇째 날인지는 인사팀이 정하므로 여기서는 일차 번호로만 주고받는다.
     """
     day: int = Field(ge=1)
     slot: int = Field(ge=0)
@@ -96,9 +96,9 @@ class GenerateConstraints(BaseModel):
     # 부서가 자기 시간표에서 잡아 둔 자리 {팀: {지원자: 자리}}. 최종 시간표는
     # 이 자리를 먼저 지키고, 못 지킬 때만 옮기면서 그 까닭을 사유로 남긴다.
     seats_by_team: dict[str, dict[str, DeptSeat]] = Field(default_factory=dict)
-    # 인사가 명단을 보낼 때 이미 정해 둔 팀별 면접 요일 {팀: ["화", "목"]}.
-    # 부서는 이 요일을 보고 '1일차 · 2일차' 자리를 잡았으므로, 여기서 요일을
-    # 다시 뽑으면 부서가 본 시간표와 어긋난다. 안 주면 예전처럼 새로 뽑는다.
+    # 인사가 명단을 보낼 때 이미 정해 둔 팀별 면접일 {팀: ["1일차", "2일차"]}.
+    # 부서는 이 날들을 보고 자리를 잡았으므로, 여기서 다시 뽑으면 부서가 본
+    # 시간표와 어긋난다. 안 주면 예전처럼 새로 뽑는다.
     days_by_team: dict[str, list[str]] = Field(default_factory=dict)
 
     def seat_map(self) -> dict[str, dict[str, tuple[int, int]]]:
@@ -122,9 +122,9 @@ class GenerateRequest(BaseModel):
     # 주면 그 팀 자리는 여기를 따르고, 여기 없는 팀만 pairs 를 본다.
     pairs_by_team: dict[str, dict[str, str]] | None = None
     # 부서가 자기 시간표에서 잡아 둔 자리 {팀: {지원자: {"day": n, "slot": i}}}.
-    # 안 주면 예전처럼 시간표가 요일 · 시각을 처음부터 새로 짠다.
+    # 안 주면 예전처럼 시간표가 날 · 시각을 처음부터 새로 짠다.
     seats_by_team: dict[str, dict[str, DeptSeat]] | None = None
-    # 인사가 3단계에서 못 박은 팀별 면접 요일 {팀: ["화", "목"]}.
+    # 인사가 3단계에서 못 박은 팀별 면접일 {팀: ["1일차", "2일차"]}.
     days_by_team: dict[str, list[str]] | None = None
 
     @field_validator("algorithm")
@@ -138,8 +138,8 @@ class GenerateRequest(BaseModel):
 class FixDuplicatesRequest(BaseModel):
     """중복면접자만 다시 앉히기 — 겹친 사람 외에는 자리를 건드리지 않는다.
 
-    팀별 면접 요일을 함께 주면 옮길 칸을 그 요일 안에서만 찾는다. 안 주면
-    닷새 전부에서 찾으므로, 그 팀이 안 보는 요일로 넘어갈 수 있다.
+    팀별 면접일을 함께 주면 옮길 칸을 그 날들 안에서만 찾는다. 안 주면
+    닷새 전부에서 찾으므로, 그 팀이 안 보는 날로 넘어갈 수 있다.
     """
 
     days_by_team: dict[str, list[str]] | None = None
@@ -166,9 +166,10 @@ class InterviewerCreate(BaseModel):
     @field_validator("availability")
     @classmethod
     def _valid_availability(cls, v: dict[str, list[str]]) -> dict[str, list[str]]:
-        for day, hours in v.items():
-            if day not in DAYS:
-                raise ValueError(f"알 수 없는 요일: {day}")
+        # 날 이름은 따지지 않는다 — 읽을 때 `normalize_availability()` 가 지우고
+        # 모든 날에 똑같이 펴기 때문이다. 저장해 둔 옛 자료에는 '월' 같은 요일이
+        # 키로 남아 있는데, 그걸 여기서 물리면 옛 회차를 아예 못 읽는다.
+        for hours in v.values():
             for hour in hours:
                 if hour not in HOURS:
                     raise ValueError(f"알 수 없는 시간대: {hour}")
@@ -208,7 +209,7 @@ class InterviewerBandsIn(BaseModel):
     펼친다. 두 덩어리는 12시 ~ 14시에서 겹치므로 그 사이의 칸은 양쪽 다 맡을
     수 있다. 예전 표기('오전만' · '둘 다' 등)로 보내도 지금 이름으로 옮겨 받는다.
 
-    **요일은 받지 않는다.** 고른 덩어리는 어느 요일에나 똑같이 적용된다.
+    **어느 날인지는 받지 않는다.** 고른 덩어리는 1일차든 3일차든 똑같이 적용된다.
     """
 
     bands: dict[str, str] = Field(default_factory=dict)

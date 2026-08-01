@@ -64,7 +64,7 @@ def test_send_bad_channel_returns_422(client, invite_context):
 def test_broadcast_creates_one_notification_per_recipient(client, session):
     """100명 발송 시 개별 알림 100건 생성"""
     recipients = [
-        {"email": f"a{i}@x.com", "context": {"name": f"지원자{i}", "day": "화", "hour": "10시"}}
+        {"email": f"a{i}@x.com", "context": {"name": f"지원자{i}", "day": "2일차", "hour": "10시"}}
         for i in range(100)
     ]
     response = client.post(
@@ -101,7 +101,7 @@ def test_broadcast_merges_shared_context(client, session):
         json={
             "template_id": "applicant_invite",
             "channel": "email",
-            "context": {"day": "수", "hour": "14시", "method": "대면"},
+            "context": {"day": "3일차", "hour": "14시", "method": "대면"},
             "recipients": [
                 {"email": "a@x.com", "context": {"name": "새한별"}},
                 {"recipient": "b@x.com", "context": {"name": "홍길동", "hour": "16시"}},
@@ -116,9 +116,9 @@ def test_broadcast_merges_shared_context(client, session):
         .filter(Notification.correlation_id == "shared-ctx")
         .all()
     }
-    assert "수 14시" in rows["a@x.com"].body
+    assert "3일차 14시" in rows["a@x.com"].body
     assert "대면" in rows["a@x.com"].body
-    assert "수 16시" in rows["b@x.com"].body  # 개별 값이 공통 값을 덮어쓴다
+    assert "3일차 16시" in rows["b@x.com"].body  # 개별 값이 공통 값을 덮어쓴다
 
 
 def test_broadcast_empty_recipients_is_422(client):
@@ -135,7 +135,7 @@ def test_broadcast_recipient_without_address_is_422(client):
         "/api/v1/notify/broadcast",
         json={
             "template_id": "applicant_invite",
-            "recipients": [{"context": {"name": "무명", "day": "화", "hour": "10시"}}],
+            "recipients": [{"context": {"name": "무명", "day": "2일차", "hour": "10시"}}],
         },
     )
     assert response.status_code == 422

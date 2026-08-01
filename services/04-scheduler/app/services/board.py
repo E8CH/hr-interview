@@ -39,7 +39,7 @@ class Board:
         # 고르면 켜진다 — 자리는 다 차지만 담당자 사정과는 어긋날 수 있다.
         self.ignore_availability = bool(ignore_availability)
         # 부서가 확정해 보낸 짝 (지원자 → 면접 담당자). 이 사람들은 담당자를
-        # 고르지 않고 정해진 사람에게만 붙인다 — 시간(요일·시각)만 찾는다.
+        # 고르지 않고 정해진 사람에게만 붙인다 — 시간(면접일·시각)만 찾는다.
         self.pinned: dict[str, str] = dict(pinned or {})
         # 팀별 짝. 두 팀이 같이 보는 사람은 팀마다 담당자가 다르므로 지원자
         # 번호만으로는 한쪽을 덮어써 버린다 — 팀 자리를 먼저 보고, 그 팀 것이
@@ -48,8 +48,8 @@ class Board:
             team: dict(pairs) for team, pairs in (pinned_by_team or {}).items()
         }
         # 부서가 자기 시간표에서 잡아 둔 자리 {팀: {지원자: (몇 일차, 몇 번째 칸)}}.
-        # 부서 화면은 요일 이름을 모르고 '1일차 · 2일차' 로만 세므로 일차로 온다 —
-        # 어느 요일인지는 팀별 면접 요일을 정한 뒤에 옮겨 읽는다.
+        # 부서 화면은 '1일차 · 2일차' 로만 세므로 일차 번호로 온다 — 그 팀에
+        # 잡힌 날 중 몇째인지는 팀별 면접일을 정한 뒤에 옮겨 읽는다.
         self.seats: dict[str, dict[str, tuple[int, int]]] = {
             team: {a: (int(d), int(s)) for a, (d, s) in (wish or {}).items()}
             for team, wish in (seats or {}).items()
@@ -242,7 +242,7 @@ class Board:
         return (self.day_grad[day] / total) if total else 0.0
 
     def would_break_contiguity(self, team: str, day: str, hour: str) -> bool:
-        """해당 슬롯에 넣었을 때 팀-요일 세로 연속(규칙3)이 깨지는가"""
+        """해당 슬롯에 넣었을 때 팀-면접일 세로 연속(규칙3)이 깨지는가"""
         used = self.team_day_hours.get((team, day), set())
         if not used:
             return False

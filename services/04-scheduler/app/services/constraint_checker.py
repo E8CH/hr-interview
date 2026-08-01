@@ -6,7 +6,7 @@
   APPLICANT_CONFLICT     지원자 동시간 중복 (두 팀이 같이 보는 사람)
   DAILY_LIMIT_EXCEEDED   면접관 1일 타임 한도 초과 (max_daily / 8타임 상한)
   AVAILABILITY_VIOLATION 응답한 가용 시간대 밖 배정
-  UNKNOWN_SLOT           정의되지 않은 요일/시간대
+  UNKNOWN_SLOT           정의되지 않은 면접일/시간대
 
 인사가 '담당자 일정 무시하고 배치하기'를 켰다면 가용 시간대 밖 배정은 위반이
 아니다 — 자리를 채우려고 일부러 고른 것이기 때문이다. 그래서 그때는 규칙
@@ -177,7 +177,7 @@ def off_band(
         allowed = meta["availability"].get(day, [])
         if allowed and hour in allowed:
             continue
-        reason = "그 요일에 어렵다고 답함" if not allowed else "적어 낸 시간대 밖"
+        reason = "그날 맡을 수 있는 칸이 없음" if not allowed else "적어 낸 시간대 밖"
         rows.append(
             {
                 "interviewer_id": iv_id,

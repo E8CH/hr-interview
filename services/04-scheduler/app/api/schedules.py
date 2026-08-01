@@ -46,7 +46,7 @@ def generate_schedule(req: GenerateRequest, db: Session = Depends(get_db)):
     payload["dept_seats"] = plan.notes.get("dept_seats", 0)
     payload["dept_seats_kept"] = plan.notes.get("dept_seats_kept", 0)
     payload["dept_seats_moved"] = plan.notes.get("dept_seats_moved", {})
-    # 팀별 면접 요일 — 부서가 말한 'n일차' 가 무슨 요일이 됐는지 화면이 알아야 한다
+    # 팀별 면접일 — 그 팀이 며칟날까지 보는지를 화면이 알아야 한다
     payload["team_days"] = plan.notes.get("team_days", {})
     return ok(payload)
 

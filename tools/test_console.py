@@ -33,7 +33,7 @@ st.set_page_config(page_title="LG 면접 진행 도우미", page_icon="🔴", la
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# 요일 · 칸 · 앞타임/뒤타임은 서비스와 같은 정의를 써야 한다. 여기서 따로 적어 두면
+# 면접일 · 칸 · 앞타임/뒤타임은 서비스와 같은 정의를 써야 한다. 여기서 따로 적어 두면
 # 스케줄러가 여덟 칸을 쓰는데 화면만 여섯 칸으로 그리는 어긋남이 다시 생긴다.
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -49,6 +49,7 @@ from shared.contracts.constants import (  # noqa: E402
     band_hours,
     band_name,
     band_of as contract_band_of,
+    day_name,
     hour_bands,
     normalize_availability,
     plan_team_days,
@@ -57,7 +58,9 @@ DEFAULT_MASTER = PROJECT_ROOT / "docs" / "취합파일.xlsx"
 INTERVIEWER_SAMPLE = PROJECT_ROOT / "tools" / "fixtures" / "면접관명단_sample.xlsx"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-DAY_ORDER = ["월", "화", "수", "목", "금", "토", "일"]
+# 화면에 날을 늘어놓는 차례. 옛 회차 자료에는 요일로 적힌 날이 남아 있어 뒤에
+# 붙여 둔다 — 지금 만든 회차는 앞의 다섯 개(1일차 …)만 쓴다.
+DAY_ORDER = list(SCHED_DAYS) + ["월", "화", "수", "목", "금", "토", "일"]
 
 SERVICES = [
     ("version-manager", 8001),
@@ -460,23 +463,25 @@ def round_timing(doc: dict) -> dict:
 
 
 def handoff_team_days(doc: dict) -> dict[str, list[str]]:
-    """팀마다 무슨 요일에 면접을 보는지 — 3단계에서 정해 내려보낸 값.
+    """팀마다 며칟날까지 면접을 보는지 — 3단계에서 정해 내려보낸 값.
 
     옛 회차 자료에는 이 값이 없다. 그때는 그 자리에서 같은 셈(`plan_team_days`)
     으로 다시 뽑는다 — 스케줄러도 같은 함수를 쓰므로 답이 어긋나지 않는다.
+    날을 요일('월')로 적어 둔 옛 자료는 일차로 맞춰 읽는다.
     """
     saved = (doc or {}).get("team_days") or {}
     teams = (doc or {}).get("teams") or {}
-    out = {team: [d for d in (saved.get(team) or (block.get("days") or []))
+    out = {team: [d for d in (day_name(x) for x
+                              in (saved.get(team) or (block.get("days") or [])))
                   if d in SCHED_DAYS]
            for team, block in teams.items()}
     missing = {team: len((teams.get(team) or {}).get("applicants") or [])
                for team, days in out.items() if not days}
     if missing:
-        # 요일을 못 박기 전에 만든 자료 — 전체 팀 크기로 같은 셈을 다시 한다
+        # 면접일을 못 박기 전에 만든 자료 — 전체 팀 크기로 같은 셈을 다시 한다
         sizes = {team: len((block.get("applicants") or []))
                  for team, block in teams.items()}
-        again = plan_team_days(sizes, SCHED_DAYS_PER_TEAM, len(SCHED_HOURS))
+        again = plan_team_days(sizes, SCHED_DAYS_PER_TEAM)
         for team in missing:
             out[team] = again.get(team, [])
     return out
@@ -510,17 +515,17 @@ def publish_handoff(rid: str, plan_id: str, applicants: list[dict],
     teams = doc.setdefault("teams", {})
     names = sorted({(row.get("team") or "미상") for row in applicants}
                    | {(row.get("team") or "미상") for row in interviewers})
-    # 어느 팀을 무슨 요일에 볼지는 **여기서 한 번** 정한다. 예전에는 인사팀이
+    # 어느 팀이 며칟날까지 보는지는 **여기서 한 번** 정한다. 예전에는 인사팀이
     # 시간표를 만드는 순간에 팀 인원을 보고 뽑았는데, 부서가 몇 명을 빼면 인원이
-    # 달라져 요일까지 통째로 바뀌었다 — 부서가 '1일차' 라고 잡아 둔 자리가 매번
-    # 다른 요일이 되던 까닭이다. 명단과 함께 요일도 내려보내 뒤 단계가 이 결정에
-    # 종속되게 한다.
+    # 달라져 날짜까지 통째로 바뀌었다 — 부서가 '1일차' 라고 잡아 둔 자리가 매번
+    # 다른 날이 되던 까닭이다. 명단과 함께 면접일도 내려보내 뒤 단계가 이 결정에
+    # 종속되게 한다. 어느 팀이나 1일차부터 본다.
     sizes = {team: sum(1 for row in applicants
                        if (row.get("team") or "미상") == team) for team in names}
-    # 담당자가 무슨 요일에 나올 수 있는지는 보지 않는다 — 우리 모델에 담당자
+    # 담당자가 어느 날에 나올 수 있는지는 보지 않는다 — 우리 모델에 담당자
     # 가능 요일은 없다. 가능 시간은 앞타임 · 뒤타임 · 모든타임 뿐이고, 그 덩어리는
-    # 어느 요일에나 똑같이 적용된다.
-    team_days = plan_team_days(sizes, SCHED_DAYS_PER_TEAM, len(SCHED_HOURS))
+    # 1일차든 3일차든 똑같이 적용된다.
+    team_days = plan_team_days(sizes, SCHED_DAYS_PER_TEAM)
     doc["team_days"] = team_days
     for team in names:
         block = teams.setdefault(team, {})
@@ -562,8 +567,8 @@ def publish_handoff(rid: str, plan_id: str, applicants: list[dict],
             for number, row in enumerate(ordered_rows, start=1)
         ]
         block["order_planned"] = planned
-        # 부서 화면은 '1일차 · 2일차' 로만 자리를 잡는다. 그 일차가 무슨 요일인지
-        # 여기서 못 박아 내려보내야 인사팀 최종 시간표와 같은 날을 가리킨다.
+        # 부서 화면은 '1일차 · 2일차' 로만 자리를 잡는다. 그 팀이 며칟날까지
+        # 보는지를 여기서 못 박아 내려보내야 인사팀 최종 시간표와 어긋나지 않는다.
         block["days"] = list(team_days.get(team, []))
         block["interviewers"] = [
             {
@@ -618,9 +623,9 @@ def submit_team(rid: str, team: str, pairs: dict, by: str,
     """부서가 '인사 담당자에게 보내기' 를 누른 순간 — 이때부터 5단계 시간표에 쓰인다.
 
     짝만이 아니라 **부서가 본 시간표의 자리** 도 함께 보낸다. 예전에는 짝만
-    넘어가서 인사팀 시간표가 요일 · 시각을 처음부터 새로 짰고, 그래서 부서가
+    넘어가서 인사팀 시간표가 날 · 시각을 처음부터 새로 짰고, 그래서 부서가
     확인하고 보낸 시간표와 최종 시간표가 서로 다른 물건이 됐다. 자리는
-    (몇 일차, 몇 번째 칸)으로 적는다 — 어느 요일에 볼지는 인사팀이 정한다.
+    (몇 일차, 몇 번째 칸)으로 적는다 — 며칟날까지 볼지는 인사팀이 정한다.
     """
     doc = load_handoff(rid)
     block = doc.setdefault("teams", {}).setdefault(team, {})
@@ -903,7 +908,7 @@ COLUMN_LABELS = {
     "degree": "학력", "degree_type": "학력", "major_final": "전공",
     "job_role": "직무", "priority": "역할", "max_daily": "하루 최대",
     "title": "직급",
-    "day": "요일", "hour": "시간", "slot_count": "가능 시간 수",
+    "day": "일차", "hour": "시간", "slot_count": "가능 시간 수",
     "interviewer_name": "면접 담당자", "file_name": "파일 이름",
     "applicant_count": "인원", "row_count": "줄 수", "created_at": "만든 시각",
     "updated_at": "고친 시각", "actor": "담당자", "kind": "종류",
@@ -948,7 +953,7 @@ TAG_LABELS = {
     "SEAT_MOVED_CAP": "담당자 하루 한도가 차서 옮김",
     "SEAT_MOVED_BUSY": "담당자가 그 시각에 다른 면접이 있어 옮김",
     "SEAT_MOVED_OWNER": "그 자리 담당자를 찾을 수 없어 옮김",
-    "SEAT_MOVED_DAY": "부서가 적은 일차가 이 팀 면접 요일 수보다 커서 옮김",
+    "SEAT_MOVED_DAY": "부서가 적은 일차가 이 팀 면접일 수보다 커서 옮김",
 }
 
 
@@ -1032,10 +1037,10 @@ def band_cap(band: str, timing: dict | None = None) -> int:
 
 
 def iv_availability(row: dict) -> dict[str, list[str]]:
-    """이 담당자가 적어 낸 가능 시간 — 요일은 지우고, 칸 이름은 지금 것으로.
+    """이 담당자가 적어 낸 가능 시간 — 날은 지우고, 칸 이름은 지금 것으로.
 
     `normalize_availability()` 가 둘 다 해 준다. 저장된 값에는 옛 표기('09시')와
-    옛 요일별 자료가 남아 있는데, 스케줄러는 읽을 때마다 이걸로 맞춰 보므로
+    날별로 갈라 둔 옛 자료가 남아 있는데, 스케줄러는 읽을 때마다 이걸로 맞춰 보므로
     화면도 같은 함수를 써야 한다. 화면만 날것으로 비교하면 실제로는 되는 분이
     화면에서만 '되는 칸이 하나도 없는 사람' 이 된다.
     """
@@ -1057,7 +1062,7 @@ def iv_open_slots(row: dict, days: list[str], per_day: int,
                   ignore: bool = False) -> dict[int, set[int]]:
     """담당자가 일차마다 맡을 수 있는 자리 번호 {일차(0부터): {칸 번호}}.
 
-    가능 시간은 요일과 상관없이 같은 덩어리(앞타임 · 뒤타임 · 모든타임)라서 어느
+    가능 시간은 어느 날이든 같은 덩어리(앞타임 · 뒤타임 · 모든타임)라서 어느
     일차든 맡을 수 있는 칸이 같다. 그래도 일차별로 돌려주는 까닭은 부르는 쪽이
     (일차, 칸) 으로 자리를 세기 때문이다. 자리 번호는 스케줄러의 칸 번호와 같아야
     최종 시간표가 같은 자리를 가리킨다.
@@ -1159,7 +1164,8 @@ HR_HELP_STEPS = [
      "그 자리에서 옮기고 <b>이 배정안으로 확정</b> 을 누릅니다."),
     ("3. 부서에 명단 보내기",
      "면접 날짜 · 시각 조건을 정하고 <b>부서에 명단 보내기</b> 를 누릅니다. "
-     "이때 팀별 면접 요일이 정해지고, 뒤 단계는 모두 이 요일을 따라갑니다."),
+     "이때 팀마다 며칟날까지 볼지가 정해지고, 뒤 단계는 모두 이 날들을 따라갑니다. "
+     "어느 팀이나 1일차부터 봅니다."),
     ("4. 면접 시간표 만들기",
      "부서가 회신을 마친 뒤에 <b>시간표 만들기</b> 를 누릅니다. 부서가 잡아 둔 "
      "자리를 그대로 쓰고 어긋난 자리만 옮깁니다. 두 팀 면접이 같은 시각에 잡힌 "
@@ -2150,7 +2156,7 @@ def team_seat_gap(rows: list[dict], timing: dict | None = None) -> list[str]:
 
 
 def empty_slot_reasons(assignments: list[dict], roster: list[dict]) -> list[dict]:
-    """시간표 중간에 빈 칸이 왜 비었는지 팀 · 요일 · 칸별로 답한다.
+    """시간표 중간에 빈 칸이 왜 비었는지 팀 · 일차 · 칸별로 답한다.
 
     빈 칸 자체가 잘못은 아니다 — 담당자가 그 시간에 안 되거나, 소규모 그룹이
     첫 타임에 걸리지 않게 비워 두거나, 그날 그 팀 면접자가 거기까지 오지 않는
@@ -2159,7 +2165,7 @@ def empty_slot_reasons(assignments: list[dict], roster: list[dict]) -> list[dict
     맨 앞과 맨 뒤의 여백은 세지 않는다. 그건 그 팀 그날 면접이 그만큼이라는
     뜻이지 구멍이 아니다.
     """
-    can: dict[str, dict[str, set[str]]] = {}      # 팀 → 요일 → 맡을 수 있는 칸
+    can: dict[str, dict[str, set[str]]] = {}      # 팀 → 일차 → 맡을 수 있는 칸
     cap: dict[str, int] = {}                      # 팀 → 그날 볼 수 있는 최대 인원
     for row in roster or []:
         team = row.get("team") or "미상"
@@ -2187,7 +2193,7 @@ def empty_slot_reasons(assignments: list[dict], roster: list[dict]) -> list[dict
                 why = "이 팀 담당자들의 하루 한도가 다 찼습니다"
             else:
                 why = "규칙(첫 타임 소규모 · 같은 팀 연속)을 지키느라 비웠습니다"
-            out.append({"팀": team, "요일": day, "칸": hour, "왜 비었나": why})
+            out.append({"팀": team, "일차": day, "칸": hour, "왜 비었나": why})
     return out
 
 
@@ -2332,7 +2338,7 @@ def render_dup_fixed(data: dict | None, clock: dict) -> None:
             f"{len(stuck)}건은 옮길 자리를 찾지 못했습니다 — "
             + ("확정해 둔 자리는 건드리지 않습니다. "
                if any(row.get("reason") == "LOCKED" for row in stuck) else "")
-            + "그 팀 면접 요일 안에 담당자가 가능한 빈 칸이 없습니다. 3단계에서 그 "
+            + "그 팀 면접일 안에 담당자가 가능한 빈 칸이 없습니다. 3단계에서 그 "
               "담당자의 가능한 시간을 더 받거나, 부서에 시간을 다시 잡아 달라고 "
               "해 주세요."
         )
@@ -3407,8 +3413,8 @@ def render_interviewers() -> None:
 
     band_timing = round_timing(load_handoff(round_id))
     st.caption(
-        "‘가능 시간’ 은 앞타임 · 뒤타임 · 모든타임 중에서 고릅니다. **요일은 묻지 "
-        "않습니다** — 고른 덩어리를 모든 요일에 똑같이 적용합니다. 3단계에서 정한 "
+        "‘가능 시간’ 은 앞타임 · 뒤타임 · 모든타임 중에서 고릅니다. **어느 날인지는 "
+        "묻지 않습니다** — 고른 덩어리를 모든 면접일에 똑같이 적용합니다. 3단계에서 정한 "
         f"면접 진행 조건 기준으로 앞타임은 {band_hours_text(BAND_FRONT, band_timing)}"
         f"({band_cap(BAND_FRONT, band_timing)}칸), "
         f"뒤타임은 {band_hours_text(BAND_BACK, band_timing)}"
@@ -3425,7 +3431,7 @@ def render_interviewers() -> None:
             "가능 시간": st.column_config.SelectboxColumn(
                 "가능 시간", options=BAND_CHOICES + [BAND_UNSET], required=True,
                 help="앞타임(~14시) · 뒤타임(12시~) 을 고르면 그 시간대에만 "
-                     "면접이 잡힙니다. 요일은 가리지 않습니다",
+                     "면접이 잡힙니다. 날은 가리지 않습니다",
             ),
         },
         disabled=["성명", "직급", "소속팀", "역할", "하루 최대", "이메일", "사번"],
@@ -3545,9 +3551,10 @@ def render_send(selected: list[dict]) -> None:
             doc = publish_handoff(round_id, plan_id, applicants, selected, actor)
             st.success(
                 f"{len(doc.get('teams') or {})}개 팀에 명단을 보냈습니다 — "
-                f"팀마다 면접 요일({SCHED_DAYS_PER_TEAM}일)도 함께 갔습니다. "
-                "요일은 팀 인원이 하루에 몰리지 않게 나눠 정합니다. 담당자가 적어 낸 "
-                "가능 시간(앞타임 · 뒤타임 · 모든타임)은 어느 요일에나 같게 봅니다."
+                f"팀마다 면접일({SCHED_DAYS_PER_TEAM}일)도 함께 갔습니다. "
+                "어느 팀이나 1일차부터 나란히 봅니다 — 팀끼리 날을 비켜 주지 않습니다. "
+                "담당자가 적어 낸 가능 시간(앞타임 · 뒤타임 · 모든타임)은 어느 날에나 "
+                "같게 봅니다."
             )
     c2.caption(f"마지막으로 보낸 시각 {str(doc.get('sent_at'))[:16] or '-'}")
 
@@ -3819,7 +3826,7 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
 
     `can` (사번 → {일차: 맡을 수 있는 칸})을 주면 그 자리에만 놓는다. 담당자가
     적어 낸 덩어리(앞타임 · 뒤타임 · 모든타임)가 그대로 그 칸 목록이고, 어느
-    일차든 같다 — 가능 요일이라는 것은 우리 모델에 없다.
+    일차든 같다 — 담당자 가능 요일이라는 것은 우리 모델에 없다.
 
     맡을 자리를 못 찾은 사람은 자리는 주되 `off_band` 로 표시하고 왜 그런지
     (`off_why`)를 함께 남긴다 — 자리를 안 주면 부서 화면에서 그 사람이 통째로
@@ -3844,7 +3851,7 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
     labels = slot_labels(start, per_day, minutes, rest)
     every = sorted(range(per_day))
     unanswered = set(unanswered or ())
-    # 인사팀이 이 팀에 잡아 준 면접 요일 수 — 부서가 그보다 긴 시간표를 짜면
+    # 인사팀이 이 팀에 잡아 준 면접일 수 — 부서가 그보다 긴 시간표를 짜면
     # 최종 시간표가 그 일차를 받아 줄 수 없다.
     limit = len(days or []) or (len(rows) + 1)
 
@@ -3895,11 +3902,11 @@ def assign_by_availability(
     queue: list[str], order: list[str], caps: dict[str, int],
     can: dict[str, dict[int, set[int]]], per_day: int, day_count: int, lead: str,
 ) -> tuple[dict[str, str], list[tuple[int, int]]]:
-    """면접 차례대로 담당자를 정한다 — 그 사람이 그 **요일 그 칸** 에 될 때만.
+    """면접 차례대로 담당자를 정한다 — 그 사람이 그 **날 그 칸** 에 될 때만.
 
     `queue` 의 몇 번째냐가 곧 며칠째 몇 번째 자리(= 몇 시)냐다. 그래서 그 자리를
     맡을 수 있는 담당자 중에서만 고른다. 예전에는 앞타임 · 뒤타임 덩어리만 보고
-    골랐는데, 덩어리에는 요일이 없어서 그 요일에 못 오시는 분에게 자리가 갔다.
+    골랐는데, 덩어리에는 날이 없어서 그날 못 오시는 분에게 자리가 갔다.
     그 짝은 인사팀 시간표에서 그대로 버려졌다.
 
     맡을 사람이 아무도 없는 자리는 그날 가장 여유 있는 분이 떠안고, 그 자리
@@ -3916,7 +3923,7 @@ def assign_by_availability(
     span = max(1, per_day)
     room = max(1, day_count or 1)
     for index, aid in enumerate(queue):
-        # 하루 한도는 그날치로 센다 — 스케줄러도 (담당자, 요일)로 세기 때문이다
+        # 하루 한도는 그날치로 센다 — 스케줄러도 (담당자, 일차)로 세기 때문이다
         day, slot = min(index // span, room - 1), index % span
         free = [
             iid for iid in order
@@ -3988,7 +3995,7 @@ def schedule_cards(rows: list[dict], *, by_person: bool = False, team: str = "")
 
 
 def render_timetable(assignments: list[dict]) -> None:
-    """팀 × 요일 시간표 — 칸마다 '지원자 (면접관)' 을 적는다.
+    """팀 × 일차 시간표 — 칸마다 '지원자 (면접관)' 을 적는다.
 
     시간표를 만들 때 정해진 시간대(09시 · 10시 …)가 있으면 그 시간대를 그대로
     세로 축으로 쓴다. 시간대가 없는 옛 시간표만 30분 간격으로 순서를 매긴다.
@@ -4024,10 +4031,10 @@ def render_timetable(assignments: list[dict]) -> None:
                 f"- 한 팀은 되도록 **{SCHED_DAYS_PER_TEAM}일 안에** 몰아서 봅니다 "
                 f"(한 팀 {SCHED_DAYS_PER_TEAM}일 × 하루 {len(SCHED_HOURS)}칸 = "
                 f"{SCHED_DAYS_PER_TEAM * len(SCHED_HOURS)}명). 그래서 그 며칠은 꽉 "
-                "차고 나머지 요일은 비어 보입니다.\n"
+                "차고 나머지 날은 비어 보입니다.\n"
                 f"- {SCHED_DAYS_PER_TEAM * len(SCHED_HOURS)}명을 넘긴 인원은 다른 "
-                "요일에 한두 명씩 끼워 넣습니다. 이때 **그날 첫 칸은 되도록 새로 "
-                "열지 않으므로** 중간 시간에만 한 명 놓인 요일이 생깁니다.\n"
+                "날에 한두 명씩 끼워 넣습니다. 이때 **그날 첫 칸은 되도록 새로 "
+                "열지 않으므로** 중간 시간에만 한 명 놓인 날이 생깁니다.\n"
                 + (f"- {' · '.join(orphan)} 칸은 앞타임(~14시) 에도 뒤타임(12시~) "
                    "에도 안 들어가 '모든타임' 이라고 답한 담당자만 맡을 수 있습니다. "
                    "그래서 그 칸만 유독 비어 보일 수 있습니다.\n" if orphan else "")
@@ -4085,7 +4092,7 @@ def render_timetable(assignments: list[dict]) -> None:
                 return key
         return ""
 
-    # (팀, 요일) 별로 모아 시간대 순으로 줄을 세운다
+    # (팀, 일차) 별로 모아 시간대 순으로 줄을 세운다
     buckets: dict[tuple[str, str], list[dict]] = {}
     for row in assignments:
         key = (row.get("team") or "미상", row.get("day") or "미정")
@@ -4099,7 +4106,7 @@ def render_timetable(assignments: list[dict]) -> None:
     days = sorted({day for _, day in buckets},
                   key=lambda d: DAY_ORDER.index(d) if d in DAY_ORDER else 99)
 
-    # (팀, 요일, 시간칸) → 그 칸에 들어가는 사람들
+    # (팀, 일차, 시간칸) → 그 칸에 들어가는 사람들
     placed: dict[tuple[str, str, str], list[dict]] = {}
     overflow: list[dict] = []
     if by_hour:
@@ -4133,7 +4140,7 @@ def render_timetable(assignments: list[dict]) -> None:
                 )
             rows.append(row)
         if day_index < len(days) - 1:
-            rows.append({"구분": "", **blank})  # 요일 사이 빈 줄
+            rows.append({"구분": "", **blank})  # 날 사이 빈 줄
 
     table = pd.DataFrame(rows, columns=["구분"] + teams)
     for day in days:
@@ -4328,7 +4335,7 @@ def render_schedule_body(sc_id: str, pairs: dict[str, dict[str, str]] | None = N
 
     g1, g2 = st.columns(2)
     if "day" in df:
-        g1.markdown("**요일별 인원**")
+        g1.markdown("**일차별 인원**")
         g1.bar_chart(counts("day", DAY_ORDER), height=260)
     if "hour" in df:
         g2.markdown("**시간대별 인원**")
@@ -4350,7 +4357,7 @@ def render_schedule_body(sc_id: str, pairs: dict[str, dict[str, str]] | None = N
         st.bar_chart(pd.crosstab(df["team"], df["degree"]), height=300, stack=False)
 
     if {"day", "degree"} <= set(df.columns):
-        st.markdown("**요일마다 학사·대학원이 고르게 섞였는지**")
+        st.markdown("**일차마다 학사·대학원이 고르게 섞였는지**")
         dd = pd.crosstab(df["day"], df["degree"])
         dd = dd.reindex([d for d in DAY_ORDER if d in dd.index])
         st.bar_chart(dd, height=300, stack=False)
@@ -4372,7 +4379,7 @@ def render_schedule_body(sc_id: str, pairs: dict[str, dict[str, str]] | None = N
     days = [d for d in DAY_ORDER if "day" in df and d in set(df["day"])]
     degrees = sorted(df["degree"].dropna().unique()) if "degree" in df else []
     pick_teams = f1.multiselect("팀", teams, default=list(teams), key="s_team")
-    pick_days = f2.multiselect("요일", days, default=list(days), key="s_day")
+    pick_days = f2.multiselect("일차", days, default=list(days), key="s_day")
     pick_degs = f3.multiselect("학력", degrees, default=list(degrees), key="s_deg")
 
     shown = df
@@ -4437,7 +4444,7 @@ def render_schedule_body(sc_id: str, pairs: dict[str, dict[str, str]] | None = N
             )
 
     # ---------------- 히트맵 ----------------
-    st.markdown("### 🔥 어느 요일 · 시간에 면접이 몰렸는지")
+    st.markdown("### 🔥 어느 날 · 시간에 면접이 몰렸는지")
     hm, herr = fetch_json(f"{SCHEDULER}/api/v1/schedules/{sc_id}/heatmap")
     if herr:
         st.error(herr)
@@ -4453,7 +4460,7 @@ def render_schedule_body(sc_id: str, pairs: dict[str, dict[str, str]] | None = N
                          width="stretch")
         except ImportError:
             st.dataframe(hdf, width="stretch")
-        st.caption("칸의 숫자는 그 요일·시간에 잡힌 면접 건수입니다.")
+        st.caption("칸의 숫자는 그 일차·시간에 잡힌 면접 건수입니다.")
 
     # ---------------- 규칙 준수 ----------------
     st.markdown("### 📐 정한 규칙을 얼마나 지켰는지")
@@ -4627,8 +4634,8 @@ def render_scheduling() -> None:
     sent_by_team = handoff_pairs_by_team(load_handoff(round_id))
     sent = handoff_pairs(load_handoff(round_id))
     sent_seats = handoff_seats_by_team(load_handoff(round_id))
-    # 팀별 면접 요일은 3단계에서 이미 못 박았다. 여기서 다시 뽑지 않고 그대로
-    # 넘겨야 부서가 본 '1일차'와 최종 시간표의 요일이 같아진다.
+    # 팀별 면접일은 3단계에서 이미 못 박았다. 여기서 다시 뽑지 않고 그대로
+    # 넘겨야 부서가 본 '1일차'와 최종 시간표의 날이 같아진다.
     sent_days = handoff_team_days(load_handoff(round_id))
     seats = sum(len(mine) for mine in sent_by_team.values())
     fixed = sum(len(mine) for mine in sent_seats.values())
@@ -4648,7 +4655,7 @@ def render_scheduling() -> None:
         else:
             st.caption(
                 "부서가 자리까지 정해 보낸 건은 없습니다 — 부서에서 다시 보내기 전까지는 "
-                "요일 · 시각을 여기서 새로 짭니다."
+                "날 · 시각을 여기서 새로 짭니다."
             )
     else:
         st.info("부서에서 아직 짝을 보내지 않았습니다. 부서 화면의 '② 면접자 담당자 매칭'을 마쳐야 시간표를 만들 수 있습니다.")
@@ -4890,13 +4897,13 @@ def render_team_view() -> None:
     if not interviewers:
         interviewers = block.get("interviewers") or []   # 아직 못 읽으면 받은 명단대로
     iv_name = iv_names(interviewers)
-    # 인사 담당자가 명단과 함께 정해 보낸 우리 팀 면접 요일. '1일차' 가 무슨
-    # 요일인지 알아야 담당자가 그날 오실 수 있는지를 따질 수 있다.
+    # 인사 담당자가 명단과 함께 정해 보낸 우리 팀 면접일. 며칟날까지 보는지를
+    # 알아야 부서가 그 안에서만 자리를 잡을 수 있다.
     team_days = handoff_team_days(doc).get(team, [])
     st.caption(
         f"받은 시각 {str(doc.get('sent_at'))[:16]} · 보낸 사람 {doc.get('sent_by')} · "
         f"면접 볼 사람 {len(applicants)}명 · 우리 팀 면접 담당자 {len(interviewers)}명"
-        + (f" · 우리 팀 면접 요일 {' · '.join(team_days)}" if team_days else "")
+        + (f" · 우리 팀 면접일 {' · '.join(team_days)}" if team_days else "")
         + (f" · 마지막으로 보낸 때 {str(submitted.get('at'))[:16]} ({submitted.get('by')})"
            if submitted else " · 아직 보내기 전")
     )
@@ -4906,7 +4913,7 @@ def render_team_view() -> None:
          if not interviewers else f"우리 팀 담당자 {len(interviewers)}명이 정해졌습니다."),
         (bool(saved), "②",
          "면접 볼 사람을 체크하고 <b>자동 배정</b> 을 누릅니다 — 담당자가 가능하다고 "
-         "적어 낸 요일 · 시간 안에서만 자리가 잡히고, 못 맡긴 칸은 까닭이 나옵니다."
+         "적어 낸 가능 시간 안에서만 자리가 잡히고, 못 맡긴 칸은 까닭이 나옵니다."
          if not saved else f"면접자 {len(saved)}명에게 담당자를 붙였습니다."),
         (bool(saved), "③",
          "우리 팀 시간표에서 자리를 끌어 옮겨 고칩니다 — 옮긴 자리는 그대로 인사 "
@@ -5019,8 +5026,8 @@ def render_team_view() -> None:
             or SLOTS_PER_DAY
         )))
         # 며칠째 몇 번째 칸인지를 그대로 따진다 — 하루 한도도 그날치로 센다.
-        # 예전에는 '하루 한도 × 날 수' 를 총원으로 삼고 요일을 안 봤는데, 그러면
-        # 그 요일에 못 오시는 분에게 자리가 가고 인사팀 시간표가 그 짝을 버렸다.
+        # 예전에는 '하루 한도 × 날 수' 를 총원으로 삼고 가능 시간을 안 봤는데,
+        # 그러면 그 칸에 못 오시는 분에게 자리가 가고 인사팀 시간표가 그 짝을 버렸다.
         caps = {
             row["interviewer_id"]: max(0, min(
                 int(row.get("max_daily") or len(SCHED_HOURS)), len(SCHED_HOURS)))
@@ -5177,7 +5184,7 @@ def render_team_view() -> None:
     per_day = c4.number_input("하루에 볼 인원", 1, 20, timing["per_day"], key="tv_perday")
     # 담당자가 적어 낸 **가능 시간**(앞타임 · 뒤타임 · 모든타임)을 여기서도 그대로
     # 지킨다 — 부서가 보는 시간표와 인사팀 최종 시간표가 서로 달라지지 않게.
-    # 요일은 보지 않는다(덩어리는 어느 요일에나 같다). '일정 무시' 를 켜 두셨으면
+    # 날은 보지 않는다(덩어리는 어느 날에나 같다). '일정 무시' 를 켜 두셨으면
     # 함께 무시한다.
     tv_can, tv_blank = team_open_slots(
         interviewers, team_days, int(per_day),

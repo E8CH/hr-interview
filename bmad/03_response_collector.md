@@ -86,8 +86,8 @@ CREATE TABLE org_patterns (
 {
   "job_role": "직무다",
   "available_slots": [
-    {"day": "화", "hour": "10시"},
-    {"day": "화", "hour": "11시"}
+    {"day": "2일차", "hour": "10시"},
+    {"day": "2일차", "hour": "11시"}
   ],
   "max_daily": 6,
   "backup_contact": "backup@company.com",
@@ -217,12 +217,12 @@ response-collector/
 ### 프론트 (폼)
 - 서버 사이드 렌더링 (Jinja2)
 - 가능 시간 = **덩어리 셋 중 하나**(앞타임 · 뒤타임 · 모든타임) 단일 선택.
-  **요일은 묻지 않는다** — 담당자 가능 요일이라는 개념이 우리 모델에 없다.
-  예전에는 요일 5 × 하루 8칸 격자를 그렸는데, 거기 찍힌 요일이 아무 뜻 없이
+  **날은 묻지 않는다** — 담당자 가능 날이라는 개념이 우리 모델에 없다.
+  예전에는 날 5 × 하루 8칸 격자를 그렸는데, 거기 찍힌 날이 아무 뜻 없이
   배치에서 자리를 막았다.
-- 고른 덩어리를 브라우저가 **모든 요일 × 그 칸**으로 펼쳐 `available_slots`
+- 고른 덩어리를 브라우저가 **모든 날 × 그 칸**으로 펼쳐 `available_slots`
   으로 보낸다. 저장 형식(`{day, hour}`)은 그대로다 — 04 가 읽을 때
-  `normalize_availability()` 로 요일을 지우므로 마이그레이션이 필요 없다.
+  `normalize_availability()` 로 날을 지우므로 마이그레이션이 필요 없다.
 - 제출 시 JSON payload로 POST
 
 ### 테스트 요구사항

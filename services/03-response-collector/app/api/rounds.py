@@ -1,7 +1,7 @@
 """GET /api/v1/rounds/{round_id}/availability — 회차별 면접관 가용성 집계
 
 04(스케줄러)가 시간표를 짤 때 쓰는 입력이다. 응답 payload 는
-`available_slots: [{day, hour}]` 형태라 04가 기대하는 `{요일: [시간대]}` 로
+`available_slots: [{day, hour}]` 형태라 04가 기대하는 `{날: [시간대]}` 로
 뒤집어서 내려준다. 회신하지 않은 면접위원은 가용 슬롯을 알 수 없으므로
 기본적으로 제외한다(include_pending=true 로 켤 수 있다).
 """
@@ -25,7 +25,7 @@ MEMBER_PRIORITY = 2
 
 
 def _availability(payload: dict | None) -> dict[str, list[str]]:
-    """[{day, hour}] → {day: [hour, ...]} (요일별 등장 순서 유지)"""
+    """[{day, hour}] → {day: [hour, ...]} (날별 등장 순서 유지)"""
     out: dict[str, list[str]] = {}
     for slot in (payload or {}).get("available_slots", []) or []:
         day, hour = slot.get("day"), slot.get("hour")

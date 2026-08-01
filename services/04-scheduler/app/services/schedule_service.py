@@ -262,8 +262,8 @@ def generate(db: Session, req: GenerateRequest) -> tuple[Schedule, RuleReport, l
         constraints = constraints.model_copy(
             update={"seats_by_team": req.seats_by_team}
         )
-    # 인사가 명단을 보낼 때 이미 정한 팀별 면접 요일. 부서는 그 요일 위에서
-    # '1일차 · 2일차' 자리를 잡았으므로 여기서 요일을 다시 뽑으면 안 된다.
+    # 인사가 명단을 보낼 때 이미 정한 팀별 면접일. 부서는 그 날들 위에서
+    # '1일차 · 2일차' 자리를 잡았으므로 여기서 다시 뽑으면 안 된다.
     if req.days_by_team is not None:
         constraints = constraints.model_copy(
             update={"days_by_team": req.days_by_team}
