@@ -12,14 +12,14 @@ v3 에서는 재검증이 없어 하드 위반이 발생했다 — v3.1 의 핵�
 소프트 규칙 (페널티만 부여, 배정을 막지 않음)
   S1 (규칙1)  날별 대학원 비율 30% ±20%p
   S3 (규칙3)  동일 팀 세로(같은 날 연속 시간) 배치
-  S4 (규칙4)  그날 첫 타임은 소규모 조 우선
+  S4 (규칙4)  오전 · 오후 첫 타임은 그날 적게 보는 조 우선
 """
 from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from shared.contracts.constants import HOURS, first_slots
+from shared.contracts.constants import HOURS, day_blocks
 
 from app.domain.schedule import (ApplicantInfo, InterviewerInfo,
                                  ScheduleAssignment)
@@ -37,7 +37,7 @@ GRAD_TOLERANCE = 0.20
 # 소프트 페널티 가중치
 W_GRAD_BALANCE = 20      # 허용 범위를 벗어난 비율 1.0 당
 W_VERTICAL_GAP = 3       # 팀-날 단위 추가 블록 1개 당
-W_FIRST_SLOT = 2         # 대형 조가 첫 타임을 차지한 건수 당
+W_FIRST_SLOT = 2         # 큰 조가 첫 타임을 차지한 덩어리(날 × 오전/오후) 1개 당
 
 
 @dataclass(frozen=True)
@@ -206,28 +206,47 @@ def _vertical_group_penalty(assignments: list[ScheduleAssignment],
 def _first_slot_penalty(assignments: list[ScheduleAssignment],
                         interviewers: dict[str, InterviewerInfo],
                         timing: dict | None = None) -> int:
-    """첫 타임은 소규모 조 우선 — 대형 조가 차지하면 페널티.
+    """첫 타임은 수요 적은 조 우선 — 그날 크게 잡은 조가 차지하면 페널티.
+
+    조의 크기는 **그날 그 조가 보는 인원** 으로 잰다. 회차 전체 건수가 아니다 —
+    첫 타임 지각의 손해는 그 조의 그날 세로 줄이 얼마나 남았는지에 비례하고,
+    04 규칙4도 같은 잣대로 매긴다. 잣대가 갈리면 04가 만점을 준 시간표를 05가
+    벌점으로 깎아, 재편성이 멀쩡한 자리를 흔든다.
 
     오전 첫 타임과 오후 첫 타임을 모두 본다. 어느 칸이 그 자리인지는 면접 진행
     조건이 정한다 — 30분 면접이면 1타임과 7타임(12:30), 1시간 면접이면 1타임과
     4타임(12:30)이다. 그래서 칸 번호로 굳혀 두지 않고 그때그때 계산한다.
     """
-    first_hours = set(first_slots(timing))
-    team_size: dict[str, int] = defaultdict(int)
-    for a in assignments:
-        iv = interviewers.get(a.interviewer_id)
-        team_size[iv.team if iv else a.team] += 1
-    if not team_size:
-        return 0
-    avg = sum(team_size.values()) / len(team_size)
+    blocks = day_blocks(timing)
 
-    penalty = 0
-    for a in assignments:
-        if a.hour not in first_hours:
-            continue
+    def team_of(a: ScheduleAssignment) -> str:
         iv = interviewers.get(a.interviewer_id)
-        team = iv.team if iv else a.team
-        if team_size[team] > avg:
+        return iv.team if iv else a.team
+
+    day_team_size: dict[tuple[str, str], int] = defaultdict(int)
+    in_block: dict[tuple[str, int], set[str]] = defaultdict(set)
+    at_first: dict[tuple[str, int], set[str]] = defaultdict(set)
+    for a in assignments:
+        team = team_of(a)
+        day_team_size[(a.day, team)] += 1
+        for index, block in enumerate(blocks):
+            if a.hour in block:
+                in_block[(a.day, index)].add(team)
+                if a.hour == block[0]:
+                    at_first[(a.day, index)].add(team)
+
+    def mean_size(day: str, teams: set[str]) -> float:
+        sizes = [day_team_size[(day, team)] for team in teams]
+        return sum(sizes) / len(sizes) if sizes else 0.0
+
+    # 첫 칸에 앉은 조들이 그 덩어리의 조들보다 크면 벌점. 조 하나하나에 매기지
+    # 않는 것은, 하루를 통째로 쓰는 조는 첫 칸을 피할 길이 없기 때문이다 — 그건
+    # 그 조의 잘못이 아니라 인원의 문제다. 작은 조를 제쳐 두고 앉았을 때만 잡힌다.
+    penalty = 0
+    for key, seated in at_first.items():
+        if not seated:
+            continue
+        if mean_size(key[0], seated) > mean_size(key[0], in_block[key]):
             penalty += W_FIRST_SLOT
     return penalty
 

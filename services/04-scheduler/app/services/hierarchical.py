@@ -15,6 +15,9 @@ from app.services.board import Board
 
 SLOTS_PER_DAY = len(HOURS)
 
+#: 그날 이 인원보다 적게 보는 조를 '수요 적은 조' 로 본다 — 첫 타임을 먼저 준다.
+SMALL_GROUP = 4
+
 
 # --------------------------------------------------------------------------
 # Stage 1 — 팀 × 면접일
@@ -246,13 +249,22 @@ def place_group(
     else:
         overflow = []
 
-    # 소규모 그룹(3명 이하)은 덩어리의 첫 칸을 피해 시작 → 규칙4 "첫 타임 소규모".
+    # 첫 칸(오전 · 오후)은 그날 적게 보는 조부터 앉힌다 — 규칙4 "첫 타임은 수요
+    # 적은 조". 첫 타임에 지각이 나면 그 조의 세로 줄이 통째로 밀리므로, 뒤에
+    # 남은 줄이 짧은 조가 앉아야 손해가 작다. 그래서 3명 이하 그룹은 첫 칸이
+    # 든 창을 먼저 고른다.
+    #
+    # 큰 조를 억지로 비껴 앉히지는 않는다. 다 같이 첫 칸을 피하면 09시가 통째로
+    # 비어 하루가 한 칸씩 늦게 끝난다. 큰 조가 첫 칸에 앉는 것 자체는 손해가
+    # 아니고, 작은 조를 제쳐 두고 앉는 것이 손해다 — 그건 위 우선순위로 막힌다.
+    #
     # 첫 칸이 몇 번째인지는 면접 진행 조건이 정한다 — 30분 면접이면 오전 1타임 ·
     # 오후 7타임, 1시간 면접이면 오전 1타임 · 오후 4타임이다.
     guarded = {HOURS.index(hour) for hour in first_slots(timing) if hour in HOURS}
+    small = k < SMALL_GROUP
     starts = sorted(
         range(SLOTS_PER_DAY - k + 1),
-        key=lambda s: (k < 4 and s in guarded, s),
+        key=lambda s: (0 if small and guarded & set(range(s, s + k)) else 1, s),
     )
 
     chosen: list[str] | None = None
@@ -297,7 +309,7 @@ def fallback_place(
 
     후보 슬롯 비용:
       +100  세로 연속(규칙3)을 깨뜨림
-      + 12  비어 있던 첫 타임(오전 · 오후)을 새로 여는 경우 (규칙4)
+      + 12  그날 이미 길게 잡은 조가 첫 타임(오전 · 오후)에 더 앉는 경우 (규칙4)
       +  ρ  배치 후 그날 대학원 비율의 목표 이탈도 (규칙1)
     """
     guarded = set(first_slots(timing))
@@ -314,7 +326,10 @@ def fallback_place(
                 cost = 0.0
                 if board.would_break_contiguity(applicant.team, day, hour):
                     cost += 100.0
-                if hour in guarded and board.day_count[day] > 0:
+                # 첫 타임은 그날 줄이 짧은 조에게 양보한다 — 이미 길게 잡은
+                # 조가 여기까지 앉으면 지각 한 번에 밀릴 줄이 그만큼 길어진다.
+                line = len(board.team_day_hours.get((applicant.team, day), ()))
+                if hour in guarded and line >= SMALL_GROUP:
                     cost += 12.0
                 total = board.day_count[day] + 1
                 grad = board.day_grad[day] + (1 if applicant.is_grad else 0)

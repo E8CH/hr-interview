@@ -137,23 +137,60 @@ def test_rule3_empty_is_100():
 # 규칙 4 — 첫 타임 소규모
 # --------------------------------------------------------------------------
 def test_rule4_first_slot_heavier_than_rest_fails():
+    """① 부하 — 첫 칸이 다른 칸보다 붐비면 걸린다."""
     assignments = [
         A(team="A팀", hour=H[0]),
         A(team="B팀", hour=H[0]),
         A(team="A팀", hour=H[1]),
     ]
     score, detail = rule4_first_slot(assignments)
-    assert score == 0.0
+    kinds = {v["kind"] for v in detail["violations"]}
+    assert kinds == {"부하"}                 # 조 구성은 A·B가 다 앉아 있어 흠이 없다
     assert detail["violations"][0]["first_count"] == 2
+    assert score == 50.0                     # 두 잣대 중 하나만 통과
 
 
-def test_rule4_ramp_up_passes():
+def test_rule4_big_team_taking_the_first_slot_ahead_of_a_small_one_fails():
+    """② 구성 — 인원이 고르게 퍼져 부하는 흠이 없는데, 첫 칸을 큰 조가 차지했다.
+
+    부하만 재던 시절에는 이런 시간표가 만점이었다. '수요 적은 조부터' 라는 말이
+    아무것도 막지 못했다는 뜻이다. B팀(그날 1명)이 2타임부터 시작할 이유가 없다.
+    """
     assignments = [
         A(team="A팀", hour=H[0]),
         A(team="A팀", hour=H[1]),
         A(team="B팀", hour=H[1]),
     ]
-    score, _ = rule4_first_slot(assignments)
+    score, detail = rule4_first_slot(assignments)
+    violation = detail["violations"][0]
+    assert violation["kind"] == "구성"
+    assert violation["teams"] == ["A팀"]
+    assert (violation["first_slot_avg"], violation["block_avg"]) == (2.0, 1.5)
+    assert score == 50.0
+
+
+def test_rule4_small_team_at_the_first_slot_passes():
+    """같은 인원이라도 작은 조가 첫 칸에 앉으면 통과한다 — 앞 시험의 거울상이다."""
+    assignments = [
+        A(team="B팀", hour=H[0]),
+        A(team="A팀", hour=H[1]),
+        A(team="A팀", hour=H[2]),
+    ]
+    score, detail = rule4_first_slot(assignments)
+    assert detail["violations"] == []
+    assert score == 100.0
+
+
+def test_rule4_team_that_fills_the_block_is_not_blamed():
+    """덩어리를 통째로 쓰는 조는 첫 칸을 피할 길이 없다 — 그건 흠으로 세지 않는다.
+
+    작은 조가 그 칸을 함께 잡고 있으면 '수요 적은 조부터' 는 지켜진 것이다.
+    피할 수 없는 자리를 위반으로 세면 점수가 사람을 잘못 나무란다.
+    """
+    assignments = [A(team="A팀", hour=h) for h in H[:6]]
+    assignments += [A(team="B팀", hour=h) for h in H[:2]]
+    score, detail = rule4_first_slot(assignments)
+    assert detail["violations"] == []
     assert score == 100.0
 
 
@@ -181,8 +218,8 @@ def test_rule4_afternoon_first_slot_follows_the_interview_timing():
 
     score, detail = rule4_first_slot(rows, {"start": "09:00", "minutes": 60, "rest": 10})
     assert detail["first_slots"] == [H[0], H[3]]
-    assert score == 0.0
     assert [v["hour"] for v in detail["violations"]] == [H[3]]
+    assert score < 100.0
 
     score, detail = rule4_first_slot(rows)          # 기본 조건 — 30분 · 5분
     assert detail["first_slots"] == [H[0], H[6]]
@@ -195,7 +232,7 @@ def test_rule_compliance_passes_the_timing_down_to_rule4():
     rows = [A(team="A팀", hour=H[3]), A(team="B팀", hour=H[3]), A(team="A팀", hour=H[4])]
     long_day = {"start": "09:00", "minutes": 60, "rest": 10}
 
-    assert rule_compliance(rows, timing=long_day).scores["rule4_first_slot"] == 0.0
+    assert rule_compliance(rows, timing=long_day).scores["rule4_first_slot"] < 100.0
     assert rule_compliance(rows).scores["rule4_first_slot"] == 100.0
 
 

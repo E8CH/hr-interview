@@ -26,8 +26,9 @@ def _a(aid, ap, iv, day, hour, team, lock="DRAFT"):
 
 HOUR_LONG = {"start": "09:00", "minutes": 60, "rest": 10}
 
-#: 대형 조(AI솔루션팀 5건)가 4타임 · 7타임을 차지한 시간표. 기본 조건에서는
-#: 7타임이, 1시간 면접에서는 4타임이 오후의 첫 칸이라 걸리는 자리가 달라진다.
+#: 두 날 모두 AI솔루션팀이 그날 크게 잡고, 미래혁신팀은 한 명씩만 보는 시간표.
+#: AI솔루션팀이 4타임과 7타임을 차지하고 있어, 기본 조건에서는 7타임이 · 1시간
+#: 면접에서는 4타임이 오후의 첫 칸이 되면서 걸리는 자리가 달라진다.
 _BIG_TEAM_ROWS = [
     _a("1", "P1", "IV001", "1일차", HOURS[3], "AI솔루션팀"),
     _a("2", "P2", "IV001", "2일차", HOURS[3], "AI솔루션팀"),
@@ -35,6 +36,8 @@ _BIG_TEAM_ROWS = [
     _a("4", "P4", "IV002", "1일차", HOURS[1], "AI솔루션팀"),
     _a("5", "P5", "IV002", "1일차", HOURS[2], "AI솔루션팀"),
     _a("6", "P6", "IV003", "1일차", HOURS[7], "미래혁신팀"),
+    _a("7", "P7", "IV002", "2일차", HOURS[4], "AI솔루션팀"),
+    _a("8", "P8", "IV003", "2일차", HOURS[5], "미래혁신팀"),
 ]
 
 
@@ -127,11 +130,48 @@ def test_first_slot_penalty_follows_the_interview_timing():
     10분 휴식이면 같은 12:30이 4타임이다. 재편성이 이 조건을 안 보면 원래
     시간표가 지킨 칸과 다른 칸을 지키려 들어, 고칠수록 규칙4가 무너진다.
     """
-    # 기본 조건 — 대형 조가 차지한 첫 칸은 7타임 하나뿐이다
+    # 기본 조건 — 큰 조가 차지한 첫 칸은 1일차 7타임 하나뿐이다
     assert soft_penalty_breakdown(_BIG_TEAM_ROWS, IVS, [])["RULE4_FIRST_SLOT"] == W_FIRST_SLOT
     # 1시간 면접 — 4타임이 오후 첫 칸이 되어 이틀치가 걸린다
     assert soft_penalty_breakdown(
         _BIG_TEAM_ROWS, IVS, [], HOUR_LONG)["RULE4_FIRST_SLOT"] == 2 * W_FIRST_SLOT
+
+
+def test_team_that_cannot_dodge_the_first_slot_is_not_charged():
+    """하루를 통째로 쓰는 조는 첫 칸을 피할 길이 없다 — 벌점을 물리지 않는다.
+
+    작은 조가 그 칸을 함께 잡고 있으면 '수요 적은 조부터' 는 지켜진 것이다.
+    04 규칙4도 이 시간표를 만점으로 본다. 두 잣대가 갈리면 04가 만점을 준
+    자리를 05가 벌점으로 깎아, 재편성이 멀쩡한 자리를 흔들게 된다.
+    """
+    rows = [_a(f"B{i}", f"PB{i}", "IV002", "1일차", HOURS[i], "AI솔루션팀")
+            for i in range(6)]
+    rows += [_a(f"S{i}", f"PS{i}", "IV003", "1일차", HOURS[i], "미래혁신팀")
+             for i in range(2)]
+    assert soft_penalty_breakdown(rows, IVS, [])["RULE4_FIRST_SLOT"] == 0
+
+    # 작은 조가 첫 칸을 비우고 뒤로 물러나면 그때 걸린다
+    moved = [r for r in rows if r.assignment_id != "S0"]
+    moved.append(_a("S0", "PS0", "IV003", "1일차", HOURS[2], "미래혁신팀"))
+    assert soft_penalty_breakdown(moved, IVS, [])["RULE4_FIRST_SLOT"] == W_FIRST_SLOT
+
+
+def test_team_size_is_counted_per_day_not_per_round():
+    """조가 크다 · 작다는 **그날** 기준이다. 회차 전체 건수로 재면 안 된다.
+
+    AI솔루션팀은 회차 전체로는 6명을 보지만 2일차에는 한 명뿐이다. 그날 첫
+    칸에 앉아도 지각으로 밀릴 줄이 없으니 흠이 아니다. 회차 전체로 재면
+    '큰 조가 첫 칸을 차지했다' 며 애먼 자리를 벌한다.
+    """
+    rows = [_a(f"A{i}", f"PA{i}", "IV002", "1일차", HOURS[i], "AI솔루션팀")
+            for i in range(1, 6)]
+    rows.append(_a("A0", "PA0", "IV003", "1일차", HOURS[1], "미래혁신팀"))
+    # 2일차 — AI솔루션팀 1명(첫 칸), 미래혁신팀 2명
+    rows.append(_a("B0", "PB0", "IV001", "2일차", HOURS[0], "AI솔루션팀"))
+    rows += [_a(f"B{i}", f"PB{i}", "IV003", "2일차", HOURS[i], "미래혁신팀")
+             for i in (1, 2)]
+
+    assert soft_penalty_breakdown(rows, IVS, [])["RULE4_FIRST_SLOT"] == 0
 
 
 def test_repair_reads_the_timing_off_the_snapshot():

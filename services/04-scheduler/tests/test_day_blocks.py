@@ -76,12 +76,15 @@ def _seat_one_more(interviewers, timing) -> str:
     return board.assignments[-1].hour
 
 
-def test_small_group_avoids_whichever_slot_the_timing_calls_afternoon_first(interviewers):
-    """소규모 조는 덩어리의 첫 칸을 비껴 앉는다 — 그 칸이 어디인지는 조건이 정한다.
+def test_small_group_takes_whichever_slot_the_timing_calls_afternoon_first(interviewers):
+    """수요 적은 조는 덩어리의 첫 칸을 먼저 잡는다 — 그 칸이 어디인지는 조건이 정한다.
 
-    앞의 세 칸이 이미 찬 상태에서 한 명을 더 앉히면, 30분 면접에서는 4타임
-    (10:45, 오전 한복판)이 그대로 다음 자리다. 1시간 면접에서는 같은 4타임이
-    12:30 — 오후 첫 칸이므로 한 칸 더 밀어 5타임에 앉힌다.
+    앞의 세 칸이 이미 찬 상태에서 한 명을 더 앉히면, 오전 첫 칸은 이미 자기
+    조가 쓰고 있으니 남은 첫 칸인 오후로 간다. 30분 면접이면 그 자리가
+    7타임(12:30)이고, 1시간 면접이면 같은 12:30이 4타임이다.
+
+    지각이 나도 뒤로 밀 줄이 짧은 조가 첫 칸에 앉아야 손해가 작다 — 그래서
+    비껴 앉는 것이 아니라 먼저 앉는다.
     """
-    assert _seat_one_more(interviewers, None) == HOURS[3]
-    assert _seat_one_more(interviewers, HOUR_LONG) == HOURS[4]
+    assert _seat_one_more(interviewers, None) == HOURS[6]
+    assert _seat_one_more(interviewers, HOUR_LONG) == HOURS[3]

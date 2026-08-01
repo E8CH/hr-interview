@@ -8,9 +8,12 @@ rule2_team_conflict (HARD): 같은 팀이 동시간에 중복 배치된 건수.
                             100 × (1 − 중복건수 / 전체 배정수).
 rule3_vertical_group(SOFT): (팀, 면접일)별로 사용한 시간대가 HOURS 순서상 연속인 그룹의 비율.
                             Webex 방 재입장을 최소화하는 "세로 연속" 규칙.
-rule4_first_slot   (SOFT): 그날 첫 타임의 동시 진행 건수가 그날의 다른 타임보다
-                            많지 않아야 한다("첫 타임은 소규모 조").
-                            점유 시간대가 2개 미만인 날은 평가 대상에서 제외.
+rule4_first_slot   (SOFT): 오전 · 오후 첫 타임을 두 가지로 본다 — ① 첫 칸의 동시
+                            진행 건수가 그 덩어리의 다른 칸보다 많지 않을 것, ②
+                            첫 칸에 앉은 조가 그 덩어리의 조들보다 작을 것("첫
+                            타임은 수요 적은 조부터"). 조의 크기는 그날 그 조가
+                            보는 인원으로 잰다. 점유 시간대가 2개 미만인 덩어리는
+                            평가 대상에서 제외.
 overall                   : 네 점수의 산술 평균 (명세 예시 60/100/100/100 → 90.0과 일치).
 """
 from __future__ import annotations
@@ -139,7 +142,16 @@ def rule3_vertical_group(assignments: Iterable[Any]) -> tuple[float, dict]:
 
 
 def rule4_first_slot(assignments: Iterable[Any], timing=None) -> tuple[float, dict]:
-    """오전 첫 타임 · 오후 첫 타임을 각각 본다.
+    """오전 첫 타임 · 오후 첫 타임을 각각, 두 가지로 본다.
+
+    ① 부하 — 첫 칸의 동시 진행 건수가 그 덩어리의 다른 칸보다 많지 않아야 한다.
+    ② 구성 — 첫 칸에 앉은 조가 그 덩어리에 앉은 조들보다 작아야 한다. '수요 적은
+       조부터' 가 여기서 판정된다. 조의 크기는 **그날 그 조가 보는 인원** 으로 잰다.
+       지각 한 번의 손해는 그 조의 세로 줄이 얼마나 남았는지에 비례하기 때문이다.
+
+    ①만 보면 규칙이 사실상 아무 말도 안 한다 — 칸마다 인원이 고르면 큰 조가 첫
+    칸을 차지해도 만점이 나온다. ②가 그 경우를 잡는다. 반대로 ②만 보면 첫 칸에
+    사람을 잔뜩 몰아넣어도 조 구성만 맞으면 통과한다. 둘을 따로 세고 함께 매긴다.
 
     어느 칸이 덩어리의 첫 칸인지는 면접 진행 조건이 정한다 — 30분 면접이면
     오후는 7타임(12:30)부터, 1시간 면접이면 4타임(12:30)부터다. 조건이 바뀌면
@@ -151,22 +163,32 @@ def rule4_first_slot(assignments: Iterable[Any], timing=None) -> tuple[float, di
     team_at_first: dict[str, set[str]] = defaultdict(set)
     team_totals: Counter = Counter()
     team_day_size: Counter = Counter()
+    teams_in_block: dict[tuple[str, int], set[str]] = defaultdict(set)
     for a in assignments:
         day, hour, team = _get(a, "day"), _get(a, "hour"), _get(a, "team")
         counts[(day, hour)] += 1
         team_totals[team] += 1
         team_day_size[(team, day)] += 1
+        for index, block in enumerate(blocks):
+            if hour in block:
+                teams_in_block[(day, index)].add(team)
         if hour in firsts:
             team_at_first[f"{day}|{hour}"].add(team)
+
+    def _mean_size(day: str, teams: Iterable[str]) -> float:
+        sizes = [team_day_size[(team, day)] for team in teams]
+        return sum(sizes) / len(sizes) if sizes else 0.0
 
     evaluated = 0
     passed = 0
     violations = []
     for day in DAYS:
-        for block in blocks:
+        for index, block in enumerate(blocks):
             occupied = [h for h in block if counts[(day, h)] > 0]
             if len(occupied) < 2:
                 continue  # 판정 불가 블록은 제외
+
+            # ① 부하 — 첫 칸이 다른 칸보다 붐비지 않아야 한다
             evaluated += 1
             first = counts[(day, block[0])]
             rest = max(counts[(day, h)] for h in block[1:])
@@ -174,7 +196,25 @@ def rule4_first_slot(assignments: Iterable[Any], timing=None) -> tuple[float, di
                 passed += 1
             else:
                 violations.append(
-                    {"day": day, "hour": block[0], "first_count": first, "rest_max": rest}
+                    {"day": day, "hour": block[0], "kind": "부하",
+                     "first_count": first, "rest_max": rest}
+                )
+
+            # ② 구성 — 첫 칸에 앉은 조가 그 덩어리의 조들보다 작아야 한다.
+            #    아무도 안 앉은 첫 칸은 잴 것이 없다.
+            seated = team_at_first.get(f"{day}|{block[0]}") or set()
+            if not seated:
+                continue
+            evaluated += 1
+            here = _mean_size(day, seated)
+            whole = _mean_size(day, teams_in_block[(day, index)])
+            if here <= whole:
+                passed += 1
+            else:
+                violations.append(
+                    {"day": day, "hour": block[0], "kind": "구성",
+                     "first_slot_avg": _round(here), "block_avg": _round(whole),
+                     "teams": sorted(seated)}
                 )
 
     # 그 칸에 앉은 조가 그날 몇 명짜리 조였는지 — '수요 적은 조부터' 를 사람이
