@@ -155,7 +155,7 @@ def place_group(
     else:
         overflow = []
 
-    # 소규모 그룹(3명 이하)은 첫 타임(09시)을 피해 시작 → 규칙4 "첫 타임 소규모"
+    # 소규모 그룹(3명 이하)은 그날 첫 칸을 피해 시작 → 규칙4 "첫 타임 소규모"
     prefer = 0 if k >= 4 else 1
     starts = sorted(range(SLOTS_PER_DAY - k + 1), key=lambda s: (abs(s - prefer), s))
 

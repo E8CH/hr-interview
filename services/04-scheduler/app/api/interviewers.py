@@ -12,7 +12,7 @@ from app.domain.schemas import (
     InterviewerUpdate,
     RoundSelectionIn,
 )
-from app.infrastructure.contracts import band_of
+from app.infrastructure.contracts import band_of, normalize_availability
 from app.errors import ConflictError, NotFoundError, ok
 from app.infrastructure.db import get_db
 from app.services import interviewer_roster
@@ -21,6 +21,7 @@ router = APIRouter(prefix="/api/v1/interviewers", tags=["interviewers"])
 
 
 def _serialize(row: Interviewer) -> dict:
+    availability = normalize_availability(row.availability)
     return {
         "interviewer_id": row.interviewer_id,
         "name": row.name,
@@ -30,9 +31,10 @@ def _serialize(row: Interviewer) -> dict:
         "priority": row.priority,
         "email": row.email,
         "backup_email": row.backup_email,
-        "availability": row.availability or {},
+        # 옛 시각 이름으로 저장된 자료도 지금 칸으로 맞춰 내보낸다
+        "availability": availability,
         # 화면에서 고른 오전 · 오후 덩어리 (아직 안 정했으면 빈칸)
-        "time_band": band_of(row.availability) if row.availability else "",
+        "time_band": band_of(availability) if availability else "",
     }
 
 
@@ -80,7 +82,8 @@ def set_time_bands(body: InterviewerBandsIn, db: Session = Depends(get_db)):
     사번 하나씩 PUT 하면 30명이 곧 30번 호출이라, 화면에서 '정하기'를 누를 때는
     이 경로로 한 번에 보낸다.
     """
-    return ok(interviewer_roster.set_bands(db, body.bands, actor=body.actor))
+    return ok(interviewer_roster.set_bands(
+        db, body.bands, actor=body.actor, timing=body.timing))
 
 
 @router.get("/{interviewer_id}")

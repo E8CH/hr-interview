@@ -11,8 +11,12 @@ from openpyxl import Workbook
 
 from app.domain.interviewer import Interviewer
 from app.domain.round_interviewer import RoundInterviewer
+from app.infrastructure.contracts import BAND_AM, BAND_PM, HOURS, band_hours
 from app.infrastructure.db import SessionLocal
 from app.services import interviewer_roster, schedule_service
+
+AM = band_hours(BAND_AM)
+PM = band_hours(BAND_PM)
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 SAMPLE = (
@@ -101,12 +105,12 @@ def test_import_keeps_existing_availability(client, db, roster_bytes):
     """회신으로 채워진 가용성을 재업로드가 지우면 안 된다."""
     _upload(client, roster_bytes)
     row = db.get(Interviewer, "IV101")
-    row.availability = {"월": ["10시"]}
+    row.availability = {"월": [HOURS[1]]}
     db.commit()
 
     _upload(client, roster_bytes)
     db.expire_all()
-    assert db.get(Interviewer, "IV101").availability == {"월": ["10시"]}
+    assert db.get(Interviewer, "IV101").availability == {"월": [HOURS[1]]}
 
 
 def test_import_accepts_alias_columns(client):
@@ -127,7 +131,7 @@ def test_import_accepts_alias_columns(client):
 def test_import_uses_defaults_for_blank_numbers(client):
     data = _sheet_bytes([["사번", "성명", "소속팀"], ["A1", "홍길동", "AI솔루션팀"]])
     parsed = _upload(client, data).json()["data"]["interviewers"][0]
-    assert parsed["max_daily"] == 6
+    assert parsed["max_daily"] == len(HOURS)
     assert parsed["priority"] == 2
     assert parsed["title"] == ""  # 직급 칸이 없어도 업로드는 통과한다
 
@@ -153,8 +157,8 @@ def test_import_reads_time_band_column(client, db):
     assert [p["time_band"] for p in parsed] == ["오전만", "오후만", ""]
 
     listed = {i["interviewer_id"]: i for i in client.get("/api/v1/interviewers").json()["data"]}
-    assert listed["A1"]["availability"]["월"] == ["09시", "10시", "11시"]
-    assert listed["A2"]["availability"]["금"] == ["14시", "15시", "16시"]
+    assert listed["A1"]["availability"]["월"] == AM
+    assert listed["A2"]["availability"]["금"] == PM
     assert listed["A3"]["availability"] == {}   # 안 적었으면 건드리지 않는다
     assert listed["A1"]["time_band"] == "오전만"
 
@@ -168,9 +172,9 @@ def test_set_bands_updates_availability_and_cap(client, roster_bytes):
 
     listed = {i["interviewer_id"]: i for i in client.get("/api/v1/interviewers").json()["data"]}
     assert listed["IV101"]["time_band"] == "오전만"
-    # 오전만 고르면 하루 최대도 그 칸 수(3명)로 줄어든다
-    assert listed["IV101"]["max_daily"] == 3
-    assert listed["IV102"]["availability"]["수"] == ["14시", "15시", "16시"]
+    # 오전만 고르면 하루 최대도 그 칸 수만큼 줄어든다
+    assert listed["IV101"]["max_daily"] == len(AM)
+    assert listed["IV102"]["availability"]["수"] == PM
 
 
 def test_set_bands_rejects_unknown_band(client, roster_bytes):
@@ -178,6 +182,50 @@ def test_set_bands_rejects_unknown_band(client, roster_bytes):
     r = client.put("/api/v1/interviewers/bands", json={"bands": {"IV101": "새벽만"}})
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+def test_ignore_availability_fills_seats_and_names_who_to_call(
+    client, db, roster_bytes, sample_round_id
+):
+    """오전만 되는 담당자뿐일 때 '일정 무시하고 배치하기'가 오후 자리도 쓴다.
+
+    자리는 채워지되 그게 규칙 위반으로 세지면 안 되고, 대신 어긋난 사람이
+    누구인지는 명단으로 나와야 한다 — 인사가 개별로 조율할 대상이다.
+    """
+    _upload(client, roster_bytes)
+    everyone = [i["interviewer_id"] for i in client.get("/api/v1/interviewers").json()["data"]]
+    client.put("/api/v1/interviewers/bands",
+               json={"bands": {iv: "오전만" for iv in everyone}, "actor": "pytest"})
+    client.put(f"/api/v1/interviewers/rounds/{sample_round_id}",
+               json={"interviewer_ids": everyone, "actor": "pytest"})
+
+    def _generate(ignore: bool) -> dict:
+        return client.post("/api/v1/schedules/generate", json={
+            "round_id": sample_round_id, "plan_id": f"plan-ignore-{ignore}",
+            "algorithm": "v5", "constraints": {"ignore_availability": ignore},
+        }).json()["data"]
+
+    def _hours(schedule_id: str) -> set[str]:
+        rows = client.get(f"/api/v1/schedules/{schedule_id}").json()["data"]["assignments"]
+        return {row["hour"] for row in rows}
+
+    kept, ignored = _generate(False), _generate(True)
+
+    # 지키면 오전 칸만 쓰고, 무시하면 그 밖의 칸까지 쓴다
+    assert _hours(kept["schedule_id"]) <= set(AM)
+    assert _hours(ignored["schedule_id"]) - set(AM)
+    assert kept["off_band_count"] == 0
+    assert ignored["off_band_count"] > 0
+    # 일부러 고른 어긋남이므로 규칙 위반으로 세지 않는다
+    assert ignored["hard_violations"] == 0
+    assert all(row["hour"] in HOURS for row in ignored["off_band"])
+
+    # 다시 검증해도 같은 잣대를 쓴다 (만들 때 켠 설정을 기억한다)
+    again = client.post(
+        f"/api/v1/schedules/{ignored['schedule_id']}/validate"
+    ).json()["data"]
+    assert again["hard_violations"] == []
+    assert len(again["off_band"]) == ignored["off_band_count"]
 
 
 def test_band_limits_schedule_hours(client, db, roster_bytes, sample_round_id):
@@ -188,8 +236,8 @@ def test_band_limits_schedule_hours(client, db, roster_bytes, sample_round_id):
 
     loaded = {iv.interviewer_id: iv for iv in
               schedule_service.load_interviewers(db, sample_round_id)}
-    assert loaded["IV101"].availability["월"] == ["09시", "10시", "11시"]
-    assert not loaded["IV101"].is_available("월", "15시")
+    assert loaded["IV101"].availability["월"] == AM
+    assert not loaded["IV101"].is_available("월", PM[0])
 
 
 # ------------------------------------------------------------------ 회차 선별
@@ -249,3 +297,28 @@ def test_schedule_falls_back_to_master_without_selection(client, db, roster_byte
     _upload(client, roster_bytes)
     loaded = schedule_service.load_interviewers(db, "R-선별없음")
     assert len(loaded) == 20
+
+
+# ------------------------------------- 옛 시각 이름으로 저장된 자료 (칸 이름 개편 이전)
+
+def test_legacy_clock_hours_are_moved_into_current_slots(client, db, roster_bytes,
+                                                         sample_round_id):
+    """'09시' 같은 옛 이름이 남아 있어도 그 사람이 통째로 빠지면 안 된다.
+
+    칸 이름을 자리 번호로 바꾸기 전에 저장된 DB 를 그대로 열면, 저장된 시간이
+    지금 쓰는 어느 칸에도 안 걸려 배정 인원이 0명이 된다. 그래서 읽을 때
+    그 이름이 뜻하던 오전/오후만 살려 지금 칸으로 옮긴다.
+    """
+    _upload(client, roster_bytes)
+    db.get(Interviewer, "IV101").availability = {"월": ["09시", "10시", "11시"]}
+    db.get(Interviewer, "IV102").availability = {"화": ["14시", "15시"]}
+    db.get(Interviewer, "IV103").availability = {"수": ["09시", "15시"]}
+    db.commit()
+    interviewer_roster.select_for_round(db, sample_round_id, ["IV101", "IV102", "IV103"])
+
+    loaded = {iv.interviewer_id: iv for iv in
+              schedule_service.load_interviewers(db, sample_round_id)}
+    assert loaded["IV101"].availability == {"월": AM}      # 오전 → 오전 칸
+    assert loaded["IV102"].availability == {"화": PM}      # 오후 → 오후 칸
+    assert loaded["IV103"].availability == {"수": list(HOURS)}  # 둘 다 → 하루 종일
+    assert loaded["IV101"].is_available("월", AM[0])

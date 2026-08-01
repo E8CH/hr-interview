@@ -32,6 +32,7 @@ from app.services.notification_client import (  # noqa: E402
     reset_notification_client,
 )
 from app.timeutil import utcnow  # noqa: E402
+from shared.contracts.constants import HOURS  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -133,9 +134,9 @@ def valid_payload():
     return {
         "job_role": "배터리 소재 연구",
         "available_slots": [
-            {"day": "화", "hour": "10시"},
-            {"day": "화", "hour": "11시"},
-            {"day": "수", "hour": "14시"},
+            {"day": "화", "hour": HOURS[1]},
+            {"day": "화", "hour": HOURS[2]},
+            {"day": "수", "hour": HOURS[3]},
         ],
         "max_daily": 6,
         "backup_contact": "backup@lge.com",

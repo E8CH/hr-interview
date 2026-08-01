@@ -99,7 +99,7 @@ curl -X POST http://localhost:8005/api/v1/repair/plans/{event_id}/select \
 | `H4_MAX_DAILY_EXCEEDED` | HARD | 면접위원 일일 최대 초과 |
 | `RULE1_GRAD_BALANCE` | SOFT | 요일별 대학원 비율 30% ±20%p |
 | `RULE3_VERTICAL_GROUP` | SOFT | 동일 팀 세로 연속 배치 |
-| `RULE4_FIRST_SLOT` | SOFT | 첫 타임(09시·14시) 소규모 조 우선 |
+| `RULE4_FIRST_SLOT` | SOFT | 첫 타임(1타임) 소규모 조 우선 |
 
 ## Plan A/B/C
 

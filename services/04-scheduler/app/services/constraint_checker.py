@@ -8,6 +8,10 @@
   AVAILABILITY_VIOLATION 응답한 가용 시간대 밖 배정
   UNKNOWN_SLOT           정의되지 않은 요일/시간대
 
+인사가 '담당자 일정 무시하고 배치하기'를 켰다면 가용 시간대 밖 배정은 위반이
+아니다 — 자리를 채우려고 일부러 고른 것이기 때문이다. 그래서 그때는 규칙
+위반에서 빼고, 대신 off_band() 로 "누구와 다시 이야기해야 하는지" 를 따로 낸다.
+
 소프트 페널티는 4대 규칙의 SOFT 항목 미달분 + 리더 부하 쏠림으로 계산한다.
 """
 from __future__ import annotations
@@ -25,14 +29,16 @@ def _availability_map(interviewers: Iterable[Any] | None) -> dict[str, dict]:
     for iv in interviewers or []:
         result[_get(iv, "interviewer_id")] = {
             "availability": _get(iv, "availability", {}) or {},
-            "max_daily": int(_get(iv, "max_daily", 6) or 6),
+            "max_daily": int(_get(iv, "max_daily", len(HOURS)) or len(HOURS)),
             "priority": int(_get(iv, "priority", 2) or 2),
         }
     return result
 
 
 def check_hard_constraints(
-    assignments: Iterable[Any], interviewers: Iterable[Any] | None = None
+    assignments: Iterable[Any],
+    interviewers: Iterable[Any] | None = None,
+    ignore_availability: bool = False,
 ) -> list[dict]:
     items = list(assignments)
     ivs = _availability_map(interviewers)
@@ -69,7 +75,7 @@ def check_hard_constraints(
         iv_day[(iv_id, day)] += 1
 
         meta = ivs.get(iv_id)
-        if meta is not None:
+        if meta is not None and not ignore_availability:
             allowed = meta["availability"].get(day, [])
             if allowed and hour not in allowed:
                 violations.append(
@@ -151,6 +157,40 @@ def check_hard_constraints(
     return violations
 
 
+def off_band(
+    assignments: Iterable[Any], interviewers: Iterable[Any] | None = None
+) -> list[dict]:
+    """담당자가 적어 낸 시간과 어긋나게 잡힌 자리 — 다시 이야기해야 할 명단.
+
+    '담당자 일정 무시하고 배치하기'를 켜면 이런 자리가 생긴다. 규칙 위반으로
+    세지는 않지만 숨겨서도 안 된다. 인사가 누구에게 전화해야 하는지 알아야
+    하기 때문이다.
+    """
+    ivs = _availability_map(interviewers)
+    rows: list[dict] = []
+    for a in assignments:
+        iv_id = _get(a, "interviewer_id")
+        day, hour = _get(a, "day"), _get(a, "hour")
+        meta = ivs.get(iv_id)
+        if meta is None:
+            continue
+        allowed = meta["availability"].get(day, [])
+        if allowed and hour in allowed:
+            continue
+        reason = "그 요일에 어렵다고 답함" if not allowed else "적어 낸 시간대 밖"
+        rows.append(
+            {
+                "interviewer_id": iv_id,
+                "applicant_id": _get(a, "applicant_id"),
+                "team": _get(a, "team"),
+                "day": day,
+                "hour": hour,
+                "message": f"{iv_id} {day} {hour} — {reason}",
+            }
+        )
+    return rows
+
+
 def soft_penalty(
     report: RuleReport, assignments: Iterable[Any], interviewers: Iterable[Any] | None = None
 ) -> float:
@@ -177,9 +217,10 @@ def validate(
     assignments: Iterable[Any],
     interviewers: Iterable[Any] | None = None,
     report: RuleReport | None = None,
+    ignore_availability: bool = False,
 ) -> dict:
     items = list(assignments)
-    violations = check_hard_constraints(items, interviewers)
+    violations = check_hard_constraints(items, interviewers, ignore_availability)
     if report is None:
         from app.services.rule_evaluator import rule_compliance
 
@@ -187,4 +228,5 @@ def validate(
     return {
         "hard_violations": violations,
         "soft_penalty": soft_penalty(report, items, interviewers),
+        "off_band": off_band(items, interviewers),
     }

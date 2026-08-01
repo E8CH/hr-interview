@@ -6,7 +6,7 @@ import time
 import pytest
 
 from app.domain.schemas import ApplicantIn, GenerateConstraints
-from app.infrastructure.contracts import AM_HOURS, PM_HOURS
+from app.infrastructure.contracts import DAYS, HOURS
 from app.services import algorithm_v1, algorithm_v4, algorithm_v5, registry
 from app.services.constraint_checker import check_hard_constraints
 from app.services.rule_evaluator import rule_compliance
@@ -50,11 +50,14 @@ def test_algorithm_v4_rule_compliance_and_vertical_group(applicants, interviewer
 
 
 def test_algorithm_v4_trades_coverage(applicants, interviewers):
-    """팀당 요일 2개 제한 → 커버리지가 100%에 못 미친다 (명세상 68% 수준)"""
+    """팀당 요일 2개 제한 → 커버리지가 100%에 못 미친다.
+
+    2요일 × 8타임 = 16슬롯, 5팀이면 80석인데 지원자는 88명이다.
+    """
     plan = algorithm_v4.run(applicants, interviewers)
     coverage = _coverage(plan, applicants)
 
-    assert 60.0 <= coverage < 90.0
+    assert 60.0 <= coverage < 100.0
     assert len(plan.unassigned) == len(applicants) - len(plan.assignments)
     assert all(len(days) == 2 for days in plan.notes["team_days"].values())
 
@@ -106,12 +109,14 @@ def test_no_duplicate_applicant(algorithm, applicants, interviewers):
 
 
 def _interviewer_blocks(assignments) -> list[tuple[str, str, str, list[int]]]:
-    """(면접관, 요일, 오전/오후)별로 맡은 시간을 시간표 순서 번호로 편다."""
-    slots: dict[tuple[str, str, str], list[int]] = {}
+    """(면접관, 요일)별로 맡은 시간을 시간표 순서 번호로 편다.
+
+    점심 시간을 따로 두지 않으므로 하루는 1타임~8타임 한 덩어리다.
+    """
+    slots: dict[tuple[str, str], list[int]] = {}
     for a in assignments:
-        band = AM_HOURS if a.hour in AM_HOURS else PM_HOURS
-        slots.setdefault((a.interviewer_id, a.day, band[0]), []).append(band.index(a.hour))
-    return [(iv, day, band, sorted(idx)) for (iv, day, band), idx in slots.items()]
+        slots.setdefault((a.interviewer_id, a.day), []).append(HOURS.index(a.hour))
+    return [(iv, day, "하루", sorted(idx)) for (iv, day), idx in slots.items()]
 
 
 @pytest.mark.parametrize("algorithm", ALL_ALGORITHMS)
@@ -133,8 +138,9 @@ def test_interviewer_slots_are_back_to_back(algorithm, applicants, interviewers)
 
 
 def test_stage3_fallback_absorbs_overflow(interviewers):
-    """한 팀이 3요일 수용량(18)을 넘기면 Stage 3가 남은 요일로 흡수한다"""
+    """한 팀이 3요일 수용량(3 × 8 = 24)을 넘기면 Stage 3가 남은 요일로 흡수한다"""
     team = "AI솔루션팀"
+    over_capacity = 3 * len(HOURS) + 4  # 28명 — 3요일로는 4명이 남는다
     overflow = [
         ApplicantIn(
             applicant_id=f"OV{i:03d}",
@@ -143,29 +149,30 @@ def test_stage3_fallback_absorbs_overflow(interviewers):
             degree="대학원" if i % 3 == 0 else "학사",
             priority_score=4.0 - i * 0.01,
         )
-        for i in range(22)
+        for i in range(over_capacity)
     ]
 
     v4_plan = algorithm_v4.run(overflow, interviewers)
     v5_plan = algorithm_v5.run(overflow, interviewers)
 
     assert len(v4_plan.assignments) < len(v5_plan.assignments)
-    assert len(v5_plan.assignments) == 22  # 22 > 18 → fallback이 나머지 4명을 흡수
+    assert len(v5_plan.assignments) == over_capacity  # fallback이 넘친 4명을 흡수
     assert v5_plan.unassigned == []
     assert check_hard_constraints(v5_plan.assignments, interviewers) == []
     assert any("HR_MANUAL" in a.reason_tags for a in v5_plan.assignments)
 
 
 def test_capacity_limit_leaves_unassigned(interviewers):
-    """팀 수용량(5요일 × 6타임 = 30)을 넘으면 남는 지원자가 생긴다"""
+    """팀 수용량(5요일 × 8타임 = 40)을 넘으면 남는 지원자가 생긴다"""
     team = "전극기술팀"
+    capacity = len(DAYS) * len(HOURS)
     crowd = [
         ApplicantIn(applicant_id=f"C{i:03d}", name=f"과밀{i}", team=team, degree="학사")
-        for i in range(35)
+        for i in range(capacity + 5)
     ]
     plan = algorithm_v5.run(crowd, interviewers)
 
-    assert len(plan.assignments) == 30
+    assert len(plan.assignments) == capacity
     assert len(plan.unassigned) == 5
     assert check_hard_constraints(plan.assignments, interviewers) == []
 

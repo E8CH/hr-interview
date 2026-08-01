@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from app.infrastructure.contracts import HOURS
 
+H = HOURS
+
 
 def test_list_interviewers_seeded(client):
     data = client.get("/api/v1/interviewers").json()["data"]
@@ -24,14 +26,14 @@ def test_create_and_get_interviewer(client):
         "max_daily": 4,
         "priority": 2,
         "email": "iv901@example.com",
-        "availability": {"월": ["09시", "10시"], "화": list(HOURS)},
+        "availability": {"월": [H[0], H[1]], "화": list(HOURS)},
     }
     created = client.post("/api/v1/interviewers", json=body)
     assert created.status_code == 201
     assert created.json()["data"]["interviewer_id"] == "IV901"
 
     fetched = client.get("/api/v1/interviewers/IV901").json()["data"]
-    assert fetched["availability"]["월"] == ["09시", "10시"]
+    assert fetched["availability"]["월"] == [H[0], H[1]]
 
 
 def test_duplicate_create_returns_409(client):
@@ -48,12 +50,12 @@ def test_update_availability(client):
 
     resp = client.put(
         "/api/v1/interviewers/IV903",
-        json={"availability": {"금": ["14시", "15시"]}, "max_daily": 2},
+        json={"availability": {"금": [H[3], H[4]]}, "max_daily": 2},
     )
     data = resp.json()["data"]
 
     assert resp.status_code == 200
-    assert data["availability"] == {"금": ["14시", "15시"]}
+    assert data["availability"] == {"금": [H[3], H[4]]}
     assert data["max_daily"] == 2
 
 
@@ -70,7 +72,7 @@ def test_get_not_found(client):
 def test_invalid_day_rejected(client):
     resp = client.post(
         "/api/v1/interviewers",
-        json={"interviewer_id": "IV904", "team": "전극기술팀", "availability": {"토": ["09시"]}},
+        json={"interviewer_id": "IV904", "team": "전극기술팀", "availability": {"토": [H[0]]}},
     )
     assert resp.status_code == 400
     assert resp.json()["error"]["code"] == "VALIDATION_FAILED"
@@ -88,7 +90,7 @@ def test_updated_availability_affects_generation(client):
     """가용성을 바꾸면 이후 생성되는 시간표가 그 제약을 지킨다"""
     client.put(
         "/api/v1/interviewers/IV101",
-        json={"availability": {"금": ["16시"]}},
+        json={"availability": {"금": [H[5]]}},
     )
     data = client.post(
         "/api/v1/schedules/generate",
@@ -100,10 +102,10 @@ def test_updated_availability_affects_generation(client):
     assignments = client.get(f"/api/v1/schedules/{data['schedule_id']}").json()["data"]["assignments"]
     for a in assignments:
         if a["interviewer_id"] == "IV101":
-            assert (a["day"], a["hour"]) == ("금", "16시")
+            assert (a["day"], a["hour"]) == ("금", H[5])
 
     # 원복 (다른 테스트에 영향 주지 않도록)
     client.put(
         "/api/v1/interviewers/IV101",
-        json={"availability": {d: ["14시", "15시", "16시"] for d in ["월", "화", "수", "목", "금"]}},
+        json={"availability": {d: [H[3], H[4], H[5]] for d in ["월", "화", "수", "목", "금"]}},
     )

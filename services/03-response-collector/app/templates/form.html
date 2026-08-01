@@ -115,7 +115,7 @@
 
     <label for="max_daily">하루 최대 면접 횟수 <span class="hint">(1~{{ max_slots }})</span></label>
     <input type="number" id="max_daily" name="max_daily" min="1" max="{{ max_slots }}"
-           value="{{ submitted_payload.max_daily if submitted_payload else 6 }}">
+           value="{{ submitted_payload.max_daily if submitted_payload else max_slots }}">
 
     <label for="backup_contact">백업 담당자 이메일 <span class="hint">(선택)</span></label>
     <input type="email" id="backup_contact" name="backup_contact" placeholder="backup@company.com"

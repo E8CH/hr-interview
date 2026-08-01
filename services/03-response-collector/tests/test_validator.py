@@ -2,6 +2,7 @@
 import pytest
 
 from app.services.validator import MAX_SLOTS, normalize_payload, validate_form_response
+from shared.contracts.constants import DAYS, HOURS
 
 
 def test_valid_payload_passes(valid_payload):
@@ -12,7 +13,7 @@ def test_valid_payload_passes(valid_payload):
 
 def test_minimal_payload_passes():
     ok, reason = validate_form_response(
-        {"job_role": "직무다", "available_slots": [{"day": "화", "hour": "10시"}]}
+        {"job_role": "직무다", "available_slots": [{"day": "화", "hour": HOURS[1]}]}
     )
     assert ok, reason
 
@@ -41,7 +42,7 @@ def test_blank_job_role_rejected(valid_payload):
 
 @pytest.mark.parametrize(
     "bad_slot",
-    [{"day": "화"}, {"hour": "10시"}, {}, "화 10시", 42],
+    [{"day": "화"}, {"hour": HOURS[1]}, {}, "화 10시", 42],
 )
 def test_malformed_slot_rejected(valid_payload, bad_slot):
     valid_payload["available_slots"] = [bad_slot]
@@ -51,7 +52,7 @@ def test_malformed_slot_rejected(valid_payload, bad_slot):
 
 
 def test_unknown_day_rejected(valid_payload):
-    valid_payload["available_slots"] = [{"day": "토", "hour": "10시"}]
+    valid_payload["available_slots"] = [{"day": "토", "hour": HOURS[1]}]
     ok, reason = validate_form_response(valid_payload)
     assert ok is False
     assert "요일" in reason
@@ -66,8 +67,8 @@ def test_unknown_hour_rejected(valid_payload):
 
 def test_duplicate_slot_rejected(valid_payload):
     valid_payload["available_slots"] = [
-        {"day": "화", "hour": "10시"},
-        {"day": "화", "hour": "10시"},
+        {"day": "화", "hour": HOURS[1]},
+        {"day": "화", "hour": HOURS[1]},
     ]
     ok, reason = validate_form_response(valid_payload)
     assert ok is False
@@ -75,11 +76,11 @@ def test_duplicate_slot_rejected(valid_payload):
 
 
 def test_slot_count_cap_is_grid_size():
-    """요일 5 × 시간대 6 = 30칸"""
-    assert MAX_SLOTS == 30
+    """요일 5 × 하루 8칸 = 40칸"""
+    assert MAX_SLOTS == len(DAYS) * len(HOURS) == 40
 
 
-@pytest.mark.parametrize("bad", [0, 7, "6", True])
+@pytest.mark.parametrize("bad", [0, len(HOURS) + 1, "6", True])
 def test_max_daily_invalid(valid_payload, bad):
     valid_payload["max_daily"] = bad
     ok, reason = validate_form_response(valid_payload)
@@ -111,7 +112,7 @@ def test_non_dict_payload_rejected():
 
 
 def test_slots_not_a_list(valid_payload):
-    valid_payload["available_slots"] = {"day": "화", "hour": "10시"}
+    valid_payload["available_slots"] = {"day": "화", "hour": HOURS[1]}
     ok, reason = validate_form_response(valid_payload)
     assert ok is False
     assert "배열" in reason
@@ -120,11 +121,11 @@ def test_slots_not_a_list(valid_payload):
 def test_normalize_fills_defaults():
     payload = {
         "job_role": "  배터리 소재 연구  ",
-        "available_slots": [{"day": "화", "hour": "10시", "extra": "무시됨"}],
+        "available_slots": [{"day": "화", "hour": HOURS[1], "extra": "무시됨"}],
     }
     normalized = normalize_payload(payload)
     assert normalized["job_role"] == "배터리 소재 연구"
-    assert normalized["available_slots"] == [{"day": "화", "hour": "10시"}]
-    assert normalized["max_daily"] == 6
+    assert normalized["available_slots"] == [{"day": "화", "hour": HOURS[1]}]
+    assert normalized["max_daily"] == len(HOURS)
     assert normalized["backup_contact"] is None
     assert normalized["notes"] is None

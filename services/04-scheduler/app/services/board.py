@@ -17,20 +17,26 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 
 from app.domain.schemas import ApplicantIn, InterviewerIn, PlannedAssignment
-from app.infrastructure.contracts import AM_HOURS, DAYS, HOURS, PM_HOURS
+from app.infrastructure.contracts import DAYS, HOURS
 
-MAX_SLOTS_PER_DAY = 8  # 명세의 "8타임 초과" 하드 상한
+#: 한 담당자가 하루에 볼 수 있는 최대 면접 수 — 하루 칸 수와 같다
+MAX_SLOTS_PER_DAY = len(HOURS)
 
 
 class Board:
     def __init__(
         self,
         interviewers: list[InterviewerIn],
-        max_daily_default: int = 6,
+        max_daily_default: int = MAX_SLOTS_PER_DAY,
         pinned: dict[str, str] | None = None,
         pinned_by_team: dict[str, dict[str, str]] | None = None,
+        ignore_availability: bool = False,
     ) -> None:
         self.max_daily_default = max_daily_default
+        # 담당자가 적어 낸 가능 시간을 무시하고 자리부터 채운다. 오전만 되는
+        # 사람뿐이라 오후 자리가 빌 때, 인사가 "일단 채우고 나중에 조율" 을
+        # 고르면 켜진다 — 자리는 다 차지만 담당자 사정과는 어긋날 수 있다.
+        self.ignore_availability = bool(ignore_availability)
         # 부서가 확정해 보낸 짝 (지원자 → 면접 담당자). 이 사람들은 담당자를
         # 고르지 않고 정해진 사람에게만 붙인다 — 시간(요일·시각)만 찾는다.
         self.pinned: dict[str, str] = dict(pinned or {})
@@ -73,22 +79,23 @@ class Board:
         return not applicant_id or (applicant_id, day, hour) not in self.applicant_slot
 
     def _adjacent(self, interviewer_id: str, day: str, hour: str) -> bool:
-        """그 사람이 바로 앞 · 뒤 시간에 이미 면접이 있는가.
+        """그 사람이 바로 앞 · 뒤 칸에 이미 면접이 있는가.
 
-        11시와 14시는 점심시간을 사이에 두므로 붙어 있다고 보지 않는다 —
-        오전은 오전끼리, 오후는 오후끼리만 이어 붙인다.
+        점심 시간을 따로 두지 않으므로 하루 여덟 칸은 죽 이어진 한 덩어리다.
+        칸 순서상 하나 앞 · 하나 뒤면 붙어 있는 것으로 본다.
         """
-        band = AM_HOURS if hour in AM_HOURS else PM_HOURS
-        index = band.index(hour)
+        if hour not in HOURS:
+            return False
+        index = HOURS.index(hour)
         return any(
-            (interviewer_id, day, band[near]) in self.iv_slot
+            (interviewer_id, day, HOURS[near]) in self.iv_slot
             for near in (index - 1, index + 1)
-            if 0 <= near < len(band)
+            if 0 <= near < len(HOURS)
         )
 
     def _fits(self, iv: InterviewerIn, day: str, hour: str) -> bool:
         return (
-            iv.is_available(day, hour)
+            (self.ignore_availability or iv.is_available(day, hour))
             and (iv.interviewer_id, day, hour) not in self.iv_slot
             and self.iv_day[(iv.interviewer_id, day)] < self._daily_cap(iv)
         )

@@ -8,9 +8,9 @@ rule2_team_conflict (HARD): 같은 팀이 동시간에 중복 배치된 건수.
                             100 × (1 − 중복건수 / 전체 배정수).
 rule3_vertical_group(SOFT): (팀, 요일)별로 사용한 시간대가 HOURS 순서상 연속인 그룹의 비율.
                             Webex 방 재입장을 최소화하는 "세로 연속" 규칙.
-rule4_first_slot   (SOFT): 첫 타임(09시·14시)의 동시 진행 건수가 같은 블록의 다른
-                            타임보다 많지 않아야 한다("첫 타임은 소규모 조").
-                            점유 시간대가 2개 미만인 블록은 평가 대상에서 제외.
+rule4_first_slot   (SOFT): 그날 첫 타임의 동시 진행 건수가 그날의 다른 타임보다
+                            많지 않아야 한다("첫 타임은 소규모 조").
+                            점유 시간대가 2개 미만인 날은 평가 대상에서 제외.
 overall                   : 네 점수의 산술 평균 (명세 예시 60/100/100/100 → 90.0과 일치).
 """
 from __future__ import annotations
@@ -21,10 +21,10 @@ from typing import Any, Iterable
 
 from app.infrastructure.contracts import DAYS, HOURS
 
-MORNING = ["09시", "10시", "11시"]
-AFTERNOON = ["14시", "15시", "16시"]
-BLOCKS = [MORNING, AFTERNOON]
-FIRST_SLOTS = [MORNING[0], AFTERNOON[0]]
+# 점심 시간을 따로 두지 않으므로 하루는 끊기지 않은 한 덩어리다.
+# 첫 타임도 그날의 첫 칸 하나뿐이다.
+BLOCKS = [list(HOURS)]
+FIRST_SLOTS = [HOURS[0]]
 
 RULE_KEYS = (
     "rule1_grad_balance",

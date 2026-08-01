@@ -23,6 +23,9 @@ from pathlib import Path
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from shared.contracts.constants import HOURS  # noqa: E402
 
 PASS = "PASS"
 FAIL = "FAIL"
@@ -144,9 +147,9 @@ def main() -> int:
     payload = {
         "job_role": "배터리 소재 연구",
         "available_slots": [
-            {"day": "화", "hour": "10시"},
-            {"day": "화", "hour": "11시"},
-            {"day": "수", "hour": "14시"},
+            {"day": "화", "hour": HOURS[1]},
+            {"day": "화", "hour": HOURS[2]},
+            {"day": "수", "hour": HOURS[3]},
         ],
         "max_daily": 6,
         "backup_contact": "backup@lge.com",

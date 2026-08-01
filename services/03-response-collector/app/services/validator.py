@@ -9,7 +9,7 @@ from typing import Any
 from shared.contracts.constants import DAYS, HOURS
 
 REQUIRED_FIELDS = ("job_role", "available_slots")
-MAX_SLOTS = len(DAYS) * len(HOURS)  # 요일 5 × 시간대 6 = 30
+MAX_SLOTS = len(DAYS) * len(HOURS)  # 요일 5 × 하루 8칸 = 40
 
 
 def validate_form_response(payload: Any) -> tuple[bool, str]:

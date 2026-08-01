@@ -7,16 +7,16 @@ Service 02(지원자 명단) / Service 03(면접관 가용성)을 대체한다.
 --------------
 - 지원자 88명 / 5팀 → 팀당 17~18명, 대학원 비율 29.5% (규칙1 목표 30%에 근접)
 - 규칙2(같은 팀 동시간 중복 금지)가 HARD이므로 팀별 동시 진행은 1건 →
-  팀당 수용량 = 5요일 × 6타임 = 30슬롯, 전체 150슬롯 ≫ 88명
-- v4는 팀당 요일 2개(12슬롯 × 5팀 = 60)로 제한 → 커버리지 68%
-- v5는 팀당 요일 3개(18슬롯 × 5팀 = 90) + Fallback → 커버리지 90%+
+  팀당 수용량 = 5요일 × 8타임 = 40슬롯, 전체 200슬롯 ≫ 88명
+- v4는 팀당 요일 2개(16슬롯 × 5팀 = 80)로 제한 → 88명을 다 못 앉힌다
+- v5는 팀당 요일 3개(24슬롯 × 5팀 = 120) + Fallback → 커버리지 90%+
 """
 from __future__ import annotations
 
 import random
 
 from app.domain.schemas import ApplicantIn, InterviewerIn
-from app.infrastructure.contracts import DAYS, HOURS
+from app.infrastructure.contracts import DAYS, HOURS, PM_HOURS
 
 TEAMS = ["AI솔루션팀", "로봇응용기술팀", "미래혁신팀", "배터리기술팀", "전극기술팀"]
 
@@ -97,7 +97,7 @@ def build_interviewers() -> list[InterviewerIn]:
     full = {day: list(HOURS) for day in DAYS}
 
     for t_idx, team in enumerate(TEAMS, start=1):
-        # 리더: 전 요일 가용하지만 오후 3타임만 (부하 집중 방지)
+        # 리더: 전 요일 가용하지만 오후만 (부하 집중 방지)
         interviewers.append(
             InterviewerIn(
                 interviewer_id=f"IV{t_idx}01",
@@ -107,7 +107,7 @@ def build_interviewers() -> list[InterviewerIn]:
                 max_daily=4,
                 priority=1,
                 email=f"iv{t_idx}01@example.com",
-                availability={day: ["14시", "15시", "16시"] for day in DAYS},
+                availability={day: list(PM_HOURS) for day in DAYS},
             )
         )
         # 실무 3인: 각자 하루씩 휴무 (월/화/수), 나머지 요일은 전 타임 가용
@@ -120,7 +120,7 @@ def build_interviewers() -> list[InterviewerIn]:
                     name=f"{team} 실무{m_idx + 1}",
                     team=team,
                     title=("책임", "선임", "선임")[m_idx],
-                    max_daily=6,
+                    max_daily=len(HOURS),
                     priority=2,
                     email=f"iv{t_idx}0{m_idx + 2}@example.com",
                     availability=availability,

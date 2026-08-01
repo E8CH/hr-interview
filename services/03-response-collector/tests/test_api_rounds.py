@@ -2,6 +2,7 @@
 import pytest
 
 from app.services import response_service
+from shared.contracts.constants import HOURS
 
 
 @pytest.fixture
@@ -17,7 +18,7 @@ def test_availability_flips_slots_into_day_buckets(client, with_responses, sampl
 
     assert len(rows) == 2, "회신자만 나와야 한다"
     first = rows[0]
-    assert first["availability"] == {"화": ["10시", "11시"], "수": ["14시"]}
+    assert first["availability"] == {"화": [HOURS[1], HOURS[2]], "수": [HOURS[3]]}
     assert first["slot_count"] == 3
     assert first["max_daily"] == 6
     assert first["responded"] is True

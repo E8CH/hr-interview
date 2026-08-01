@@ -13,7 +13,7 @@ def test_form_renders_slot_grid(client, first_invitee):
     html = resp.text
     assert first_invitee.name in html
     # 요일 5 × 시간대 6 = 30칸 토글 버튼
-    assert html.count('class="slot"') == len(DAYS) * len(HOURS) == 30
+    assert html.count('class="slot"') == len(DAYS) * len(HOURS) == 40
     for day in DAYS:
         assert f'data-day="{day}"' in html
     for hour in HOURS:
@@ -90,8 +90,8 @@ def test_duplicate_submission_rejected(client, first_invitee, valid_payload):
     "payload,expected_code",
     [
         ({"job_role": "직무", "available_slots": []}, 422),
-        ({"available_slots": [{"day": "화", "hour": "10시"}]}, 422),
-        ({"job_role": "직무", "available_slots": [{"day": "토", "hour": "10시"}]}, 422),
+        ({"available_slots": [{"day": "화", "hour": HOURS[1]}]}, 422),
+        ({"job_role": "직무", "available_slots": [{"day": "토", "hour": HOURS[1]}]}, 422),
         ({"job_role": "직무", "available_slots": [{"day": "화", "hour": "13시"}]}, 422),
     ],
 )

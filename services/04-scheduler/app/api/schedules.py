@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/v1/schedules", tags=["schedules"])
 
 @router.post("/generate", status_code=status.HTTP_201_CREATED)
 def generate_schedule(req: GenerateRequest, db: Session = Depends(get_db)):
-    schedule, report, violations, plan = schedule_service.generate(db, req)
+    schedule, report, violations, plan, off_band = schedule_service.generate(db, req)
 
     events.publish_schedule_generated(
         round_id=schedule.round_id,
@@ -34,6 +34,9 @@ def generate_schedule(req: GenerateRequest, db: Session = Depends(get_db)):
     payload = schedule_service.schedule_payload(schedule, report.flat(), violations)
     payload["unassigned_count"] = len(plan.unassigned)
     payload["unassigned"] = [a.applicant_id for a in plan.unassigned]
+    # 담당자 일정을 무시하고 만들었을 때만 채워진다 — 다시 이야기할 명단
+    payload["off_band_count"] = len(off_band)
+    payload["off_band"] = off_band
     return ok(payload)
 
 
@@ -81,12 +84,19 @@ def get_by_team(schedule_id: str, db: Session = Depends(get_db)):
 
 @router.post("/{schedule_id}/validate")
 def validate_schedule(schedule_id: str, db: Session = Depends(get_db)):
-    schedule, violations, penalty = schedule_service.validate_schedule(db, schedule_id)
+    schedule, violations, penalty, off_band = schedule_service.validate_schedule(db, schedule_id)
     if violations:
         events.publish_rule_violated(
             round_id=schedule.round_id, schedule_id=schedule_id, violations=violations
         )
-    return ok({"hard_violations": violations, "soft_penalty": penalty})
+    return ok(
+        {
+            "hard_violations": violations,
+            "soft_penalty": penalty,
+            # 담당자 일정을 무시하고 만들었을 때만 채워진다 — 다시 이야기할 명단
+            "off_band": off_band,
+        }
+    )
 
 
 @router.post("/{schedule_id}/lock")

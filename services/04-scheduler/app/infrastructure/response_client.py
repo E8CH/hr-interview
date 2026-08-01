@@ -17,6 +17,7 @@ import httpx
 
 from app.config import settings
 from app.domain.schemas import ApplicantIn, InterviewerIn
+from app.infrastructure.contracts import HOURS, normalize_availability
 from app.services import mock_data
 
 logger = logging.getLogger(__name__)
@@ -101,10 +102,10 @@ class AvailabilitySource:
                 interviewer_id=r["interviewer_id"],
                 name=r.get("name", ""),
                 team=r["team"],
-                max_daily=int(r.get("max_daily") or 6),
+                max_daily=int(r.get("max_daily") or len(HOURS)),
                 priority=int(r.get("priority") or 2),
                 email=r.get("email", ""),
-                availability=r.get("availability", {}),
+                availability=normalize_availability(r.get("availability")),
             )
             for r in rows
             if r.get("availability")

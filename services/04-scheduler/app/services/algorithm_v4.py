@@ -4,8 +4,8 @@ Stage 1 : 팀 × 요일 배정 — 팀당 요일 2개
 Stage 1b: 요일별 학사/대학원 쿼터 (규칙1)
 Stage 2 : 팀-요일 그룹을 연속 시간대에 배치 (규칙3 세로 연속, 규칙4 첫 타임)
 
-특성: 규칙 준수율은 높지만 팀당 수용량이 2요일 × 6타임 = 12슬롯으로 제한되어
-커버리지가 약 68%까지 떨어진다. 이 trade-off를 v5가 해소한다.
+특성: 규칙 준수율은 높지만 팀당 수용량이 2요일 × 8타임 = 16슬롯으로 제한되어
+커버리지가 떨어진다. 이 trade-off를 v5가 해소한다.
 """
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ def run(
         max_daily_default=constraints.max_daily_default,
         pinned=constraints.pairs,
         pinned_by_team=constraints.pairs_by_team,
+        ignore_availability=constraints.ignore_availability,
     )
 
     by_team = hierarchical.group_by_team(applicants)

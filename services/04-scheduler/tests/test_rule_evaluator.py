@@ -1,6 +1,7 @@
 """4대 규칙 준수율 계산 단위 테스트"""
 from __future__ import annotations
 
+from app.infrastructure.contracts import HOURS as H
 from app.services.rule_evaluator import (
     rule1_grad_balance,
     rule2_team_conflict,
@@ -10,7 +11,7 @@ from app.services.rule_evaluator import (
 )
 
 
-def A(team="AI솔루션팀", degree="학사", day="월", hour="09시", **kw):
+def A(team="AI솔루션팀", degree="학사", day="월", hour=H[0], **kw):
     base = {
         "team": team,
         "degree": degree,
@@ -25,7 +26,7 @@ def A(team="AI솔루션팀", degree="학사", day="월", hour="09시", **kw):
 
 def _day_of(day, total, grads, team="AI솔루션팀"):
     """해당 요일에 total건(그중 grads건이 대학원) 생성 — 시간대는 순환"""
-    hours = ["09시", "10시", "11시", "14시", "15시", "16시"]
+    hours = list(H)
     rows = []
     for i in range(total):
         rows.append(
@@ -83,7 +84,7 @@ def test_rule2_detects_team_conflict():
     assignments = [
         A(applicant_id="1"),
         A(applicant_id="2"),  # 같은 팀·같은 요일·같은 시간 → 중복
-        A(applicant_id="3", hour="10시"),
+        A(applicant_id="3", hour=H[1]),
     ]
     score, detail = rule2_team_conflict(assignments)
 
@@ -93,7 +94,7 @@ def test_rule2_detects_team_conflict():
 
 
 def test_rule2_clean_is_100():
-    assignments = [A(hour="09시"), A(hour="10시"), A(team="미래혁신팀", hour="09시")]
+    assignments = [A(hour=H[0]), A(hour=H[1]), A(team="미래혁신팀", hour=H[0])]
     score, detail = rule2_team_conflict(assignments)
     assert score == 100.0
     assert detail["conflicts"] == []
@@ -107,22 +108,22 @@ def test_rule2_empty_is_100():
 # 규칙 3 — 세로 연속 배치
 # --------------------------------------------------------------------------
 def test_rule3_contiguous_block_passes():
-    assignments = [A(hour=h) for h in ("09시", "10시", "11시")]
+    assignments = [A(hour=h) for h in (H[0], H[1], H[2])]
     score, detail = rule3_vertical_group(assignments)
     assert score == 100.0
     assert detail["broken"] == []
 
 
 def test_rule3_gap_breaks_group():
-    assignments = [A(hour="09시"), A(hour="10시"), A(hour="15시")]
+    assignments = [A(hour=H[0]), A(hour=H[1]), A(hour=H[4])]
     score, detail = rule3_vertical_group(assignments)
     assert score == 0.0
     assert detail["broken"][0]["team"] == "AI솔루션팀"
 
 
 def test_rule3_mixed_groups():
-    good = [A(team="A팀", hour=h) for h in ("09시", "10시")]
-    bad = [A(team="B팀", hour="09시"), A(team="B팀", hour="16시")]
+    good = [A(team="A팀", hour=h) for h in (H[0], H[1])]
+    bad = [A(team="B팀", hour=H[0]), A(team="B팀", hour=H[5])]
     score, detail = rule3_vertical_group(good + bad)
     assert score == 50.0
     assert detail["groups"] == 2
@@ -137,9 +138,9 @@ def test_rule3_empty_is_100():
 # --------------------------------------------------------------------------
 def test_rule4_first_slot_heavier_than_rest_fails():
     assignments = [
-        A(team="A팀", hour="09시"),
-        A(team="B팀", hour="09시"),
-        A(team="A팀", hour="10시"),
+        A(team="A팀", hour=H[0]),
+        A(team="B팀", hour=H[0]),
+        A(team="A팀", hour=H[1]),
     ]
     score, detail = rule4_first_slot(assignments)
     assert score == 0.0
@@ -148,16 +149,16 @@ def test_rule4_first_slot_heavier_than_rest_fails():
 
 def test_rule4_ramp_up_passes():
     assignments = [
-        A(team="A팀", hour="09시"),
-        A(team="A팀", hour="10시"),
-        A(team="B팀", hour="10시"),
+        A(team="A팀", hour=H[0]),
+        A(team="A팀", hour=H[1]),
+        A(team="B팀", hour=H[1]),
     ]
     score, _ = rule4_first_slot(assignments)
     assert score == 100.0
 
 
 def test_rule4_single_hour_block_not_evaluated():
-    assignments = [A(hour="09시")]
+    assignments = [A(hour=H[0])]
     score, detail = rule4_first_slot(assignments)
     assert score == 100.0
     assert detail["evaluated"] == 0

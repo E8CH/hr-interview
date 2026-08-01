@@ -22,6 +22,7 @@ from app.domain.interviewer import Interviewer
 from app.domain.round_interviewer import RoundInterviewer
 from app.errors import ValidationFailed
 from app.infrastructure.contracts import (
+    HOURS,
     TIME_BANDS,
     band_availability,
     band_hours,
@@ -41,7 +42,7 @@ COLUMN_ALIASES = {
 }
 REQUIRED = ("interviewer_id", "team")
 HEADER_SCAN_ROWS = 10
-DEFAULT_MAX_DAILY = 6
+DEFAULT_MAX_DAILY = len(HOURS)
 DEFAULT_PRIORITY = 2
 
 
@@ -182,11 +183,15 @@ def import_roster(db: Session, data: bytes) -> dict:
     }
 
 
-def set_bands(db: Session, bands: dict[str, str], actor: str = "console") -> dict:
+def set_bands(db: Session, bands: dict[str, str], actor: str = "console",
+              timing: dict | None = None) -> dict:
     """사번별 가능 시간(오전 · 오후)을 마스터에 반영한다.
 
     고른 덩어리가 곧 하루에 볼 수 있는 최대 인원의 천장이 된다 — 오전만 되는
-    사람에게 하루 6명을 배정할 수는 없으므로 일일최대를 시간 칸 수까지 줄인다.
+    사람에게 하루 여덟 명을 배정할 수는 없으므로 일일최대를 칸 수까지 줄인다.
+
+    어느 칸이 오전이고 어느 칸이 오후인지는 면접 진행 조건이 정한다. 정오에
+    걸치는 칸(예: 11시 55분 ~ 12시 25분)은 오전만 · 오후만 어느 쪽에도 안 준다.
     """
     bad = [b for b in bands.values() if b not in TIME_BANDS]
     if bad:
@@ -209,10 +214,12 @@ def set_bands(db: Session, bands: dict[str, str], actor: str = "console") -> dic
     changed = 0
     for interviewer_id, band in bands.items():
         row = rows[interviewer_id]
-        if band_of(row.availability) == band and row.availability:
+        hours = band_hours(band, timing)
+        if row.availability and sorted(
+            {h for day_hours in row.availability.values() for h in day_hours}
+        ) == sorted(hours):
             continue  # 바뀐 게 없으면 손대지 않는다 (직접 줄여 둔 일일최대 보존)
-        hours = band_hours(band)
-        row.availability = band_availability(band)
+        row.availability = band_availability(band, timing=timing)
         row.max_daily = len(hours)
         changed += 1
     if changed:

@@ -19,10 +19,10 @@ from app.domain.schemas import (
     PlanResult,
 )
 from app.errors import NotFoundError, ValidationFailed
-from app.infrastructure.contracts import DAYS, HOURS
+from app.infrastructure.contracts import DAYS, HOURS, normalize_availability
 from app.infrastructure.response_client import applicant_source, availability_source
 from app.services import lock_manager, registry
-from app.services.constraint_checker import check_hard_constraints, soft_penalty
+from app.services.constraint_checker import check_hard_constraints, off_band, soft_penalty
 from app.services.rule_evaluator import RULE_KEYS, RuleReport, rule_compliance
 
 METRICS = {
@@ -45,7 +45,7 @@ def row_to_interviewer(row: InterviewerRow) -> InterviewerIn:
         max_daily=row.max_daily or 6,
         priority=row.priority or 2,
         email=row.email or "",
-        availability=row.availability or {},
+        availability=normalize_availability(row.availability),
     )
 
 
@@ -62,15 +62,16 @@ def _merge_availability(
     섞여 있다고 오후에 넣어 버리면, 골라 둔 의미가 없어진다.
     """
     hit = responded.get(row.interviewer_id)
+    row_availability = normalize_availability(row.availability)
     if hit is not None and hit.availability:
-        merged = hit.availability
-        if row.availability:
+        merged = normalize_availability(hit.availability)
+        if row_availability:
             both = {
-                day: [h for h in hours if h in set(row.availability.get(day, []))]
-                for day, hours in hit.availability.items()
+                day: [h for h in hours if h in set(row_availability.get(day, []))]
+                for day, hours in merged.items()
             }
             both = {day: hours for day, hours in both.items() if hours}
-            merged = both or row.availability   # 겹치는 시간이 없으면 부서 뜻을 따른다
+            merged = both or row_availability   # 겹치는 시간이 없으면 부서 뜻을 따른다
         return InterviewerIn(
             interviewer_id=row.interviewer_id,
             name=row.name or hit.name,
@@ -225,7 +226,13 @@ def generate(db: Session, req: GenerateRequest) -> tuple[Schedule, RuleReport, l
         grad_ratio_target=req.constraints.grad_ratio_target,
         grad_ratio_tolerance=req.constraints.grad_ratio_tolerance,
     )
-    violations = check_hard_constraints(plan.assignments, interviewers)
+    # 인사가 가능 시간을 무시하기로 했으면 그 어긋남은 위반이 아니라 감수한
+    # 비용이다. 위반에서 빼는 대신 어긋난 자리를 따로 적어 둔다.
+    ignore_availability = bool(req.constraints.ignore_availability)
+    violations = check_hard_constraints(
+        plan.assignments, interviewers, ignore_availability=ignore_availability
+    )
+    off_band_rows = off_band(plan.assignments, interviewers) if ignore_availability else []
     coverage = 100.0 * len(plan.assignments) / len(applicants)
 
     schedule = Schedule(
@@ -279,6 +286,10 @@ def generate(db: Session, req: GenerateRequest) -> tuple[Schedule, RuleReport, l
                 "unassigned": [a.applicant_id for a in plan.unassigned],
                 "notes": _jsonable(plan.notes),
                 "elapsed_ms": round(elapsed_ms, 2),
+                # 다시 검증할 때도 같은 잣대를 쓰도록 남겨 둔다 (schedules 표에
+                # 칸을 늘리면 이미 쓰던 DB 를 못 읽으므로 여기에 적는다).
+                "ignore_availability": ignore_availability,
+                "off_band": _jsonable(off_band_rows),
             },
         )
     )
@@ -288,7 +299,7 @@ def generate(db: Session, req: GenerateRequest) -> tuple[Schedule, RuleReport, l
     METRICS["schedules_generated_total"] += 1
     METRICS["assignments_total"] += len(plan.assignments)
     METRICS["hard_violations_total"] += len(violations)
-    return schedule, report, violations, plan
+    return schedule, report, violations, plan, off_band_rows
 
 
 def _jsonable(value):
@@ -445,17 +456,32 @@ def stored_rules(db: Session, schedule_id: str) -> dict:
 # --------------------------------------------------------------------------
 # 검증 · 락
 # --------------------------------------------------------------------------
-def validate_schedule(db: Session, schedule_id: str) -> tuple[Schedule, list[dict], float]:
+def ignored_availability(db: Session, schedule_id: str) -> bool:
+    """만들 때 '담당자 일정 무시하고 배치하기'를 켰는지 — 검증도 같은 잣대로."""
+    row = db.scalar(
+        select(RuleCompliance).where(
+            RuleCompliance.schedule_id == schedule_id,
+            RuleCompliance.rule_name == "overall",
+        )
+    )
+    return bool((row.details or {}).get("ignore_availability")) if row else False
+
+
+def validate_schedule(
+    db: Session, schedule_id: str
+) -> tuple[Schedule, list[dict], float, list[dict]]:
     schedule = get_schedule(db, schedule_id)
     assignments = list_assignments(db, schedule_id)
     interviewers = load_interviewers(db, schedule.round_id)
-    violations = check_hard_constraints(assignments, interviewers)
+    ignore = ignored_availability(db, schedule_id)
+    violations = check_hard_constraints(assignments, interviewers, ignore_availability=ignore)
     report = rule_compliance(assignments, interviewers)
     penalty = soft_penalty(report, assignments, interviewers)
+    off_band_rows = off_band(assignments, interviewers) if ignore else []
 
     schedule.hard_violations = len(violations)
     db.commit()
-    return schedule, violations, penalty
+    return schedule, violations, penalty, off_band_rows
 
 
 def lock(

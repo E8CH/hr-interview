@@ -49,7 +49,7 @@ CREATE TABLE assignments (
     applicant_id    VARCHAR(32) NOT NULL,
     interviewer_id  VARCHAR(32) NOT NULL,
     day             VARCHAR(4) NOT NULL,  -- 월|화|수|목|금
-    hour            VARCHAR(8) NOT NULL,  -- 09시|10시|...
+    hour            VARCHAR(8) NOT NULL,  -- 1타임|2타임|... (자리 번호)
     lock_level      VARCHAR(16) DEFAULT 'DRAFT',  -- DRAFT|CONFIRMED|LOCKED
     reason_tags     TEXT[],
     created_at      TIMESTAMPTZ DEFAULT NOW()
@@ -73,7 +73,7 @@ CREATE TABLE interviewers (
     max_daily       INTEGER DEFAULT 6,
     priority        INTEGER DEFAULT 2,    -- 1=리더, 2=실무
     email           VARCHAR(255),
-    availability    JSONB                 -- {"월":["09시","10시"],...}
+    availability    JSONB                 -- {"월":["1타임","2타임"],...}
 );
 ```
 
@@ -92,7 +92,8 @@ body:
   "constraints": {
     "grad_ratio_target": 0.30,
     "grad_ratio_tolerance": 0.20,
-    "max_daily_default": 6
+    "max_daily_default": 8,
+    "ignore_availability": false   # 켜면 담당자 가능 시간을 지키지 않고 자리부터 채운다
   }
 }
 
@@ -103,6 +104,8 @@ response 201:
     "total_assigned": 88,
     "coverage_pct": 100.0,
     "hard_violations": 0,
+    "off_band_count": 0,           # 담당자 사정과 어긋난 자리 (일정 무시로 만들었을 때만)
+    "off_band": [],                # 위 자리의 담당자·면접자·요일·칸 — 개별 조율용
     "rule_compliance": {
       "rule1_grad_balance": 60.0,
       "rule2_team_conflict": 100.0,
@@ -139,8 +142,14 @@ response 200:
 POST /api/v1/schedules/{schedule_id}/validate
 
 response 200:
-{"data": {"hard_violations": [], "soft_penalty": 0}}
+{"data": {"hard_violations": [], "soft_penalty": 0, "off_band": []}}
 ```
+
+`ignore_availability` 를 켜고 만든 시간표는 가용 시간대 밖 배정을 하드 위반으로
+세지 않는다 — 인사가 자리를 채우려고 일부러 고른 것이기 때문이다. 대신 그
+자리들이 `off_band` 로 나온다(누구와 다시 이야기해야 하는지). 켰다는 사실은
+`rule_compliance` 의 `overall` 행 JSON 에 남으므로 나중에 다시 검증해도 같은
+잣대를 쓴다.
 
 ### 락 단계 상승
 ```
@@ -191,7 +200,7 @@ def rule_compliance(assignments, interviewers, applicants) -> dict:
     # rule1: 요일별 대학원 비율 편차
     # rule2: 팀 동시간 중복 개수
     # rule3: 팀별 요일 내 슬롯 간격
-    # rule4: 09시/14시 소규모 조 여부
+    # rule4: 첫 타임(1타임) 소규모 조 여부
     return {
         "rule1_grad_balance": ...,
         "rule2_team_conflict": ...,

@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from app.domain.schemas import ApplicantIn, GenerateConstraints
+from app.infrastructure.contracts import HOURS as H
 from app.services import algorithm_v1, algorithm_v5, registry
 from app.services.board import Board
 from app.services.constraint_checker import check_hard_constraints
@@ -38,11 +39,11 @@ def test_board_refuses_same_applicant_at_same_hour(interviewers):
     seats, a_team, b_team = _shared_seats(interviewers)
     board = Board(interviewers)
 
-    assert board.place(seats[0], "월", "09시") is not None
-    assert board.can_place(b_team, "월", "09시", "DUP1") is False
-    assert board.place(seats[1], "월", "09시") is None
+    assert board.place(seats[0], "월", H[0]) is not None
+    assert board.can_place(b_team, "월", H[0], "DUP1") is False
+    assert board.place(seats[1], "월", H[0]) is None
     # 시각만 다르면 두 번째 자리도 잡힌다
-    assert board.place(seats[1], "월", "10시") is not None
+    assert board.place(seats[1], "월", H[1]) is not None
 
 
 @pytest.mark.parametrize("algorithm", ALL_ALGORITHMS)
@@ -64,9 +65,9 @@ def test_checker_reports_same_applicant_twice_at_one_hour(interviewers):
     iv_b = next(iv for iv in interviewers if iv.team == b_team)
     rows = [
         {"applicant_id": "DUP1", "team": a_team, "interviewer_id": iv_a.interviewer_id,
-         "day": "월", "hour": "09시"},
+         "day": "월", "hour": H[0]},
         {"applicant_id": "DUP1", "team": b_team, "interviewer_id": iv_b.interviewer_id,
-         "day": "월", "hour": "09시"},
+         "day": "월", "hour": H[0]},
     ]
     codes = [v["code"] for v in check_hard_constraints(rows)]
     assert "APPLICANT_CONFLICT" in codes

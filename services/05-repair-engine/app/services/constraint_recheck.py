@@ -12,7 +12,7 @@ v3 에서는 재검증이 없어 하드 위반이 발생했다 — v3.1 의 핵�
 소프트 규칙 (페널티만 부여, 배정을 막지 않음)
   S1 (규칙1)  요일별 대학원 비율 30% ±20%p
   S3 (규칙3)  동일 팀 세로(같은 요일 연속 시간) 배치
-  S4 (규칙4)  첫 타임(09시·14시)은 소규모 조 우선
+  S4 (규칙4)  그날 첫 타임은 소규모 조 우선
 """
 from __future__ import annotations
 
@@ -24,9 +24,9 @@ from shared.contracts.constants import HOURS
 from app.domain.schedule import (ApplicantInfo, InterviewerInfo,
                                  ScheduleAssignment)
 
-#: 연속 배치 판정을 위한 시간 블록 (점심 시간으로 오전/오후가 끊긴다)
-HOUR_BLOCKS: list[list[str]] = [["09시", "10시", "11시"], ["14시", "15시", "16시"]]
-FIRST_HOURS: set[str] = {"09시", "14시"}
+#: 연속 배치 판정을 위한 시간 블록 — 점심 시간을 따로 두지 않으므로 하루가 한 덩어리다
+HOUR_BLOCKS: list[list[str]] = [list(HOURS)]
+FIRST_HOURS: set[str] = {HOURS[0]}
 
 HOUR_INDEX: dict[str, int] = {h: i for i, h in enumerate(HOURS)}
 

@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.domain.invitee import Invitee
 from app.events import EventType
+from shared.contracts.constants import HOURS
 
 
 def _body(round_id="R2026-Q3-01", n=3):
@@ -101,7 +102,7 @@ def test_close_request_blocks_submission(client, db):
     token = db.query(Invitee).one().token
     resp = client.post(
         f"/form/{token}/submit",
-        json={"job_role": "직무", "available_slots": [{"day": "화", "hour": "10시"}]},
+        json={"job_role": "직무", "available_slots": [{"day": "화", "hour": HOURS[1]}]},
     )
     assert resp.status_code == 409
     assert resp.json()["error"]["code"] == "REQUEST_CLOSED"
