@@ -20,6 +20,7 @@ from shared.contracts.constants import (  # noqa: E402
     BAND_FRONT,
     BAND_NONE,
     DAYS,
+    DAYS_PER_TEAM,
     DEFAULT_TIMING,
     FRONT_END_MINUTES,
     FRONT_HOURS,
@@ -35,6 +36,7 @@ from shared.contracts.constants import (  # noqa: E402
     hour_bands,
     hour_spans,
     normalize_availability,
+    plan_team_days,
     slot_spans,
 )
 from shared.contracts.events import (  # noqa: E402
@@ -68,7 +70,9 @@ __all__ = [
     "hour_bands",
     "hour_spans",
     "normalize_availability",
+    "plan_team_days",
     "slot_spans",
+    "DAYS_PER_TEAM",
     "EventEnvelope",
     "EventType",
     "ScheduleGeneratedPayload",

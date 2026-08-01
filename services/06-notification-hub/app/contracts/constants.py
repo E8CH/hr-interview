@@ -24,6 +24,8 @@ TAGS = {
     "SEAT_MOVED_BUSY": "담당자가 그 시각에 다른 면접이 있어 옮김",
     "SEAT_MOVED_OWNER": "그 자리 담당자를 찾을 수 없어 옮김",
     "SEAT_MOVED_DAY": "부서가 적은 일차가 이 팀 면접 요일 수보다 커서 옮김",
+    # 두 팀이 같이 보는 사람이 같은 시각에 두 곳에 잡혔을 때, 그 사람만 옮긴 자리
+    "DUP_FIXED": "두 팀 면접이 같은 시각이라 옮김",
 }
 
 
@@ -241,6 +243,36 @@ def normalize_availability(availability, timing=None) -> dict[str, list[str]]:
                 kept |= set(band_hours(BAND_BACK, timing))
         if kept:
             result[day] = [h for h in HOURS if h in kept]
+    return result
+
+
+#: 한 팀을 몰아 보는 날 수 — 인사 화면과 스케줄러가 같은 값을 써야 한다
+DAYS_PER_TEAM = 3
+
+
+def plan_team_days(sizes_by_team, days_per_team: int = DAYS_PER_TEAM,
+                   slots_per_day: int | None = None) -> dict[str, list[str]]:
+    """팀마다 어느 요일에 면접을 볼지 정한다 — 큰 팀부터 한산한 요일로.
+
+    이 함수가 여기 있는 까닭은 **같은 답이 두 곳에서 필요해서** 다. 부서 화면은
+    '1일차 · 2일차' 로만 자리를 잡는데, 그 일차가 무슨 요일인지는 이 함수가
+    정한다. 예전에는 인사팀 시간표를 만드는 순간에야 이 계산을 해서, 부서가
+    담당자를 몇 명 빼면 팀 인원이 달라지고 그러면 요일까지 통째로 바뀌었다 —
+    같은 자료로 두 번 만들면 결과가 달라 보이던 원인이다. 이제는 인사가 명단을
+    보내는 순간 한 번 정해서 그대로 물려준다.
+    """
+    slots_per_day = slots_per_day or len(HOURS)
+    day_load: dict[str, int] = {day: 0 for day in DAYS}
+    result: dict[str, list[str]] = {}
+    for team, size in sorted((sizes_by_team or {}).items(),
+                             key=lambda kv: (-int(kv[1] or 0), str(kv[0]))):
+        chosen = sorted(DAYS, key=lambda d: (day_load[d], DAYS.index(d)))[:days_per_team]
+        chosen.sort(key=DAYS.index)
+        per_day = (min(slots_per_day, -(-int(size or 0) // days_per_team))
+                   if days_per_team else 0)
+        for day in chosen:
+            day_load[day] += per_day
+        result[str(team)] = chosen
     return result
 
 

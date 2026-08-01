@@ -7,11 +7,10 @@ Stage 3  : Fallback 흡수 — v5 전용, 미배정자를 규칙 손해가 가�
 """
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from math import ceil
+from collections import defaultdict
 
 from app.domain.schemas import ApplicantIn, PlannedAssignment
-from app.infrastructure.contracts import DAYS, HOURS
+from app.infrastructure.contracts import DAYS, HOURS, plan_team_days
 from app.services.board import Board
 from app.services.rule_evaluator import FIRST_SLOTS
 
@@ -22,18 +21,35 @@ SLOTS_PER_DAY = len(HOURS)
 # Stage 1 — 팀 × 요일
 # --------------------------------------------------------------------------
 def assign_team_days(sizes_by_team: dict[str, int], days_per_team: int) -> dict[str, list[str]]:
-    """큰 팀부터 부하가 가장 낮은 요일을 골라 days_per_team개씩 배정"""
-    day_load: Counter = Counter()
-    result: dict[str, list[str]] = {}
-    ordered = sorted(sizes_by_team.items(), key=lambda kv: (-kv[1], kv[0]))
+    """큰 팀부터 부하가 가장 낮은 요일을 골라 days_per_team개씩 배정.
 
-    for team, size in ordered:
-        chosen = sorted(DAYS, key=lambda d: (day_load[d], DAYS.index(d)))[:days_per_team]
-        chosen.sort(key=DAYS.index)
-        per_day = min(SLOTS_PER_DAY, ceil(size / days_per_team)) if days_per_team else 0
-        for day in chosen:
-            day_load[day] += per_day
-        result[team] = chosen
+    셈은 `shared/contracts` 의 `plan_team_days` 하나로 모았다 — 인사 화면도 부서
+    화면도 같은 답을 알아야 '1일차' 가 무슨 요일인지 말할 수 있기 때문이다.
+    """
+    return plan_team_days(sizes_by_team, days_per_team, SLOTS_PER_DAY)
+
+
+def fixed_team_days(
+    given: dict[str, list[str]] | None, sizes_by_team: dict[str, int], days_per_team: int
+) -> dict[str, list[str]]:
+    """인사가 명단을 보낼 때 정해 둔 요일을 그대로 쓴다 — 없는 팀만 새로 뽑는다.
+
+    부서가 자리를 잡을 때 이미 이 요일을 보고 잡았으므로, 여기서 다시 뽑으면
+    부서가 본 시간표와 최종 시간표가 어긋난다. 넘어온 요일 중 달력에 없는
+    이름은 버린다.
+    """
+    planned = assign_team_days(sizes_by_team, days_per_team)
+    if not given:
+        return planned
+    result: dict[str, list[str]] = {}
+    for team in sizes_by_team:
+        days = [d for d in (given.get(team) or []) if d in DAYS]
+        # 같은 요일을 두 번 적어 보냈으면 한 번만 센다 — 자리 수가 부풀지 않게
+        seen: list[str] = []
+        for day in days:
+            if day not in seen:
+                seen.append(day)
+        result[team] = seen or planned.get(team, [])
     return result
 
 
@@ -151,27 +167,30 @@ def place_dept_seats(
     n일차를 그 팀에 잡힌 요일 중 n 번째로 옮겨 읽는다. 부서가 본 순서와 시각은
     그대로 남고 요일 이름만 인사팀 것이 된다.
 
-    앉히지 못한 사람은 왜 못 앉혔는지를 보드에 적어 두고 다음 단계로 넘긴다 —
-    부서 결정을 억지로 밀어 넣지 않는다는 원칙은 그대로 두되, 결과가 부서가 본
-    것과 다르면 그 까닭이 배정 사유에 남게 하려는 것이다.
+    앉히지 못한 사람은 왜 못 앉혔는지를 보드에 적어 두고, **그 자리에서 가장
+    가까운 빈 칸** 으로만 옮긴다. 팀 시간표를 통째로 다시 짜면 자리 하나가 막힌
+    탓에 멀쩡히 앉을 수 있던 사람들까지 줄줄이 밀린다 — 부서가 확인하고 보낸
+    시간표와 최종본이 매번 달라 보이던 까닭이다. 가까운 칸도 없을 때만 다음
+    단계로 넘긴다.
+
+    두 번에 나눠 도는 이유: 먼저 **모두를 제 자리에** 앉히고, 그 뒤에 못 앉은
+    사람만 옮긴다. 한 사람씩 옮겨 가며 채우면 먼저 밀린 사람이 뒷사람의 제
+    자리를 차지해 버려, 원래 지킬 수 있던 자리까지 연쇄로 어긋난다.
     """
     if not days:
         return list(members)
     left: list[ApplicantIn] = []
+    moved: list[ApplicantIn] = []
     for applicant in members:
         wish = board.seat_for(team, applicant.applicant_id)
         if wish is None:
             left.append(applicant)
             continue
         day_no, slot_no = wish
-        if not 1 <= day_no <= len(days):
+        if not 1 <= day_no <= len(days) or not 0 <= slot_no < SLOTS_PER_DAY:
             # 부서가 인사팀이 잡은 면접 요일 수보다 긴 시간표를 짰다
             board.seat_miss[applicant.applicant_id] = "SEAT_MOVED_DAY"
-            left.append(applicant)
-            continue
-        if not 0 <= slot_no < SLOTS_PER_DAY:
-            board.seat_miss[applicant.applicant_id] = "SEAT_MOVED_DAY"
-            left.append(applicant)
+            moved.append(applicant)
             continue
         day, hour = days[day_no - 1], HOURS[slot_no]
         tags = list(applicant.tags or ["PRIMARY_JOB"]) + ["DEPT_SEAT"]
@@ -179,8 +198,36 @@ def place_dept_seats(
             board.seat_miss[applicant.applicant_id] = board.seat_miss_reason(
                 team, applicant.applicant_id, day, hour
             )
+            moved.append(applicant)
+
+    for applicant in moved:
+        if not _place_nearest(board, team, days, applicant):
             left.append(applicant)
     return left
+
+
+def _place_nearest(
+    board: Board, team: str, days: list[str], applicant: ApplicantIn
+) -> bool:
+    """부서가 잡아 준 자리에서 가장 가까운 빈 칸에 앉힌다 — 없으면 False.
+
+    가깝다는 기준은 ① 같은 요일 ② 칸 번호 차이다. 부서는 '오전 중에 몰아서'
+    처럼 자리 순서에 뜻을 담아 보내므로, 요일을 옮기는 것보다 같은 날 옆 칸으로
+    미는 편이 부서 결정을 덜 헤친다.
+    """
+    wish = board.seat_for(team, applicant.applicant_id)
+    day_no, slot_no = wish if wish else (1, 0)
+    tags = list(applicant.tags or ["PRIMARY_JOB"])
+    candidates = [
+        (abs(index + 1 - day_no), abs(HOURS.index(hour) - slot_no), index, hour)
+        for index, day in enumerate(days)
+        for hour in HOURS
+        if board.can_place(team, day, hour, applicant.applicant_id)
+    ]
+    for _dd, _dh, index, hour in sorted(candidates):
+        if board.place(applicant, days[index], hour, tags) is not None:
+            return True
+    return False
 
 
 # --------------------------------------------------------------------------

@@ -75,12 +75,23 @@ class AvailabilitySource:
 
     지원자 명단과 같은 규칙이다. 항상 03을 먼저 부르고, 회신이 아직 하나도
     없거나 03이 죽어 있을 때만(그리고 USE_MOCK=true 일 때만) 목 데이터를 쓴다.
+
+    다만 폴백은 **다른 가용성이 아예 없을 때만** 쓸 수 있다. 면접관 마스터에
+    적어 둔 가용성과 겹쳐 보는 자리에서 목 데이터를 받아 버리면, 지어낸 시간과
+    실제 시간의 교집합만 남아 그분이 되는 칸이 통째로 사라진다. 그런 자리는
+    allow_mock=False 로 부르고, 회신이 없으면 빈 명단을 받는다.
     """
 
-    def fetch(self, round_id: str) -> list[InterviewerIn]:
+    def fetch(self, round_id: str, allow_mock: bool = True) -> list[InterviewerIn]:
         try:
             return self._fetch_remote(round_id)
         except (httpx.HTTPError, KeyError, ValueError) as exc:
+            if not allow_mock:
+                logger.info(
+                    "03 회신 없음 — 이 자리에서는 목으로 메우지 않는다 (round_id=%s): %s",
+                    round_id, exc,
+                )
+                return []
             if not settings.use_mock:
                 raise
             logger.warning(

@@ -346,6 +346,31 @@ def test_schedule_falls_back_to_master_without_selection(client, db, roster_byte
     assert len(loaded) == 20
 
 
+def test_master_hours_survive_when_nobody_answered(client, db, roster_bytes,
+                                                   sample_round_id):
+    """03 회신이 0건이면 마스터에 적힌 시간이 그대로 살아 있어야 한다.
+
+    03이 죽어 있거나 아직 아무도 회신을 안 하면 목 면접관으로 폴백하게 되어
+    있었는데, 여기서는 그 결과를 마스터 가용성과 교집합으로 잡는다. 지어낸
+    시간과 실제 시간이 겹치는 칸만 남아, 부서 화면이 보여 준 '수 3~7타임' 이
+    스케줄러 안에서는 '수 7타임' 한 칸으로 쪼그라들었다. 그러면 부서가 잡아
+    보낸 자리가 절반 넘게 담당자 시간 밖으로 몰려 도로 옮겨진다.
+    """
+    _upload(client, roster_bytes)
+    # 목 IV101 은 7 · 8타임만 되는 사람이다. 마스터가 그 칸에 **한 칸이라도**
+    # 걸치면 교집합이 비지 않아 그 한 칸만 남는다 — 아예 안 겹칠 때만 마스터로
+    # 되돌리는 지금 규칙에 가려져 있던 자리다.
+    wanted = {"수": [HOURS[2], HOURS[3], HOURS[4], HOURS[5], HOURS[6]]}
+    db.get(Interviewer, "IV101").availability = dict(wanted)
+    db.commit()
+    interviewer_roster.select_for_round(db, sample_round_id, ["IV101", "IV102"])
+
+    loaded = {iv.interviewer_id: iv for iv in
+              schedule_service.load_interviewers(db, sample_round_id)}
+
+    assert loaded["IV101"].availability == wanted
+
+
 # ------------------------------------- 옛 시각 이름으로 저장된 자료 (칸 이름 개편 이전)
 
 def test_legacy_clock_hours_are_moved_into_current_slots(client, db, roster_bytes,

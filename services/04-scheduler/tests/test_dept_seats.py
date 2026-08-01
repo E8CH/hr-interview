@@ -74,7 +74,7 @@ def test_dept_day_number_follows_the_days_hr_picked():
 # ------------------------------------------------------- 못 지킬 때 까닭을 남기는가
 
 def test_seat_outside_interviewer_hours_moves_and_says_why():
-    """뒤타임만 되는 담당자에게 첫 칸을 보내면 옮기고 그 까닭을 적는다."""
+    """뒤타임만 되는 담당자에게 첫 칸을 보내면 그분 시간 안으로 당겨 앉힌다."""
     people = _people(1)
     board = Board([_interviewer("IV_BACK", BAND_BACK)],
                   pinned_by_team=_pairs(people, "IV_BACK"),
@@ -82,25 +82,29 @@ def test_seat_outside_interviewer_hours_moves_and_says_why():
 
     left = hierarchical.place_dept_seats(board, TEAM, ["월"], people)
 
-    assert [a.applicant_id for a in left] == ["S01"]
+    assert left == []                                    # 여기서 앉혔다
     assert board.seat_miss["S01"] == "SEAT_MOVED_BAND"
-    # 다음 단계에서 다른 칸에 앉으면 그 까닭이 배정 사유로 따라간다
-    moved = board.place(left[0], "월", band_hours(BAND_BACK)[0])
-    assert moved is not None
+    moved = board.assignments[0]
+    # 부서가 말한 칸에서 가장 가까운, 담당자가 되는 칸이다
+    assert moved.hour == band_hours(BAND_BACK)[0]
+    # 옮긴 까닭이 배정 사유로 따라가고, '부서가 정한 자리' 는 떼어 낸다
     assert "SEAT_MOVED_BAND" in moved.reason_tags
     assert "DEPT_SEAT" not in moved.reason_tags
 
 
 def test_seat_already_taken_says_so():
-    """두 사람을 같은 칸에 보내면 뒷사람은 옮기고 '이미 찼다' 고 적는다."""
+    """두 사람을 같은 칸에 보내면 뒷사람만 옆 칸으로 밀고 '이미 찼다' 고 적는다."""
     people = _people(2)
     board = Board([_interviewer("IV_ALL")], pinned_by_team=_pairs(people, "IV_ALL"),
                   seats={TEAM: {"S01": (1, 3), "S02": (1, 3)}})
 
     left = hierarchical.place_dept_seats(board, TEAM, ["월"], people)
 
-    assert [a.applicant_id for a in left] == ["S02"]
+    assert left == []
     assert board.seat_miss["S02"] == "SEAT_MOVED_TAKEN"
+    placed = {a.applicant_id: a.hour for a in board.assignments}
+    assert placed["S01"] == HOURS[3]                     # 먼저 온 사람은 그대로
+    assert abs(HOURS.index(placed["S02"]) - 3) == 1      # 바로 옆 칸
 
 
 def test_seat_over_the_daily_cap_says_so():
@@ -120,15 +124,18 @@ def test_seat_over_the_daily_cap_says_so():
 
 
 def test_day_beyond_the_teams_interview_days_moves():
-    """부서가 4일차라고 보냈는데 그 팀 면접이 이틀뿐이면 옮긴다."""
+    """부서가 4일차라고 보냈는데 그 팀 면접이 이틀뿐이면 마지막 날로 당긴다."""
     people = _people(1)
     board = Board([_interviewer("IV_ALL")], pinned_by_team=_pairs(people, "IV_ALL"),
                   seats={TEAM: {"S01": (4, 0)}})
 
     left = hierarchical.place_dept_seats(board, TEAM, ["월", "화"], people)
 
-    assert [a.applicant_id for a in left] == ["S01"]
+    assert left == []
     assert board.seat_miss["S01"] == "SEAT_MOVED_DAY"
+    moved = board.assignments[0]
+    assert (moved.day, moved.hour) == ("화", HOURS[0])   # 4일차에 가장 가까운 날
+    assert "SEAT_MOVED_DAY" in moved.reason_tags
 
 
 # ------------------------------------------------------------------ 전체 배치

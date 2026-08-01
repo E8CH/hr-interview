@@ -39,8 +39,10 @@ def run(
     by_team = hierarchical.group_by_team(applicants)
     sizes = {team: len(members) for team, members in by_team.items()}
 
-    # Stage 1
-    team_days = hierarchical.assign_team_days(sizes, days_per_team)
+    # Stage 1 — 인사가 명단을 보낼 때 정해 둔 요일이 있으면 그대로 쓴다
+    team_days = hierarchical.fixed_team_days(
+        constraints.days_by_team, sizes, days_per_team
+    )
 
     unassigned: list[ApplicantIn] = []
     honoured = 0

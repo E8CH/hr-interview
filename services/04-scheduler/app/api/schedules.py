@@ -5,7 +5,12 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app import events
-from app.domain.schemas import AssignmentOut, GenerateRequest, LockRequest
+from app.domain.schemas import (
+    AssignmentOut,
+    FixDuplicatesRequest,
+    GenerateRequest,
+    LockRequest,
+)
 from app.errors import ok
 from app.infrastructure.db import get_db
 from app.services import schedule_service
@@ -41,6 +46,8 @@ def generate_schedule(req: GenerateRequest, db: Session = Depends(get_db)):
     payload["dept_seats"] = plan.notes.get("dept_seats", 0)
     payload["dept_seats_kept"] = plan.notes.get("dept_seats_kept", 0)
     payload["dept_seats_moved"] = plan.notes.get("dept_seats_moved", {})
+    # 팀별 면접 요일 — 부서가 말한 'n일차' 가 무슨 요일이 됐는지 화면이 알아야 한다
+    payload["team_days"] = plan.notes.get("team_days", {})
     return ok(payload)
 
 
@@ -101,6 +108,17 @@ def validate_schedule(schedule_id: str, db: Session = Depends(get_db)):
             "off_band": off_band,
         }
     )
+
+
+@router.post("/{schedule_id}/fix-duplicates", summary="중복면접자 시간 겹침만 손보기")
+def fix_duplicates(
+    schedule_id: str, req: FixDuplicatesRequest, db: Session = Depends(get_db)
+):
+    # 시간표를 새로 만드는 게 아니라 겹친 자리만 고친다 — 그래서 새 시간표
+    # 번호도, SCHEDULE_GENERATED 도 내지 않는다. 남은 위반은 응답에 적는다.
+    return ok(schedule_service.fix_duplicates(
+        db, schedule_id, req.days_by_team, req.actor
+    ))
 
 
 @router.post("/{schedule_id}/lock")

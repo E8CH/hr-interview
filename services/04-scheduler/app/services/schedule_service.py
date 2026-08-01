@@ -27,7 +27,7 @@ from app.infrastructure.contracts import (
     normalize_availability,
 )
 from app.infrastructure.response_client import applicant_source, availability_source
-from app.services import lock_manager, registry
+from app.services import duplicate_fix, lock_manager, registry
 from app.services.constraint_checker import check_hard_constraints, off_band, soft_penalty
 from app.services.rule_evaluator import RULE_KEYS, RuleReport, rule_compliance
 
@@ -114,7 +114,10 @@ def load_interviewers(db: Session, round_id: str) -> list[InterviewerIn]:
         ).all()
         responded = {}
         try:
-            responded = {iv.interviewer_id: iv for iv in availability_source.fetch(round_id)}
+            # 목으로 메우면 안 되는 자리다. 아래에서 마스터 가용성과 교집합을
+            # 잡으므로, 지어낸 시간이 섞이면 실제로 되는 칸이 지워진다.
+            responded = {iv.interviewer_id: iv
+                         for iv in availability_source.fetch(round_id, allow_mock=False)}
         except Exception:  # 03 미기동 · 회신 0건 → 마스터 가용성으로 진행
             responded = {}
         return [_merge_availability(r, responded) for r in rows]
@@ -122,7 +125,8 @@ def load_interviewers(db: Session, round_id: str) -> list[InterviewerIn]:
     rows = db.scalars(select(InterviewerRow)).all()
     if rows:
         return [row_to_interviewer(r) for r in rows]
-    # DB가 비어 있으면 Service 03(또는 목)에서 가용성을 받아온다
+    # DB가 비어 있으면 Service 03(또는 목)에서 가용성을 받아온다 — 여기는
+    # 겹쳐 볼 마스터가 아예 없으니 목으로 메워도 지울 것이 없다
     return availability_source.fetch(round_id)
 
 
@@ -257,6 +261,12 @@ def generate(db: Session, req: GenerateRequest) -> tuple[Schedule, RuleReport, l
     if req.seats_by_team is not None:
         constraints = constraints.model_copy(
             update={"seats_by_team": req.seats_by_team}
+        )
+    # 인사가 명단을 보낼 때 이미 정한 팀별 면접 요일. 부서는 그 요일 위에서
+    # '1일차 · 2일차' 자리를 잡았으므로 여기서 요일을 다시 뽑으면 안 된다.
+    if req.days_by_team is not None:
+        constraints = constraints.model_copy(
+            update={"days_by_team": req.days_by_team}
         )
 
     started = time.perf_counter()
@@ -527,6 +537,53 @@ def validate_schedule(
     schedule.hard_violations = len(violations)
     db.commit()
     return schedule, violations, penalty, off_band_rows
+
+
+def fix_duplicates(
+    db: Session,
+    schedule_id: str,
+    days_by_team: dict | None = None,
+    actor: str = "system",
+) -> dict:
+    """두 팀 면접이 같은 시각에 잡힌 사람만 옮긴다 — 나머지는 그대로 둔다.
+
+    부서가 확인하고 보낸 시간표를 인사가 통째로 다시 짜지 않게 하려는 것이다.
+    옮긴 자리에는 왜 옮겼는지 사유를 남기고, 못 옮긴 자리는 그 까닭과 함께
+    돌려준다 — 자리를 못 찾았다는 말 없이 조용히 겹친 채로 두지 않는다.
+    """
+    schedule = get_schedule(db, schedule_id)
+    assignments = list_assignments(db, schedule_id)
+    interviewers = load_interviewers(db, schedule.round_id)
+    ignore = ignored_availability(db, schedule_id)
+
+    before = duplicate_fix.conflicts(assignments)
+    moved, stuck = duplicate_fix.plan_fix(
+        assignments, interviewers, days_by_team, ignore_availability=ignore
+    )
+    for move in moved:
+        row = assignments[move["index"]]
+        row.day, row.hour = move["day"], move["hour"]
+        tags = list(row.reason_tags or [])
+        if duplicate_fix.FIX_TAG not in tags:
+            tags.append(duplicate_fix.FIX_TAG)
+        row.reason_tags = tags
+
+    violations = check_hard_constraints(
+        assignments, interviewers, ignore_availability=ignore
+    )
+    schedule.hard_violations = len(violations)
+    db.commit()
+
+    return {
+        "schedule_id": schedule_id,
+        "round_id": schedule.round_id,
+        "actor": actor,
+        "conflicts_before": before,
+        "conflicts_after": duplicate_fix.conflicts(assignments),
+        "moved": moved,
+        "stuck": stuck,
+        "hard_violations": len(violations),
+    }
 
 
 def lock(

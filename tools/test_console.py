@@ -42,13 +42,15 @@ from shared.contracts.constants import (  # noqa: E402
     BAND_BACK,
     BAND_FRONT,
     BAND_NONE,
+    DAYS as SCHED_DAYS,
+    DAYS_PER_TEAM as SCHED_DAYS_PER_TEAM,
     DEFAULT_TIMING,
     HOURS as SCHED_HOURS,
     band_hours,
     band_name,
     band_of as contract_band_of,
-    band_slots,
     hour_bands,
+    plan_team_days,
 )
 DEFAULT_MASTER = PROJECT_ROOT / "docs" / "취합파일.xlsx"
 INTERVIEWER_SAMPLE = PROJECT_ROOT / "tools" / "fixtures" / "면접관명단_sample.xlsx"
@@ -196,6 +198,38 @@ hr {{border-color:var(--lg-line);}}
 .lgnotice .row .go {{margin-left:auto; font-size:.7rem; font-weight:700; color:#fff;
                      background:var(--lg-ink); border-radius:999px; padding:3px 10px;
                      white-space:nowrap;}}
+
+/* ---------- 왼쪽 메뉴 '?' 도움말 (올려 두면 단계별로 할 일이 펼쳐진다) ---------- */
+.lghelpwrap {{display:flex; align-items:center; gap:6px; font-weight:700;
+              font-size:.9rem; letter-spacing:-.02em; margin:0 0 2px;}}
+.lghelp {{position:relative; display:inline-flex; align-items:center;
+          justify-content:center; width:17px; height:17px; border-radius:999px;
+          border:1px solid var(--lg-line); background:#FFF; color:var(--lg-sub);
+          font-size:.68rem; font-weight:700; cursor:help; user-select:none;}}
+.lghelp:hover {{border-color:var(--lg-red); color:var(--lg-red);}}
+.lghelp .bub {{visibility:hidden; opacity:0; transition:opacity .12s;
+               position:absolute; left:22px; top:-8px; z-index:9999; width:320px;
+               padding:12px 14px; border-radius:14px; background:#FFF;
+               border:1px solid var(--lg-line); box-shadow:0 8px 28px #0000001f;
+               color:var(--lg-ink); font-weight:400; font-size:.78rem;
+               line-height:1.55; text-align:left; letter-spacing:-.01em;}}
+.lghelp:hover .bub {{visibility:visible; opacity:1;}}
+.lghelp .bub b {{display:block; font-size:.8rem; margin:8px 0 1px;
+                 letter-spacing:-.02em;}}
+.lghelp .bub b:first-child {{margin-top:0;}}
+.lghelp .bub .tip {{display:block; margin-top:10px; padding-top:8px;
+                    border-top:1px solid var(--lg-line); color:var(--lg-sub);
+                    font-size:.74rem;}}
+
+/* ---------- 화면 안에서 '지금 누를 버튼' 안내 ---------- */
+.lgstep {{display:flex; align-items:flex-start; gap:10px; margin:0 0 14px;
+          padding:11px 14px; border-radius:14px; background:#FBEAF0;
+          border:1px solid #F2D3DE; color:#5E1226; font-size:.85rem;
+          line-height:1.5;}}
+.lgstep.done {{background:#EFF7F4; border-color:#BEDDD3; color:#17594E;}}
+.lgstep .n {{flex:0 0 auto; font-weight:700; background:#FFF; border-radius:999px;
+             padding:1px 9px; font-size:.75rem;}}
+.lgstep b {{font-weight:700;}}
 
 /* ---------- 칸 수를 고정한 격자 (마지막 줄은 빈칸으로 채워 줄을 맞춘다) ---------- */
 .hrgrid {{display:grid; gap:10px; margin:8px 0 18px;
@@ -424,6 +458,29 @@ def round_timing(doc: dict) -> dict:
     }
 
 
+def handoff_team_days(doc: dict) -> dict[str, list[str]]:
+    """팀마다 무슨 요일에 면접을 보는지 — 3단계에서 정해 내려보낸 값.
+
+    옛 회차 자료에는 이 값이 없다. 그때는 그 자리에서 같은 셈(`plan_team_days`)
+    으로 다시 뽑는다 — 스케줄러도 같은 함수를 쓰므로 답이 어긋나지 않는다.
+    """
+    saved = (doc or {}).get("team_days") or {}
+    teams = (doc or {}).get("teams") or {}
+    out = {team: [d for d in (saved.get(team) or (block.get("days") or []))
+                  if d in SCHED_DAYS]
+           for team, block in teams.items()}
+    missing = {team: len((teams.get(team) or {}).get("applicants") or [])
+               for team, days in out.items() if not days}
+    if missing:
+        # 요일을 못 박기 전에 만든 자료 — 전체 팀 크기로 같은 셈을 다시 한다
+        sizes = {team: len((block.get("applicants") or []))
+                 for team, block in teams.items()}
+        again = plan_team_days(sizes, SCHED_DAYS_PER_TEAM, len(SCHED_HOURS))
+        for team in missing:
+            out[team] = again.get(team, [])
+    return out
+
+
 def order_lookup(doc: dict, team: str) -> dict[str, dict]:
     """그 팀의 순번표를 '지원자 번호(없으면 이름) → 순번 정보' 로 편다."""
     out: dict[str, dict] = {}
@@ -452,6 +509,15 @@ def publish_handoff(rid: str, plan_id: str, applicants: list[dict],
     teams = doc.setdefault("teams", {})
     names = sorted({(row.get("team") or "미상") for row in applicants}
                    | {(row.get("team") or "미상") for row in interviewers})
+    # 어느 팀을 무슨 요일에 볼지는 **여기서 한 번** 정한다. 예전에는 인사팀이
+    # 시간표를 만드는 순간에 팀 인원을 보고 뽑았는데, 부서가 몇 명을 빼면 인원이
+    # 달라져 요일까지 통째로 바뀌었다 — 부서가 '1일차' 라고 잡아 둔 자리가 매번
+    # 다른 요일이 되던 까닭이다. 명단과 함께 요일도 내려보내 뒤 단계가 이 결정에
+    # 종속되게 한다.
+    sizes = {team: sum(1 for row in applicants
+                       if (row.get("team") or "미상") == team) for team in names}
+    team_days = plan_team_days(sizes, SCHED_DAYS_PER_TEAM, len(SCHED_HOURS))
+    doc["team_days"] = team_days
     for team in names:
         block = teams.setdefault(team, {})
         seq = order_lookup(doc, team)
@@ -492,6 +558,9 @@ def publish_handoff(rid: str, plan_id: str, applicants: list[dict],
             for number, row in enumerate(ordered_rows, start=1)
         ]
         block["order_planned"] = planned
+        # 부서가 '1일차 · 2일차' 로 자리를 잡을 때 그게 무슨 요일인지 알아야
+        # 담당자의 가능 요일을 지킬 수 있다
+        block["days"] = list(team_days.get(team, []))
         block["interviewers"] = [
             {
                 "interviewer_id": row["interviewer_id"],
@@ -771,6 +840,8 @@ def fetch_rounds(round_id: str = ""):
                     "schedule_id": row.get("schedule_id"),
                     "at": (row.get("generated_at") or "")[:16].replace("T", " "),
                     "assigned": row.get("total_assigned"),
+                    # 확정했는지 — 4단계 안내가 마지막 칸을 접을 때 본다
+                    "status": row.get("status") or "",
                 }
                 for row in rows
                 if row.get("schedule_id")
@@ -798,6 +869,7 @@ def fetch_rounds(round_id: str = ""):
             "schedule_id": sid,
             "at": (ev.get("timestamp") or "")[:16].replace("T", " "),
             "assigned": (ev.get("payload") or {}).get("total_assigned"),
+            "status": "",   # 감사 로그로 되돌아온 길에는 확정 여부가 없다
         })
     return out
 
@@ -955,6 +1027,47 @@ def band_cap(band: str, timing: dict | None = None) -> int:
     return len(band_hours(band, timing))
 
 
+def iv_answered(row: dict) -> bool:
+    """이 담당자가 가능 시간을 적어 냈는가.
+
+    안 적어 낸 사람을 '아무 때나 되는 사람' 으로 보면 안 된다. 부서 화면은
+    그렇게 보고 자리를 맡겼는데 인사팀 스케줄러는 '되는 시간이 하나도 없는
+    사람' 으로 읽어 그 자리를 통째로 버렸다 — 부서가 확인하고 보낸 시간표와
+    최종 시간표가 서로 다른 물건이 되던 가장 큰 까닭이다.
+    """
+    return any((row.get("availability") or {}).values())
+
+
+def iv_open_slots(row: dict, days: list[str], per_day: int,
+                  ignore: bool = False) -> dict[int, set[int]]:
+    """담당자가 일차마다 맡을 수 있는 자리 번호 {일차(0부터): {칸 번호}}.
+
+    덩어리(앞타임 · 뒤타임)가 아니라 **요일별로 적어 낸 가능 시간 그대로** 를
+    쓴다. 덩어리에는 요일이 없어서, 월요일만 된다고 답한 분에게 화요일 자리를
+    맡기는 일이 생겼다. 자리 번호는 스케줄러의 칸 번호와 같아야 최종 시간표가
+    같은 자리를 가리킨다.
+    """
+    every = set(range(min(per_day, len(SCHED_HOURS))))
+    if ignore:
+        return {index: set(every) for index in range(len(days))}
+    availability = row.get("availability") or {}
+    out: dict[int, set[int]] = {}
+    for index, day in enumerate(days):
+        hours = set(availability.get(day) or [])
+        out[index] = {slot for slot in every if SCHED_HOURS[slot] in hours}
+    return out
+
+
+def team_open_slots(rows: list[dict], days: list[str], per_day: int,
+                    ignore: bool = False) -> tuple[dict[str, dict[int, set[int]]], list[str]]:
+    """팀 담당자들이 맡을 수 있는 자리와, 아직 가능 시간을 안 적어 낸 사람들."""
+    can = {row["interviewer_id"]: iv_open_slots(row, days, per_day, ignore)
+           for row in rows or []}
+    unanswered = [row["interviewer_id"] for row in rows or []
+                  if not iv_answered(row)]
+    return can, unanswered
+
+
 KIND_LABELS = {"master": "전체 지원자 명단", "team_distribution": "팀별 명단"}
 STATUS_LABELS = {
     "DRAFT": "작성 중", "ADJUSTED": "조정됨", "APPROVED": "승인 완료",
@@ -1023,6 +1136,71 @@ FLOW_NOTE = (
     "부서 ② 면접자 담당자 매칭 → 인사 ④ 시간표"
 )
 
+# 왼쪽 메뉴 '?' 에 올려 두면 나오는 설명. 처음 다루는 사람은 어느 화면에서 무엇을
+# 눌러야 하는지부터 막히므로, 단계 이름이 아니라 '누를 버튼' 으로 적는다.
+HR_HELP_STEPS = [
+    ("1. 지원자 명단 받기",
+     "엑셀을 올리고 <b>명단 합치기</b> → 파일마다 값이 다른 사람을 골라 준 뒤 "
+     "<b>이 명단으로 확정</b> 까지 누릅니다."),
+    ("2. 팀별 명단 나누기",
+     "<b>팀별로 나누기</b> 를 누르면 팀이 정해집니다. 팀 인원이 넘치거나 모자라면 "
+     "그 자리에서 옮기고 <b>이 배정안으로 확정</b> 을 누릅니다."),
+    ("3. 부서에 명단 보내기",
+     "면접 날짜 · 시각 조건을 정하고 <b>부서에 명단 보내기</b> 를 누릅니다. "
+     "이때 팀별 면접 요일이 정해지고, 뒤 단계는 모두 이 요일을 따라갑니다."),
+    ("4. 면접 시간표 만들기",
+     "부서가 회신을 마친 뒤에 <b>시간표 만들기</b> 를 누릅니다. 부서가 잡아 둔 "
+     "자리를 그대로 쓰고 어긋난 자리만 옮깁니다. 두 팀 면접이 같은 시각에 잡힌 "
+     "사람이 있으면 <b>오류 수정하기</b> 로 그 사람만 다시 앉힙니다."),
+]
+DEPT_HELP_STEPS = [
+    ("1. 우리 팀 면접 담당자 정하기",
+     "면접에 들어갈 사람을 등록하고, 각자 <b>가능한 요일 · 시간</b> 을 적은 뒤 "
+     "이번 회차에 들어갈 사람만 골라 둡니다."),
+    ("2. 면접자 담당자 매칭",
+     "인사가 보낸 명단에서 면접 볼 사람을 고르고 담당자를 정합니다. "
+     "<b>자동 배정</b> 은 담당자가 가능하다고 한 요일 · 시간 안에서만 자리를 "
+     "잡습니다. 우리 팀 시간표를 확인한 뒤 <b>인사 담당자에게 보내기</b> 를 "
+     "누릅니다."),
+]
+HELP_TAIL = (
+    "두 화면은 번갈아 진행됩니다 — 인사 1 · 2 → 부서 1 → 인사 3 → 부서 2 → 인사 4. "
+    "앞 단계를 다시 하면 뒤 단계는 비워집니다."
+)
+
+
+def help_mark(steps: list[tuple[str, str]], tail: str = HELP_TAIL) -> str:
+    """제목 옆에 붙는 '?' — 올려 두면 단계별로 할 일이 펼쳐진다."""
+    body = "".join(f"<b>{escape(name)}</b>{text}" for name, text in steps)
+    return (f'<span class="lghelp">?<span class="bub">{body}'
+            f'<span class="tip">{escape(tail)}</span></span></span>')
+
+
+def side_title(text: str, steps: list[tuple[str, str]]) -> None:
+    """왼쪽 메뉴 제목 + 같은 줄의 '?' 도움말."""
+    st.markdown(
+        f'<div class="lghelpwrap">{escape(text)}{help_mark(steps)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_step_guide(rows: list[tuple[bool, str, str]]) -> None:
+    """이 화면에서 지금 눌러야 하는 버튼 — 끝난 단계는 초록으로 접어 둔다.
+
+    rows: (끝났는가, 단계 번호, 할 일). 진행에 따라 문구가 바뀌므로 화면마다
+    지금 상태에서 만들어 넘긴다.
+    """
+    if not rows:
+        return
+    st.markdown(
+        "".join(
+            f'<div class="lgstep {"done" if done else ""}">'
+            f'<span class="n">{escape(step)}</span><span>{text}</span></div>'
+            for done, step, text in rows
+        ),
+        unsafe_allow_html=True,
+    )
+
 st.session_state.setdefault("round_input", time.strftime("R%Y%m%d-01"))
 st.session_state.setdefault("actor", "hr_console")
 st.session_state.setdefault("viewer", VIEWERS[0])
@@ -1058,14 +1236,14 @@ with st.sidebar:
 
     if viewer == VIEWERS[0]:
         st.divider()
-        st.markdown("**진행 순서**")
+        side_title("진행 순서", HR_HELP_STEPS)
         for index, name in enumerate(MENUS):
             nav_button(f"{index + 1}. {name}", f"nav_menu_{index}",
                        menu == name, "menu", name)
         st.caption(FLOW_NOTE)
     elif viewer == VIEWERS[1]:
         st.divider()
-        st.markdown("**우리 팀이 할 일**")
+        side_title("우리 팀이 할 일", DEPT_HELP_STEPS)
         for index, name in enumerate(DEPT_MENUS):
             nav_button(f"{index + 1}. {name}", f"nav_dept_{index}",
                        dept_menu == name, "dept_menu", name)
@@ -1268,6 +1446,22 @@ def render_versions() -> None:
         return
 
     sync_round()
+
+    # 처음 다루는 사람은 어느 버튼부터 눌러야 하는지에서 막힌다 — 지금 상태에서
+    # 다음에 누를 것을 화면 맨 위에 적어 둔다.
+    files_now = (fetch_json(f"{VERSION_MANAGER}/api/v1/versions/{round_id}/history")[0]
+                 or [])
+    render_step_guide([
+        (bool(files_now), "①",
+         "엑셀 파일을 올리고 <b>올리기</b> 를 누릅니다."
+         if not files_now else f"엑셀 {len(files_now)}개를 올렸습니다."),
+        (bool(files_now), "②③",
+         "맞춰 볼 파일을 고르고 <b>맞춰 보기</b> — 값이 다른 사람은 어느 쪽을 쓸지 "
+         "고릅니다."),
+        (bool(st.session_state.get("master_version_id")), "④",
+         "<b>확정 명단 만들기</b> 를 누르면 이번 회차 명단이 정해집니다. "
+         "그다음 <b>2. 팀별 명단 나누기</b> 로 갑니다."),
+    ])
 
     # ---------------- 업로드 · 등록 ----------------
     st.subheader("① 엑셀 파일 올리기")
@@ -1874,9 +2068,6 @@ def slot_labels(start: str, count: int, minutes: int, rest: int) -> list[str]:
     return out
 
 
-SCHED_DAYS_PER_TEAM = 3             # 스케줄러가 한 팀을 몰아 보는 날 수
-
-
 def hour_clock(timing: dict) -> dict[str, str]:
     """스케줄러의 칸 이름(1타임 · 2타임 …)을 실제 시각으로 바꾼다.
 
@@ -1902,9 +2093,12 @@ def band_supply(rows: list[dict], timing: dict | None = None) -> dict[str, int]:
     """
     supply = {hour: 0 for hour in SCHED_HOURS}
     for row in rows or []:
-        band = band_of(row, timing)
-        for hour in (SCHED_HOURS if band == BAND_UNSET
-                     else band_hours(band, timing)):
+        # 아직 가능 시간을 안 적어 낸 분은 어느 칸도 못 맡는 것으로 센다.
+        # 스케줄러가 그렇게 읽기 때문이다 — 여기서만 '아무 때나 되는 사람' 으로
+        # 세면 화면은 자리가 넉넉하다는데 최종 시간표에는 그 자리가 빈다.
+        if not iv_answered(row):
+            continue
+        for hour in band_hours(band_of(row, timing), timing):
             supply[hour] += 1
     return supply
 
@@ -2014,6 +2208,136 @@ def render_seat_moves(data: dict, doc: dict) -> None:
         ],
         width="stretch", hide_index=True,
     )
+
+
+def dup_conflicts(assignments: list[dict]) -> list[dict]:
+    """같은 사람이 같은 시각에 두 팀에 잡힌 자리 — 04 와 같은 잣대로 센다.
+
+    두 팀이 같이 보기로 한 사람은 자리가 둘이다. 그 둘이 같은 시각이면 사람이
+    쪼개져야 하므로 시간표로 성립하지 않는다. 부서끼리는 서로의 시간표를 볼 수
+    없어 부서 화면에서는 막을 수 없고, 여기서 처음 드러난다.
+    """
+    seen: dict[tuple, list[dict]] = {}
+    for row in assignments or []:
+        key = (row.get("applicant_id"), row.get("day"), row.get("hour"))
+        seen.setdefault(key, []).append(row)
+    out = []
+    for (applicant_id, day, hour), mine in sorted(seen.items(), key=lambda kv: str(kv[0])):
+        teams = sorted({str(row.get("team") or "") for row in mine})
+        if len(mine) < 2 or len(teams) < 2:
+            continue
+        out.append({
+            "applicant_id": applicant_id,
+            "applicant_name": mine[0].get("applicant_name") or applicant_id,
+            "day": day, "hour": hour, "teams": teams,
+        })
+    return out
+
+
+def render_dup_fix(sc_id: str, assignments: list[dict],
+                   days: dict | None = None, timing: dict | None = None) -> None:
+    """중복면접자 시간 겹침을 알리고, 그 사람만 다시 앉힐 수 있게 한다.
+
+    인사가 1차로 보낸 명단에서 부서가 어떤 사람을 안 고르면 그 사람은 빠지고
+    빈 자리는 다른 사람으로 메워진다. 그렇게 메운 자리가 다른 팀이 같은 사람을
+    같은 시각에 잡아 둔 자리와 겹치는 것이다.
+
+    고칠 때도 겹친 사람만 옮긴다 — 시간표를 통째로 다시 만들면 부서가 확인하고
+    보낸 자리가 매번 다른 물건이 된다.
+    """
+    clock = hour_clock({**DEFAULT_TIMING, **(timing or {})})
+    # 고친 결과는 다음 화면에서 보여 준다 — 고치자마자 새로 그리므로, 누른 그
+    # 자리에서 적어 두면 화면이 바뀌면서 같이 사라진다.
+    render_dup_fixed(st.session_state.pop("s_fixdup_done", None), clock)
+
+    rows = dup_conflicts(assignments)
+    if not rows:
+        return
+    st.error(
+        f"**두 팀 면접이 같은 시각에 잡힌 면접자 {len(rows)}명**입니다 — 한 사람이 "
+        "같은 시각에 두 면접장에 앉을 수는 없습니다. 부서에서 안 고른 사람의 자리를 "
+        "다른 사람으로 메우면서 생깁니다. 아래 '오류 수정하기'를 누르면 **이 분들의 "
+        "자리만** 담당자 가능 시간에 맞춰 옮기고, 나머지 자리는 그대로 둡니다."
+    )
+    st.dataframe(
+        [
+            {
+                "면접자": row["applicant_name"],
+                "지원자 번호": row["applicant_id"],
+                "겹친 시각": f"{row['day']} {clock.get(row['hour'], row['hour'])}",
+                "겹친 팀": " · ".join(row["teams"]),
+            }
+            for row in rows
+        ],
+        width="stretch", hide_index=True,
+    )
+    if st.button("🛠 오류 수정하기 (겹친 분만 다시 배치)", key="s_fixdup",
+                 type="primary"):
+        data, err = post_json(
+            f"{SCHEDULER}/api/v1/schedules/{sc_id}/fix-duplicates",
+            {"days_by_team": days or {}, "actor": actor},
+            timeout=60.0,
+        )
+        if err:
+            st.error(err)
+            return
+        clear_caches()
+        st.session_state["s_fixdup_done"] = data
+        st.rerun()
+
+
+def render_dup_fixed(data: dict | None, clock: dict) -> None:
+    """방금 고친 결과 — 누구를 어디서 어디로 옮겼는지, 못 옮긴 건 왜인지."""
+    if not data:
+        return
+    moved = data.get("moved") or []
+    stuck = data.get("stuck") or []
+    if not moved and not stuck:
+        st.info("고칠 곳이 없었습니다 — 겹친 자리가 남아 있지 않습니다.")
+        return
+    if moved:
+        st.success(
+            f"{len(moved)}건을 옮겨 겹침을 풀었습니다 — 다른 자리는 건드리지 "
+            "않았습니다. 옮긴 자리에는 '두 팀 면접이 같은 시각이라 옮김' 이 "
+            "사유로 남습니다."
+        )
+        st.dataframe(
+            [
+                {
+                    "면접자": row.get("applicant_name") or row.get("applicant_id"),
+                    "팀": row.get("team", ""),
+                    "옮기기 전": f"{row.get('from_day', '')} "
+                              f"{clock.get(row.get('from_hour'), row.get('from_hour', ''))}",
+                    "옮긴 자리": f"{row.get('day', '')} "
+                              f"{clock.get(row.get('hour'), row.get('hour', ''))}",
+                }
+                for row in moved
+            ],
+            width="stretch", hide_index=True,
+        )
+    if stuck:
+        st.warning(
+            f"{len(stuck)}건은 옮길 자리를 찾지 못했습니다 — "
+            + ("확정해 둔 자리는 건드리지 않습니다. "
+               if any(row.get("reason") == "LOCKED" for row in stuck) else "")
+            + "그 팀 면접 요일 안에 담당자가 가능한 빈 칸이 없습니다. 3단계에서 그 "
+              "담당자의 가능한 시간을 더 받거나, 부서에 시간을 다시 잡아 달라고 "
+              "해 주세요."
+        )
+        st.dataframe(
+            [
+                {
+                    "면접자": row.get("applicant_name") or row.get("applicant_id"),
+                    "팀": row.get("team", ""),
+                    "그대로 둔 자리": f"{row.get('day', '')} "
+                                f"{clock.get(row.get('hour'), row.get('hour', ''))}",
+                    "까닭": ("확정해 둔 자리" if row.get("reason") == "LOCKED"
+                           else "옮길 빈 칸이 없음"),
+                }
+                for row in stuck
+            ],
+            width="stretch", hide_index=True,
+        )
 
 
 def render_off_band(rows: list[dict] | None, timing: dict | None = None) -> None:
@@ -2477,6 +2801,19 @@ def render_distribution() -> None:
         return
     st.caption(f"1단계에서 올린 파일 {len(history or [])}개를 기준으로 나눕니다.")
 
+    plan_now = round_plan_id()
+    render_step_guide([
+        (bool(plan_now), "①",
+         "기준 명단을 고르고 <b>팀별로 나누기</b> 를 누릅니다."
+         if not plan_now else "팀이 나뉘었습니다."),
+        (bool(plan_now), "②",
+         "팀 인원이 넘치거나 모자란 곳을 그 자리에서 옮깁니다 — 옮긴 까닭이 함께 "
+         "남습니다."),
+        (bool(plan_now), "③",
+         "<b>이 배정안으로 확정</b> 을 누른 뒤 <b>3. 부서에 명단 보내기</b> 로 "
+         "갑니다."),
+    ])
+
     merged = st.session_state.get("merged_version")
     if merged:
         st.success(
@@ -2934,6 +3271,25 @@ def render_interviewers() -> None:
     if not need_round():
         return
 
+    # 아래에서 다시 부르지만 fetch_json 은 캐시를 쓰므로 한 번만 나간다
+    have_roster = fetch_json(f"{SCHEDULER}/api/v1/interviewers")[0] or []
+    have_picked = fetch_json(f"{SCHEDULER}/api/v1/interviewers/rounds/{round_id}")[0] or []
+    answered = [row for row in have_picked if row.get("availability")]
+    render_step_guide([
+        (bool(have_roster), "①",
+         "담당자 명단을 <b>엑셀로 올리기</b> 하거나 <b>팀마다 자동으로 만들기</b> 로 준비합니다."
+         if not have_roster else f"담당자 {len(have_roster)}명이 등록돼 있습니다."),
+        (bool(have_picked), "②",
+         "이번 회차에 들어갈 사람만 체크하고 <b>이 사람들로 정하기</b> 를 누릅니다 — "
+         "여기서 고른 사람에게만 인사 담당자가 명단을 보냅니다."
+         if not have_picked else f"이번 회차 담당자 {len(have_picked)}명을 정했습니다."),
+        (bool(have_picked) and len(answered) == len(have_picked), "③",
+         "인사 담당자가 보낸 메일로 <b>가능한 요일 · 시간</b> 을 적어 냅니다 — "
+         f"지금 {len(answered)}/{len(have_picked)}명 회신."),
+        (bool((load_handoff(round_id).get("teams") or {})), "④",
+         "인사 담당자가 명단을 보내면 <b>2. 면접자 담당자 매칭</b> 으로 갑니다."),
+    ])
+
     st.subheader("① 담당자 명단 준비하기")
     tab_gen, tab_up = st.tabs(["👥 팀마다 자동으로 만들기", "📄 엑셀로 올리기"])
 
@@ -3227,6 +3583,24 @@ def render_collection() -> None:
         return
     selected = selected or []
 
+    sent_doc = load_handoff(round_id)
+    sent_teams = sent_doc.get("teams") or {}
+    replied = [team for team, block in sent_teams.items()
+               if (block.get("submitted") or {}).get("pairs")]
+    render_step_guide([
+        (bool(selected), "①",
+         "현업 부서 화면 <b>1. 면접 담당자 정하기</b> 에서 담당자를 고르면 여기 뜹니다."
+         if not selected else f"담당자 {len(selected)}명이 정해졌습니다."),
+        (bool(sent_teams), "②",
+         "<b>명단 보내기</b> 를 누릅니다 — 2단계 배정을 확정해야 눌립니다."
+         if not sent_teams else f"{len(sent_teams)}개 팀에 명단이 갔습니다."),
+        (any(row.get("availability") for row in selected), "③",
+         "<b>가능한 시간 물어보기</b> 로 담당자에게 메일을 보내고 회신을 받습니다."),
+        (bool(sent_teams) and len(replied) == len(sent_teams), "④",
+         "부서가 <b>2. 면접자 담당자 매칭</b> 을 보내 오면 "
+         f"<b>4. 면접 시간표 만들기</b> 로 갑니다 — 지금 {len(replied)}/{len(sent_teams)}개 팀."),
+    ])
+
     st.subheader("① 이번에 연락할 담당자")
     if selected:
         frame = pd.DataFrame([
@@ -3417,17 +3791,23 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
                  start: str = "09:00", minutes: int = SLOT_MINUTES,
                  rest: int = BREAK_MINUTES, per_day: int = SLOTS_PER_DAY,
                  balance: bool = True,
-                 bands: dict[str, str] | None = None) -> list[dict]:
+                 can: dict[str, dict[int, set[int]]] | None = None,
+                 days: list[str] | None = None,
+                 unanswered: set[str] | None = None) -> list[dict]:
     """매칭(면접자→담당자)만으로 일자별 시간표를 만든다.
 
     5번 스케줄러가 아직 돌지 않아도 부서가 제출한 즉시 시간표를 볼 수 있어야 한다.
     가나다순을 기본으로 학력을 섞고, 하루 per_day 칸씩 끊어 일차를 매긴다.
 
-    `bands` (사번 → 앞타임 · 뒤타임)를 주면 그 담당자가 맡을 수 있는 칸에만
-    놓는다. 예전에는 여기서 칸을 그냥 순서대로 채우고 인사팀 최종 시간표에서만
-    가능 시간을 지켰다. 그래서 부서가 본 시간표와 최종 시간표가 서로 달랐다 —
-    부서에서는 첫 칸이던 사람이 최종본에서는 뒤로 밀리는 식이다. 같은 잣대를
-    여기서도 쓴다.
+    `can` (사번 → {일차: 맡을 수 있는 칸})을 주면 그 자리에만 놓는다. 요일까지
+    함께 보는 것이 중요하다 — 예전에는 앞타임 · 뒤타임 덩어리만 봤는데 덩어리에는
+    요일이 없어서, 월요일만 된다고 답한 분이 화요일 첫 칸에 앉은 시간표가 나왔다.
+    그 시간표를 받은 인사팀은 그 자리를 지킬 수 없어 통째로 다시 짰고, 그래서
+    부서가 확인하고 보낸 시간표와 최종본이 서로 다른 물건이 됐다.
+
+    맡을 자리를 못 찾은 사람은 자리는 주되 `off_band` 로 표시하고 왜 그런지
+    (`off_why`)를 함께 남긴다 — 자리를 안 주면 부서 화면에서 그 사람이 통째로
+    사라져 버려 무엇이 잘못됐는지 볼 수가 없다.
     """
     rows = [
         {
@@ -3442,27 +3822,29 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
         for row in applicants if row["applicant_id"] in pairs
     ]
     labels = slot_labels(start, per_day, minutes, rest)
-    timing = {"start": start, "minutes": minutes, "rest": rest}
-    every = set(range(per_day))
-    # 덩어리를 안 적었거나 '둘 다' 면 아무 칸이나 된다.
-    allowed = {
-        iid: band_slots(band, timing, per_day)
-        for iid, band in (bands or {}).items()
-        if band in (BAND_FRONT, BAND_BACK, BAND_NONE)
-    }
+    every = sorted(range(per_day))
+    unanswered = set(unanswered or ())
+    # 인사팀이 이 팀에 잡아 준 면접 요일 수 — 부서가 그보다 긴 시간표를 짜면
+    # 최종 시간표가 그 일차를 받아 줄 수 없다.
+    limit = len(days or []) or (len(rows) + 1)
 
     taken: set[tuple[int, int]] = set()
     placed = []
     for row in order_for_interview(rows, balance, per_day):
-        ok = allowed.get(row["interviewer_id"], every)
-        # '어려움' 이라 맡을 칸이 하나도 없는 사람은 뺄 수가 없다 — 자리는 주되
-        # 어긋났다고 표시해서 아래에서 따로 알린다.
-        off = not ok
-        ok = ok or every
-        for day in range(len(rows) + 1):
-            cell = next(((day, s) for s in sorted(ok) if (day, s) not in taken), None)
-            if cell:
-                break
+        mine = (can or {}).get(row["interviewer_id"])
+        cell = None
+        if mine is not None:
+            for day in range(limit):
+                ok = sorted(mine.get(day) or ())
+                cell = next(((day, s) for s in ok if (day, s) not in taken), None)
+                if cell:
+                    break
+        off = cell is None and mine is not None
+        if cell is None:
+            for day in range(len(rows) + 1):
+                cell = next(((day, s) for s in every if (day, s) not in taken), None)
+                if cell:
+                    break
         taken.add(cell)
         placed.append((cell, {
             **row,
@@ -3472,6 +3854,10 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
             "slot_no": cell[1],
             "slot": labels[cell[1]],
             "off_band": off,
+            "off_why": ("가능 시간을 아직 안 적어 내셨습니다"
+                        if row["interviewer_id"] in unanswered
+                        else "가능하다고 하신 요일 · 시간에는 빈 자리가 없습니다")
+                       if off else "",
             "interviewer": iv_name.get(row["interviewer_id"],
                                        row["interviewer_id"] or ""),
         }))
@@ -3479,36 +3865,59 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
     return [row for _cell, row in sorted(placed, key=lambda p: p[0])]
 
 
-def assign_by_band(queue: list[str], order: list[str], caps: dict[str, int],
-                   can: dict[str, set[int]], per_day: int,
-                   lead: str) -> tuple[dict[str, str], int]:
-    """면접 차례대로 담당자를 정한다 — 그 사람이 맡을 수 있는 자리만.
+def assign_by_availability(
+    queue: list[str], order: list[str], caps: dict[str, int],
+    can: dict[str, dict[int, set[int]]], per_day: int, day_count: int, lead: str,
+) -> tuple[dict[str, str], list[tuple[int, int]]]:
+    """면접 차례대로 담당자를 정한다 — 그 사람이 그 **요일 그 칸** 에 될 때만.
 
-    `queue` 의 몇 번째냐가 곧 몇 번째 자리(= 몇 시)냐다. 그래서 자리 번호를
-    맡을 수 있는 담당자 중에서만 고른다. 예전에는 자리를 보지 않고 하루 한도까지
-    죽 채워서, 뒤타임만 되는 분이 첫 칸에 앉는 시간표가 나왔다.
+    `queue` 의 몇 번째냐가 곧 며칠째 몇 번째 자리(= 몇 시)냐다. 그래서 그 자리를
+    맡을 수 있는 담당자 중에서만 고른다. 예전에는 앞타임 · 뒤타임 덩어리만 보고
+    골랐는데, 덩어리에는 요일이 없어서 그 요일에 못 오시는 분에게 자리가 갔다.
+    그 짝은 인사팀 시간표에서 그대로 버려졌다.
 
-    맡을 사람이 아무도 없는 자리는 팀장이 떠안고 그 수를 함께 돌려준다 —
-    담당자를 더 부르거나 '일정 무시' 를 켜야 한다는 뜻이다.
+    맡을 사람이 아무도 없는 자리는 그날 가장 여유 있는 분이 떠안고, 그 자리
+    목록을 함께 돌려준다 — 담당자를 더 부르거나 가능 시간을 더 받아야 한다는
+    뜻이다. 예전에는 그런 자리를 죄다 팀장에게 얹었는데, 그러면 팀장만 하루
+    한도를 크게 넘겨 인사팀 시간표에서 그 자리들이 도로 옮겨졌다. 어차피 못
+    채우는 자리라면 한 사람을 무너뜨리지 말고 나눠 지는 편이 뒤가 덜 흔들린다.
     """
     rank = {iid: index for index, iid in enumerate(order)}
-    load = {iid: 0 for iid in order}
+    daily: dict[tuple[str, int], int] = {}
     picks: dict[str, str] = {}
-    over = 0
+    gaps: list[tuple[int, int]] = []
+    span = max(1, per_day)
+    room = max(1, day_count or 1)
     for index, aid in enumerate(queue):
-        slot = index % max(1, per_day)
-        free = [iid for iid in order
-                if load[iid] < caps.get(iid, 0) and slot in can.get(iid, ())]
+        # 하루 한도는 그날치로 센다 — 스케줄러도 (담당자, 요일)로 세기 때문이다
+        day, slot = min(index // span, room - 1), index % span
+        free = [
+            iid for iid in order
+            if daily.get((iid, day), 0) < caps.get(iid, 0)
+            and slot in (can.get(iid, {}).get(day) or ())
+        ]
         if free:
             # 앞사람부터 몰아 줘 연달아 보게 하되, 맡을 수 있는 자리가 좁은
-            # 분을 먼저 쓴다 — 뒤타임만 되는 분을 남겨 두면 그 칸을 아무도
+            # 분을 먼저 쓴다 — 늦은 칸만 되는 분을 남겨 두면 그 칸을 아무도
             # 못 맡아 결국 팀장에게 몰린다.
-            who = min(free, key=lambda iid: (len(can[iid]), rank[iid]))
+            who = min(free, key=lambda iid: (
+                len(can[iid].get(day) or ()), rank[iid]))
         else:
-            who, over = lead, over + 1
-        load[who] = load.get(who, 0) + 1
+            # 그날 여유가 가장 많은 분 — 같은 여유면 그날 나오시는 분을 먼저,
+            # 그래도 같으면 앞 차례대로. 아무도 없으면 팀장이 진다.
+            who = min(
+                order,
+                key=lambda iid: (
+                    daily.get((iid, day), 0) - caps.get(iid, 0),
+                    0 if can.get(iid, {}).get(day) else 1,
+                    rank[iid],
+                ),
+                default=lead,
+            )
+            gaps.append((day, slot))
+        daily[(who, day)] = daily.get((who, day), 0) + 1
         picks[aid] = who
-    return picks, over
+    return picks, gaps
 
 
 def schedule_cards(rows: list[dict], *, by_person: bool = False, team: str = "") -> None:
@@ -3799,7 +4208,8 @@ def schedule_vs_pairs(assignments: list[dict], by_team: dict[str, dict[str, str]
     return changed, stranger, missing
 
 
-def render_schedule_body(sc_id: str, pairs: dict[str, dict[str, str]] | None = None) -> None:
+def render_schedule_body(sc_id: str, pairs: dict[str, dict[str, str]] | None = None,
+                         days: dict | None = None, timing: dict | None = None) -> None:
     """시간표 상세 — 지표 · 분포 · 배정 목록 · 팀별 · 히트맵 · 규칙.
 
     pairs 를 주면 그 짝으로 만든 시간표가 맞는지 견줘서 먼저 알려 준다. 회차에는
@@ -3848,6 +4258,10 @@ def render_schedule_body(sc_id: str, pairs: dict[str, dict[str, str]] | None = N
             )
         elif seats:
             st.success(f"부서가 보낸 짝 {seats}건 그대로 만든 시간표입니다.")
+
+    # 짝은 맞아도 중복면접자 둘의 시각이 겹칠 수 있다 — 부서끼리는 서로의
+    # 시간표를 못 보기 때문이다. 여기서만 드러나므로 여기서 고칠 수 있어야 한다.
+    render_dup_fix(sc_id, assignments, days=days, timing=timing)
 
     if not assignments:
         st.warning("시간표에 들어간 사람이 없습니다.")
@@ -4125,6 +4539,24 @@ def render_scheduling() -> None:
     if not need_round():
         return
 
+    ready_pairs = handoff_pairs(load_handoff(round_id))
+    made_before = [r for r in fetch_rounds(round_id) if r["round_id"] == round_id]
+    render_step_guide([
+        (bool(ready_pairs), "①",
+         "부서가 <b>2. 면접자 담당자 매칭</b> 을 보내와야 만들 수 있습니다 — "
+         "3단계에서 회신 상태를 확인하세요."
+         if not ready_pairs else f"부서가 보낸 {len(ready_pairs)}명으로 만듭니다."),
+        (bool(made_before), "②",
+         "<b>시간표 만들기</b> 를 누릅니다 — 부서가 잡아 둔 자리를 그대로 쓰고, "
+         "못 쓴 자리는 왜 옮겼는지 바로 아래에 나옵니다."),
+        (bool(made_before), "③",
+         "<b>이상 없는지 확인</b> 을 누릅니다. 두 팀 면접이 같은 시각인 사람이 있으면 "
+         "<b>오류 수정하기</b> 로 그 사람만 다시 앉힙니다."),
+        (any(str(r.get("status") or "").lower() in ("locked", "confirmed")
+             for r in made_before), "④",
+         "빈칸이나 겹침이 없으면 <b>이대로 확정</b> 을 눌러 마칩니다."),
+    ])
+
     st.subheader("① 시간표 만들기")
     c1, c2 = st.columns([4, 1])
     plan_id = plan_field("s_plan", c1)
@@ -4160,6 +4592,9 @@ def render_scheduling() -> None:
     sent_by_team = handoff_pairs_by_team(load_handoff(round_id))
     sent = handoff_pairs(load_handoff(round_id))
     sent_seats = handoff_seats_by_team(load_handoff(round_id))
+    # 팀별 면접 요일은 3단계에서 이미 못 박았다. 여기서 다시 뽑지 않고 그대로
+    # 넘겨야 부서가 본 '1일차'와 최종 시간표의 요일이 같아진다.
+    sent_days = handoff_team_days(load_handoff(round_id))
     seats = sum(len(mine) for mine in sent_by_team.values())
     fixed = sum(len(mine) for mine in sent_seats.values())
     if sent:
@@ -4199,6 +4634,7 @@ def render_scheduling() -> None:
                     "pairs": sent,
                     "pairs_by_team": sent_by_team,
                     "seats_by_team": sent_seats,
+                    "days_by_team": sent_days,
                     "constraints": {"ignore_availability": bool(ignore_avail)},
                 },
                 timeout=180.0,
@@ -4268,7 +4704,7 @@ def render_scheduling() -> None:
             st.success("확정했습니다. 이제 이 시간표는 함부로 바뀌지 않습니다.")
     a3.caption("확정해 두면 나중에 일정이 바뀌어도 이 배정은 그대로 유지됩니다.")
 
-    render_schedule_body(sc_id, pairs=sent_by_team)
+    render_schedule_body(sc_id, pairs=sent_by_team, days=sent_days, timing=timing)
 
 
 def dept_todo(team: str, block: dict, doc: dict, selected: list[dict]) -> list[tuple]:
@@ -4419,12 +4855,32 @@ def render_team_view() -> None:
     if not interviewers:
         interviewers = block.get("interviewers") or []   # 아직 못 읽으면 받은 명단대로
     iv_name = iv_names(interviewers)
+    # 인사 담당자가 명단과 함께 정해 보낸 우리 팀 면접 요일. '1일차' 가 무슨
+    # 요일인지 알아야 담당자가 그날 오실 수 있는지를 따질 수 있다.
+    team_days = handoff_team_days(doc).get(team, [])
     st.caption(
         f"받은 시각 {str(doc.get('sent_at'))[:16]} · 보낸 사람 {doc.get('sent_by')} · "
         f"면접 볼 사람 {len(applicants)}명 · 우리 팀 면접 담당자 {len(interviewers)}명"
+        + (f" · 우리 팀 면접 요일 {' · '.join(team_days)}" if team_days else "")
         + (f" · 마지막으로 보낸 때 {str(submitted.get('at'))[:16]} ({submitted.get('by')})"
            if submitted else " · 아직 보내기 전")
     )
+    render_step_guide([
+        (bool(interviewers), "①",
+         "<b>부서 1</b> 에서 이번 회차 담당자를 먼저 정해 주세요."
+         if not interviewers else f"우리 팀 담당자 {len(interviewers)}명이 정해졌습니다."),
+        (bool(saved), "②",
+         "면접 볼 사람을 체크하고 <b>자동 배정</b> 을 누릅니다 — 담당자가 가능하다고 "
+         "적어 낸 요일 · 시간 안에서만 자리가 잡히고, 못 맡긴 칸은 까닭이 나옵니다."
+         if not saved else f"면접자 {len(saved)}명에게 담당자를 붙였습니다."),
+        (bool(saved), "③",
+         "우리 팀 시간표에서 자리를 끌어 옮겨 고칩니다 — 옮긴 자리는 그대로 인사 "
+         "담당자에게 갑니다."),
+        (bool(submitted) and not unsent, "④",
+         "<b>인사 담당자에게 보내기</b> 를 눌러야 인사 담당자의 4단계 시간표에 들어갑니다."
+         if not submitted or unsent else
+         f"{str(submitted.get('at'))[:16]} 에 보냈습니다."),
+    ])
     if unsent:
         st.warning(
             "배정해 둔 내용이 아직 인사 담당자에게 가지 않았습니다 — 아래 시간표를 "
@@ -4474,19 +4930,32 @@ def render_team_view() -> None:
             "그대로 진행하시려면 아래 '담당자 일정 무시하고 배치하기'를 켜 주세요 "
             "— 인사팀이 시간표를 만들 때 가능 시간을 지키지 않고 자리부터 채웁니다."
         )
+    # 가능 시간을 아직 안 적어 낸 분은 인사팀 시간표에서 '되는 시간이 하나도 없는
+    # 사람' 으로 읽힌다. 여기서 아무 때나 되는 것처럼 자리를 맡기면 그 짝은 최종
+    # 시간표에서 통째로 빠진다 — 그래서 먼저 짚어 드린다.
+    blank = [row for row in interviewers if not iv_answered(row)]
+    if blank:
+        st.warning(
+            f"{' · '.join(iv_label(row) for row in blank)} 님은 가능 시간을 아직 "
+            "안 적어 내셨습니다 — 이대로 자리를 맡기면 인사 담당자의 최종 시간표에서 "
+            "빠집니다. 인사 담당자에게 3단계 '가능 시간 받기'를 요청하시거나, "
+            "아래 '담당자 일정 무시하고 배치하기'를 켜 주세요."
+        )
     ignore_band = st.checkbox(
         "담당자 일정 무시하고 배치하기", value=False, key=f"tv_ignore_{team}",
-        help="적어 내신 앞타임 · 뒤타임을 따지지 않고 하루 최대 인원까지 나눕니다. "
+        help="적어 내신 가능 요일 · 시간을 따지지 않고 하루 최대 인원까지 나눕니다. "
              "아래 ③ 시간표도 함께 무시하고 그립니다.",
     )
     auto = st.session_state.get("tv_auto")
     if auto and auto[0] == team:
         st.success(
             f"{auto[1]}명을 담당자별로 연달아 볼 수 있게 묶어 나눴습니다 — "
-            "각자 적어 내신 가능 시간 안에서만 잡았습니다."
-            + (f" 그 시간에 맡을 수 있는 담당자가 없는 자리가 {auto[2]}개라 "
-               "팀장에게 몰아 두었으니 확인해 주세요 — 담당자가 더 필요하거나, "
-               "'담당자 일정 무시하고 배치하기'를 켜셔야 합니다." if auto[2] else "")
+            "각자 적어 내신 가능 요일 · 시간 안에서만 잡았습니다."
+            + (f" 그 자리를 맡을 수 있는 담당자가 없는 칸이 {auto[2]}개라 "
+               f"그날 여유 있는 분께 나눠 얹었으니 확인해 주세요 — {auto[3]}. "
+               "담당자가 더 필요하거나, '담당자 일정 무시하고 배치하기'를 "
+               "켜셔야 합니다."
+               if auto[2] else "")
         )
         st.session_state.pop("tv_auto", None)
     b1, b2, b3, b4 = st.columns([1, 1, 1.4, 2.6])
@@ -4510,34 +4979,20 @@ def render_team_view() -> None:
         # 한 사람씩 돌아가며 나누면 면접관이 첫 칸 한 건 · 여섯째 칸 한 건처럼
         # 띄엄띄엄 앉게 된다. 그래서 명단 순서대로 한 사람에게 몰아서 채운 다음
         # 담당자로 넘어간다 — 그러면 각자 연달아 보고 끝낸다.
-        # 한 팀은 스케줄러가 며칠에 걸쳐 나눠 보므로 담당자 한 명이 맡을 수 있는
-        # 총원은 '하루 한도 × 그 날 수' 다. 하루 한도만 쓰면 자리가 남는데도
-        # 팀장에게 몰아 두고 사람이 모자라다고 잘못 알리게 된다.
         tv_per_day = max(1, min(20, int(
             st.session_state.get("tv_perday") or tv_timing.get("per_day")
             or SLOTS_PER_DAY
         )))
-
-        def _cap(row: dict) -> int:
-            daily = int(row.get("max_daily") or len(SCHED_HOURS))
-            if not ignore_band:
-                # '어려움' 이라고 답한 사람은 칸이 없다 — 0 이 그대로 뜻이다.
-                daily = min(daily, band_cap(band_of(row, tv_timing), tv_timing))
-            return max(0, min(daily, len(SCHED_HOURS))) * SCHED_DAYS_PER_TEAM
-
-        def _slots(row: dict) -> set[int]:
-            """이 담당자가 맡을 수 있는 자리 번호(0부터).
-
-            몇 번째 자리인지가 곧 몇 시인지다. 뒤타임만 되는 분에게 첫 칸을
-            맡기면 아래 ③ 시간표와 인사팀 최종 시간표가 서로 달라진다.
-            """
-            band = BAND_ALL if ignore_band else band_of(row, tv_timing)
-            if band in (BAND_ALL, BAND_UNSET):
-                return set(range(tv_per_day))
-            return band_slots(band, tv_timing, tv_per_day)
-
-        caps = {row["interviewer_id"]: _cap(row) for row in interviewers}
-        can = {row["interviewer_id"]: _slots(row) for row in interviewers}
+        # 며칠째 몇 번째 칸인지를 그대로 따진다 — 하루 한도도 그날치로 센다.
+        # 예전에는 '하루 한도 × 날 수' 를 총원으로 삼고 요일을 안 봤는데, 그러면
+        # 그 요일에 못 오시는 분에게 자리가 가고 인사팀 시간표가 그 짝을 버렸다.
+        caps = {
+            row["interviewer_id"]: max(0, min(
+                int(row.get("max_daily") or len(SCHED_HOURS)), len(SCHED_HOURS)))
+            for row in interviewers
+        }
+        can, blank_ids = team_open_slots(
+            interviewers, team_days, tv_per_day, ignore_band)
         order = [row["interviewer_id"] for row in sorted(
             interviewers, key=lambda r: (r.get("priority") != 1,
                                          r.get("interviewer_id") or ""))]
@@ -4559,14 +5014,27 @@ def render_team_view() -> None:
             True, tv_per_day,
         )]
 
-        picks, over = assign_by_band(queue, order, caps, can, tv_per_day, lead)
+        picks, gaps = assign_by_availability(
+            queue, order, caps, can, tv_per_day, len(team_days), lead)
         for aid, who in picks.items():
             st.session_state[f"tv_iv_{team}_{aid}"] = who
-        st.session_state["tv_auto"] = (team, len(targets), over)
+        # 못 맡긴 칸이 어디였는지 사람 말로 적어 둔다 — '몇 개' 만으로는 무엇을
+        # 고쳐야 할지 알 수 없다.
+        clock = slot_labels(tv_timing["start"], tv_per_day,
+                            tv_timing["minutes"], tv_timing["rest"])
+        where = " · ".join(sorted({
+            f"{(team_days[day] if day < len(team_days) else day + 1)} "
+            f"{clock[slot] if slot < len(clock) else slot + 1}"
+            for day, slot in gaps
+        }))
+        if blank_ids and not ignore_band:
+            where += (f" (가능 시간을 안 적어 내신 담당자 {len(blank_ids)}명은 "
+                      "자리를 못 맡습니다)")
+        st.session_state["tv_auto"] = (team, len(targets), len(gaps), where)
         st.rerun()
     b4.caption("체크한 사람만 보내집니다. 자동배치는 한 담당자가 연달아 보도록 "
-               "묶되, 그분이 가능한 시간대의 자리만 맡깁니다 — 담당자를 따로 "
-               "고르지 않으면 팀장이 맡습니다.")
+               "묶되, 그분이 **그 요일 그 시간에 가능한 자리만** 맡깁니다 — "
+               "담당자를 따로 고르지 않으면 팀장이 맡습니다.")
 
     default_iv = next((row["interviewer_id"] for row in interviewers
                        if row.get("priority") == 1), interviewers[0]["interviewer_id"])
@@ -4672,15 +5140,17 @@ def render_team_view() -> None:
                               key="tv_min")
     rest = c3.number_input("사이 쉬는 시간(분)", 0, 60, timing["rest"], 5, key="tv_rest")
     per_day = c4.number_input("하루에 볼 인원", 1, 20, timing["per_day"], key="tv_perday")
-    # 담당자가 적어 낸 가능 시간을 여기서도 지킨다 — 부서가 보는 시간표와 인사팀
-    # 최종 시간표가 서로 달라지지 않게. '일정 무시' 를 켜 두셨으면 함께 무시한다.
-    bands = (None if st.session_state.get(f"tv_ignore_{team}")
-             else {row["interviewer_id"]: band_of(row, timing)
-                   for row in interviewers})
+    # 담당자가 적어 낸 가능 **요일 · 시간** 을 여기서도 그대로 지킨다 — 부서가
+    # 보는 시간표와 인사팀 최종 시간표가 서로 달라지지 않게. '일정 무시' 를 켜
+    # 두셨으면 함께 무시한다.
+    tv_can, tv_blank = team_open_slots(
+        interviewers, team_days, int(per_day),
+        bool(st.session_state.get(f"tv_ignore_{team}")))
     try:
         rows = pair_schedule(
             applicants, pairs, iv_name, start=start.strip(), minutes=int(minutes),
-            rest=int(rest), per_day=int(per_day), bands=bands,
+            rest=int(rest), per_day=int(per_day), can=tv_can, days=team_days,
+            unanswered=set(tv_blank),
         )
     except ValueError:
         st.error("시작 시각은 HH:MM 형식으로 입력하세요. (예: 09:00)")
@@ -4688,16 +5158,24 @@ def render_team_view() -> None:
     off = [row for row in rows if row.get("off_band")]
     if off:
         st.warning(
-            f"{' · '.join(row['name'] for row in off)} 님의 담당자는 가능 시간을 "
-            "'어려움' 으로 적어 내셨습니다 — 자리는 잡아 두었지만 그대로 진행할 수 "
-            "없으니 담당자를 바꾸시거나 가능 시간을 다시 받아 주세요."
+            "아래 분들은 담당자가 그 자리를 맡을 수 없습니다 — 자리는 잡아 두었지만 "
+            "인사 담당자의 최종 시간표에서는 옮겨지거나 빠집니다.\n\n"
+            + "\n".join(
+                f"- {row['name']} → {row['interviewer']} : {row['off_why']}"
+                for row in off
+            )
+            + "\n\n담당자를 바꾸시거나, 인사 담당자에게 그분의 가능 시간을 다시 "
+            "받아 달라고 요청해 주세요."
         )
 
     schedule_cards(rows, team=team)
     st.caption(
         f"{team} · 모두 {len(rows)}명 · 한 사람당 {int(minutes)}분 면접에 "
         f"{int(rest)}분 휴식 · 하루 {int(per_day)}명씩 · {max(r['day'] for r in rows)}일차까지"
-        " · 카드 위쪽 띠줄은 학력(박사 · 석사 · 학사)입니다."
+        + (" (" + " · ".join(f"{n}일차={day}"
+                             for n, day in enumerate(team_days, start=1)) + ")"
+           if team_days else "")
+        + " · 카드 위쪽 띠줄은 학력(박사 · 석사 · 학사)입니다."
         + (" 순서는 인사 담당자가 2단계에서 잡아 보낸 차례 그대로입니다." if planned else
            " 학력은 날짜마다 고르게 나누되, 하루 안에서는 박사 → 석사 → 학사 순으로 묶습니다.")
     )
@@ -4999,9 +5477,13 @@ def render_scenario() -> None:
             sc_doc = load_handoff(sc_round)
             sc_pairs = handoff_pairs(sc_doc)
             sc_by_team = handoff_pairs_by_team(sc_doc)
+            sc_days = handoff_team_days(sc_doc)
+            if sc_days:
+                body["days_by_team"] = sc_days
             if sc_pairs:
                 body["pairs"] = sc_pairs
                 body["pairs_by_team"] = sc_by_team
+                body["seats_by_team"] = handoff_seats_by_team(sc_doc)
                 seats = sum(len(mine) for mine in sc_by_team.values())
                 add(f"  부서가 보낸 짝 {seats}건으로 만듭니다")
             data, err = post_json(

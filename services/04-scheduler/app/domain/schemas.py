@@ -96,6 +96,10 @@ class GenerateConstraints(BaseModel):
     # 부서가 자기 시간표에서 잡아 둔 자리 {팀: {지원자: 자리}}. 최종 시간표는
     # 이 자리를 먼저 지키고, 못 지킬 때만 옮기면서 그 까닭을 사유로 남긴다.
     seats_by_team: dict[str, dict[str, DeptSeat]] = Field(default_factory=dict)
+    # 인사가 명단을 보낼 때 이미 정해 둔 팀별 면접 요일 {팀: ["화", "목"]}.
+    # 부서는 이 요일을 보고 '1일차 · 2일차' 자리를 잡았으므로, 여기서 요일을
+    # 다시 뽑으면 부서가 본 시간표와 어긋난다. 안 주면 예전처럼 새로 뽑는다.
+    days_by_team: dict[str, list[str]] = Field(default_factory=dict)
 
     def seat_map(self) -> dict[str, dict[str, tuple[int, int]]]:
         """Board 가 쓰는 모양 {팀: {지원자: (일차, 칸 번호)}} 로 바꾼다."""
@@ -120,6 +124,8 @@ class GenerateRequest(BaseModel):
     # 부서가 자기 시간표에서 잡아 둔 자리 {팀: {지원자: {"day": n, "slot": i}}}.
     # 안 주면 예전처럼 시간표가 요일 · 시각을 처음부터 새로 짠다.
     seats_by_team: dict[str, dict[str, DeptSeat]] | None = None
+    # 인사가 3단계에서 못 박은 팀별 면접 요일 {팀: ["화", "목"]}.
+    days_by_team: dict[str, list[str]] | None = None
 
     @field_validator("algorithm")
     @classmethod
@@ -127,6 +133,17 @@ class GenerateRequest(BaseModel):
         from app.services.registry import normalize_algorithm
 
         return normalize_algorithm(v)
+
+
+class FixDuplicatesRequest(BaseModel):
+    """중복면접자만 다시 앉히기 — 겹친 사람 외에는 자리를 건드리지 않는다.
+
+    팀별 면접 요일을 함께 주면 옮길 칸을 그 요일 안에서만 찾는다. 안 주면
+    닷새 전부에서 찾으므로, 그 팀이 안 보는 요일로 넘어갈 수 있다.
+    """
+
+    days_by_team: dict[str, list[str]] | None = None
+    actor: str = "system"
 
 
 class LockRequest(BaseModel):
