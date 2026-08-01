@@ -150,6 +150,35 @@ def test_get_schedule_returns_assignments(client, generated):
     assert first["lock_level"] == "DRAFT"
 
 
+def test_timing_survives_generate_and_revalidation(client):
+    """면접 진행 조건은 시간표에 붙어 다녀야 한다.
+
+    인사팀이 팀별 명단 나누기에서 정한 조건이 칸의 실제 시각을 정하고, 규칙4의
+    '오후 첫 타임' 도 그에 따라 움직인다. 만들 때 쓴 조건을 안 남기면 나중에
+    다시 검증할 때 기본 조건(30분 · 5분)으로 재게 되어, 같은 시간표인데 점수가
+    달라지고 재편성(05)도 다른 칸을 지키려 든다.
+    """
+    long_day = {"start": "09:00", "minutes": 60, "rest": 10}
+    created = client.post(
+        "/api/v1/schedules/generate",
+        json={"round_id": "R2026-Q3-TIMING", "plan_id": "plan-timing", "algorithm": "v5",
+              "constraints": {"timing": long_day}},
+    ).json()["data"]
+    sid = created["schedule_id"]
+
+    assert client.get(f"/api/v1/schedules/{sid}").json()["data"]["timing"] == long_day
+
+    detail = client.get(f"/api/v1/schedules/{sid}/rules").json()["data"]
+    assert detail["rule4_first_slot"]["detail"]["first_slots"] == [HOURS[0], HOURS[3]]
+    assert detail["rule4_first_slot"]["score"] == created["rule_compliance"]["rule4_first_slot"]
+
+    # 다시 검증해도 같은 조건으로 재므로 점수가 흔들리지 않는다
+    assert client.post(f"/api/v1/schedules/{sid}/validate").status_code == 200
+    after = client.get(f"/api/v1/schedules/{sid}/rules").json()["data"]
+    assert after["rule4_first_slot"]["detail"]["first_slots"] == [HOURS[0], HOURS[3]]
+    assert after["rule4_first_slot"]["score"] == created["rule_compliance"]["rule4_first_slot"]
+
+
 def test_list_round_schedules(client, generated):
     """화면이 '어느 시간표를 볼까요' 를 감사 로그가 아니라 여기서 받아야 한다."""
     other = _generate(client, "v4", round_id="R2026-Q3-02").json()["data"]

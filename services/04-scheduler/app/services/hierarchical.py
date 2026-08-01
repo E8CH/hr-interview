@@ -10,9 +10,8 @@ from __future__ import annotations
 from collections import defaultdict
 
 from app.domain.schemas import ApplicantIn, PlannedAssignment
-from app.infrastructure.contracts import DAYS, HOURS, plan_team_days
+from app.infrastructure.contracts import DAYS, HOURS, first_slots, plan_team_days
 from app.services.board import Board
-from app.services.rule_evaluator import FIRST_SLOTS
 
 SLOTS_PER_DAY = len(HOURS)
 
@@ -233,7 +232,8 @@ def _place_nearest(
 # Stage 2 — 시간대 세부 최적화
 # --------------------------------------------------------------------------
 def place_group(
-    board: Board, team: str, day: str, group: list[ApplicantIn], extra_tags: list[str] | None = None
+    board: Board, team: str, day: str, group: list[ApplicantIn],
+    extra_tags: list[str] | None = None, timing=None
 ) -> list[ApplicantIn]:
     """팀-면접일 그룹을 연속 시간대에 배치. 배치 실패한 지원자를 반환."""
     if not group:
@@ -246,9 +246,14 @@ def place_group(
     else:
         overflow = []
 
-    # 소규모 그룹(3명 이하)은 그날 첫 칸을 피해 시작 → 규칙4 "첫 타임 소규모"
-    prefer = 0 if k >= 4 else 1
-    starts = sorted(range(SLOTS_PER_DAY - k + 1), key=lambda s: (abs(s - prefer), s))
+    # 소규모 그룹(3명 이하)은 덩어리의 첫 칸을 피해 시작 → 규칙4 "첫 타임 소규모".
+    # 첫 칸이 몇 번째인지는 면접 진행 조건이 정한다 — 30분 면접이면 오전 1타임 ·
+    # 오후 7타임, 1시간 면접이면 오전 1타임 · 오후 4타임이다.
+    guarded = {HOURS.index(hour) for hour in first_slots(timing) if hour in HOURS}
+    starts = sorted(
+        range(SLOTS_PER_DAY - k + 1),
+        key=lambda s: (k < 4 and s in guarded, s),
+    )
 
     chosen: list[str] | None = None
     for start in starts:
@@ -286,15 +291,16 @@ def place_group(
 # Stage 3 — Fallback (v5)
 # --------------------------------------------------------------------------
 def fallback_place(
-    board: Board, leftovers: list[ApplicantIn], target_ratio: float
+    board: Board, leftovers: list[ApplicantIn], target_ratio: float, timing=None
 ) -> tuple[list[PlannedAssignment], list[ApplicantIn]]:
     """미배정자를 규칙 손해가 최소인 슬롯에 흡수한다.
 
     후보 슬롯 비용:
       +100  세로 연속(규칙3)을 깨뜨림
-      + 12  비어 있던 첫 타임을 새로 여는 경우 (규칙4)
+      + 12  비어 있던 첫 타임(오전 · 오후)을 새로 여는 경우 (규칙4)
       +  ρ  배치 후 그날 대학원 비율의 목표 이탈도 (규칙1)
     """
+    guarded = set(first_slots(timing))
     placed: list[PlannedAssignment] = []
     still_unassigned: list[ApplicantIn] = []
 
@@ -308,7 +314,7 @@ def fallback_place(
                 cost = 0.0
                 if board.would_break_contiguity(applicant.team, day, hour):
                     cost += 100.0
-                if hour in FIRST_SLOTS and board.day_count[day] > 0:
+                if hour in guarded and board.day_count[day] > 0:
                     cost += 12.0
                 total = board.day_count[day] + 1
                 grad = board.day_grad[day] + (1 if applicant.is_grad else 0)

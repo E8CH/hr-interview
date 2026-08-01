@@ -76,6 +76,10 @@ def get_schedule(schedule_id: str, db: Session = Depends(get_db)):
     payload["assignments"] = [
         AssignmentOut.model_validate(a).model_dump() for a in assignments
     ]
+    # 이 시간표를 만들 때 쓴 면접 진행 조건 — 칸이 몇 시인지가 여기서 정해진다.
+    # 재편성(05)도 '오전 첫 타임 · 오후 첫 타임' 을 이 값으로 골라야 원래 시간표와
+    # 같은 자리를 지킨다.
+    payload["timing"] = schedule_service.stored_timing(db, schedule_id) or {}
     return ok(payload)
 
 

@@ -280,6 +280,7 @@ def generate(db: Session, req: GenerateRequest) -> tuple[Schedule, RuleReport, l
         applicants,
         grad_ratio_target=req.constraints.grad_ratio_target,
         grad_ratio_tolerance=req.constraints.grad_ratio_tolerance,
+        timing=req.constraints.timing or None,
     )
     # 인사가 가능 시간을 무시하기로 했으면 그 어긋남은 위반이 아니라 감수한
     # 비용이다. 위반에서 빼는 대신 어긋난 자리를 따로 적어 둔다.
@@ -344,6 +345,10 @@ def generate(db: Session, req: GenerateRequest) -> tuple[Schedule, RuleReport, l
                 # 다시 검증할 때도 같은 잣대를 쓰도록 남겨 둔다 (schedules 표에
                 # 칸을 늘리면 이미 쓰던 DB 를 못 읽으므로 여기에 적는다).
                 "ignore_availability": ignore_availability,
+                # 칸이 몇 시였는지도 남긴다 — 규칙4의 '첫 타임' 이 어느 칸인지가
+                # 이 값으로 갈리므로, 안 남기면 다시 검증할 때 기본 조건으로 재서
+                # 만들 때와 다른 점수가 나온다.
+                "timing": _jsonable(req.constraints.timing or {}),
                 "off_band": _jsonable(off_band_rows),
             },
         )
@@ -511,15 +516,29 @@ def stored_rules(db: Session, schedule_id: str) -> dict:
 # --------------------------------------------------------------------------
 # 검증 · 락
 # --------------------------------------------------------------------------
-def ignored_availability(db: Session, schedule_id: str) -> bool:
-    """만들 때 '담당자 일정 무시하고 배치하기'를 켰는지 — 검증도 같은 잣대로."""
+def _overall_details(db: Session, schedule_id: str) -> dict:
     row = db.scalar(
         select(RuleCompliance).where(
             RuleCompliance.schedule_id == schedule_id,
             RuleCompliance.rule_name == "overall",
         )
     )
-    return bool((row.details or {}).get("ignore_availability")) if row else False
+    return (row.details or {}) if row else {}
+
+
+def ignored_availability(db: Session, schedule_id: str) -> bool:
+    """만들 때 '담당자 일정 무시하고 배치하기'를 켰는지 — 검증도 같은 잣대로."""
+    return bool(_overall_details(db, schedule_id).get("ignore_availability"))
+
+
+def stored_timing(db: Session, schedule_id: str) -> dict | None:
+    """만들 때 쓴 면접 진행 조건 — 없으면 계약 기본값으로 본다.
+
+    규칙4가 보는 '첫 타임' 이 몇 번째 칸인지는 이 조건이 정하므로, 다시 검증할
+    때도 만들 때와 같은 값을 써야 점수가 흔들리지 않는다. 이 칸이 생기기 전에
+    만든 시간표에는 값이 없다 — 그때는 기본 조건으로 만든 것이 맞다.
+    """
+    return _overall_details(db, schedule_id).get("timing") or None
 
 
 def validate_schedule(
@@ -530,7 +549,9 @@ def validate_schedule(
     interviewers = load_interviewers(db, schedule.round_id)
     ignore = ignored_availability(db, schedule_id)
     violations = check_hard_constraints(assignments, interviewers, ignore_availability=ignore)
-    report = rule_compliance(assignments, interviewers)
+    report = rule_compliance(
+        assignments, interviewers, timing=stored_timing(db, schedule_id)
+    )
     penalty = soft_penalty(report, assignments, interviewers)
     off_band_rows = off_band(assignments, interviewers) if ignore else []
 

@@ -1,11 +1,15 @@
 """하드 제약 재검증 · 소프트 페널티 테스트"""
 from datetime import datetime
 
-from app.domain.schedule import InterviewerInfo, ScheduleAssignment
-from app.services.constraint_recheck import (ConstraintIndex,
+from shared.contracts.constants import HOURS
+
+from app.domain.schedule import (InterviewerInfo, ScheduleAssignment,
+                                 ScheduleSnapshot)
+from app.services.constraint_recheck import (W_FIRST_SLOT, ConstraintIndex,
                                              check_hard_constraints,
                                              compute_soft_penalty,
                                              soft_penalty_breakdown)
+from app.services.safe_repair import repair_safely
 
 IVS = [
     InterviewerInfo(interviewer_id="IV001", name="A", team="AI솔루션팀", max_daily=2),
@@ -18,6 +22,20 @@ def _a(aid, ap, iv, day, hour, team, lock="DRAFT"):
     return ScheduleAssignment(assignment_id=aid, applicant_id=ap, interviewer_id=iv,
                               day=day, hour=hour, team=team, lock_level=lock,
                               created_at=datetime(2026, 7, 1))
+
+
+HOUR_LONG = {"start": "09:00", "minutes": 60, "rest": 10}
+
+#: 대형 조(AI솔루션팀 5건)가 4타임 · 7타임을 차지한 시간표. 기본 조건에서는
+#: 7타임이, 1시간 면접에서는 4타임이 오후의 첫 칸이라 걸리는 자리가 달라진다.
+_BIG_TEAM_ROWS = [
+    _a("1", "P1", "IV001", "1일차", HOURS[3], "AI솔루션팀"),
+    _a("2", "P2", "IV001", "2일차", HOURS[3], "AI솔루션팀"),
+    _a("3", "P3", "IV002", "1일차", HOURS[6], "AI솔루션팀"),
+    _a("4", "P4", "IV002", "1일차", HOURS[1], "AI솔루션팀"),
+    _a("5", "P5", "IV002", "1일차", HOURS[2], "AI솔루션팀"),
+    _a("6", "P6", "IV003", "1일차", HOURS[7], "미래혁신팀"),
+]
 
 
 def test_no_violation_on_clean_schedule():
@@ -100,6 +118,34 @@ def test_grad_balance_penalty_triggers_on_skew(snapshot):
     breakdown = soft_penalty_breakdown(snapshot.assignments, snapshot.interviewers,
                                        list(ap_map.values()))
     assert breakdown["RULE1_GRAD_BALANCE"] > 0
+
+
+def test_first_slot_penalty_follows_the_interview_timing():
+    """'첫 타임' 이 몇 번째 칸인지는 면접 진행 조건이 정한다.
+
+    30분 면접 · 5분 휴식이면 7타임이 12:30 — 오후의 첫 칸이다. 1시간 면접 ·
+    10분 휴식이면 같은 12:30이 4타임이다. 재편성이 이 조건을 안 보면 원래
+    시간표가 지킨 칸과 다른 칸을 지키려 들어, 고칠수록 규칙4가 무너진다.
+    """
+    # 기본 조건 — 대형 조가 차지한 첫 칸은 7타임 하나뿐이다
+    assert soft_penalty_breakdown(_BIG_TEAM_ROWS, IVS, [])["RULE4_FIRST_SLOT"] == W_FIRST_SLOT
+    # 1시간 면접 — 4타임이 오후 첫 칸이 되어 이틀치가 걸린다
+    assert soft_penalty_breakdown(
+        _BIG_TEAM_ROWS, IVS, [], HOUR_LONG)["RULE4_FIRST_SLOT"] == 2 * W_FIRST_SLOT
+
+
+def test_repair_reads_the_timing_off_the_snapshot():
+    """스냅샷이 조건을 들고 다녀야 재편성이 04 와 같은 칸을 지킨다."""
+    snapshot = ScheduleSnapshot(
+        schedule_id="SCH-TIMING", round_id="R-TIMING",
+        assignments=list(_BIG_TEAM_ROWS), interviewers=IVS, timing=HOUR_LONG)
+
+    outcome = repair_safely(snapshot, [])       # 옮길 사람이 없어도 점수는 다시 잰다
+    assert outcome.hard_violations == 0
+    assert outcome.soft_penalty == compute_soft_penalty(
+        _BIG_TEAM_ROWS, IVS, [], HOUR_LONG)
+    # 조건을 안 넘기면 4타임을 오전 한복판으로 보므로 더 낮게 나온다
+    assert outcome.soft_penalty > compute_soft_penalty(_BIG_TEAM_ROWS, IVS, [])
 
 
 def test_empty_schedule_has_no_penalty():

@@ -186,7 +186,8 @@ def repair_safely(snapshot: ScheduleSnapshot,
     outcome.hard_violations = len(violations)
     outcome.violation_details = [v.as_dict() for v in violations]
     outcome.soft_penalty = compute_soft_penalty(
-        result, snapshot.interviewers, snapshot.applicants) + move_penalty
+        result, snapshot.interviewers, snapshot.applicants,
+        snapshot.timing) + move_penalty
     outcome.unused_reserved = [s for s in available if s.key not in used_slots]
 
     # 영향받지 않은 배정은 그대로 유지되어야 한다 (LOCKED 불변 보장)

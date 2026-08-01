@@ -27,6 +27,8 @@ def run(
 ) -> PlanResult:
     constraints = constraints or GenerateConstraints()
     target = constraints.grad_ratio_target
+    # 칸이 몇 시인지 — 규칙4의 '첫 타임' 이 어느 칸인지가 여기서 갈린다
+    timing = constraints.timing or None
     board = Board(
         interviewers,
         max_daily_default=constraints.max_daily_default,
@@ -58,7 +60,9 @@ def run(
         unassigned.extend(leftover)
         # Stage 2
         for day in days:
-            unassigned.extend(hierarchical.place_group(board, team, day, groups.get(day, [])))
+            unassigned.extend(
+                hierarchical.place_group(board, team, day, groups.get(day, []), timing=timing)
+            )
 
     notes = {
         "days_per_team": days_per_team,
@@ -72,7 +76,7 @@ def run(
 
     # Stage 3 (v5에서만 활성)
     if fallback and unassigned:
-        _, unassigned = hierarchical.fallback_place(board, unassigned, target)
+        _, unassigned = hierarchical.fallback_place(board, unassigned, target, timing)
 
     return PlanResult(
         algorithm=NAME, assignments=board.assignments, unassigned=unassigned, notes=notes

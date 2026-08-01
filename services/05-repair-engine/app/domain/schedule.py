@@ -51,6 +51,11 @@ class ScheduleSnapshot(BaseModel):
     reserved_slots: list[SlotRef] = []
     interviewers: list[InterviewerInfo] = []
     applicants: list[ApplicantInfo] = []
+    #: 이 시간표를 만들 때 쓴 면접 진행 조건 {"start", "minutes", "rest"} —
+    #: 인사팀이 팀별 명단 나누기에서 정한 값이 04 를 거쳐 여기까지 온다. 칸이
+    #: 몇 시인지가 이 값으로 정해지므로 '오전 첫 타임 · 오후 첫 타임' 도 함께
+    #: 움직인다. 비어 있으면 계약의 기본값(09:00 · 30분 · 5분)으로 본다.
+    timing: dict[str, object] = Field(default_factory=dict)
 
     def interviewer_map(self) -> dict[str, InterviewerInfo]:
         return {iv.interviewer_id: iv for iv in self.interviewers}

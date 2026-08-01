@@ -182,6 +182,37 @@ def band_hours(band: str, timing=None) -> list[str]:
     return [hour for index, hour in enumerate(HOURS) if index in picked]
 
 
+#: 오전 · 오후를 가르는 시각. 점심시간을 따로 두지 않아 칸은 죽 이어지지만,
+#: **덩어리의 첫 칸**은 지각 위험을 따로 봐야 하는 자리라 하루를 둘로 나눠 본다.
+NOON_MINUTES = 12 * 60
+
+
+def day_blocks(timing=None) -> list[list[str]]:
+    """하루를 오전 · 오후 두 덩어리로 가른다 — 12시에 걸친 칸은 오전에 남는다.
+
+    **어느 칸이 몇 시인지는 면접 진행 조건이 정한다.** 30분 면접 · 5분 휴식이면
+    오후는 7타임(12:30)부터지만, 1시간 면접 · 10분 휴식이면 4타임(12:30)부터다.
+    그래서 칸 번호로 굳혀 두지 않고 그때그때 시각에서 계산한다.
+
+    12시에 걸쳐 있는 칸(기본 조건의 6타임 11:55~12:25)은 오전에 둔다. 이미
+    오전부터 앉아 있던 사람이 이어서 보는 자리라 '오후의 시작' 이 아니고,
+    거기 오는 사람은 아침에 이미 와 있어 지각 위험도 다르기 때문이다. 12시를
+    넘겨 **시작하는** 첫 칸부터가 오후다.
+
+    한쪽이 비면(모든 칸이 12시 전에 시작하는 짧은 하루 등) 그 덩어리는 빼고
+    돌려준다 — 없는 덩어리의 첫 칸을 지키라고 요구하지 않기 위해서다.
+    """
+    spans = hour_spans(timing)
+    morning = [hour for hour in HOURS if spans[hour][0] < NOON_MINUTES]
+    afternoon = [hour for hour in HOURS if spans[hour][0] >= NOON_MINUTES]
+    return [block for block in (morning, afternoon) if block]
+
+
+def first_slots(timing=None) -> list[str]:
+    """오전 첫 타임 · 오후 첫 타임 — 지각 위험을 따로 봐야 하는 칸들."""
+    return [block[0] for block in day_blocks(timing)]
+
+
 def band_availability(band: str, days=DAYS, timing=None) -> dict[str, list[str]]:
     """고른 덩어리를 날마다 같은 칸으로 펼친다 — 날별로 다르게 두지 않는다."""
     hours = band_hours(band, timing)

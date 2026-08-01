@@ -19,14 +19,15 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from shared.contracts.constants import HOURS
+from shared.contracts.constants import HOURS, first_slots
 
 from app.domain.schedule import (ApplicantInfo, InterviewerInfo,
                                  ScheduleAssignment)
 
-#: 연속 배치 판정을 위한 시간 블록 — 점심 시간을 따로 두지 않으므로 하루가 한 덩어리다
+#: 연속 배치 판정을 위한 시간 블록 — 점심 시간을 따로 두지 않으므로 하루가 한 덩어리다.
+#: 오전 · 오후로 가르는 `day_blocks()` 와는 일부러 다르다. 세로 연속은 방을 몇 번
+#: 다시 여는지의 문제라 12시를 넘겨 이어 앉는 것은 끊어 앉는 것이 아니다.
 HOUR_BLOCKS: list[list[str]] = [list(HOURS)]
-FIRST_HOURS: set[str] = {HOURS[0]}
 
 HOUR_INDEX: dict[str, int] = {h: i for i, h in enumerate(HOURS)}
 
@@ -203,8 +204,15 @@ def _vertical_group_penalty(assignments: list[ScheduleAssignment],
 
 
 def _first_slot_penalty(assignments: list[ScheduleAssignment],
-                        interviewers: dict[str, InterviewerInfo]) -> int:
-    """첫 타임은 소규모 조 우선 — 대형 조가 차지하면 페널티."""
+                        interviewers: dict[str, InterviewerInfo],
+                        timing: dict | None = None) -> int:
+    """첫 타임은 소규모 조 우선 — 대형 조가 차지하면 페널티.
+
+    오전 첫 타임과 오후 첫 타임을 모두 본다. 어느 칸이 그 자리인지는 면접 진행
+    조건이 정한다 — 30분 면접이면 1타임과 7타임(12:30), 1시간 면접이면 1타임과
+    4타임(12:30)이다. 그래서 칸 번호로 굳혀 두지 않고 그때그때 계산한다.
+    """
+    first_hours = set(first_slots(timing))
     team_size: dict[str, int] = defaultdict(int)
     for a in assignments:
         iv = interviewers.get(a.interviewer_id)
@@ -215,7 +223,7 @@ def _first_slot_penalty(assignments: list[ScheduleAssignment],
 
     penalty = 0
     for a in assignments:
-        if a.hour not in FIRST_HOURS:
+        if a.hour not in first_hours:
             continue
         iv = interviewers.get(a.interviewer_id)
         team = iv.team if iv else a.team
@@ -226,21 +234,26 @@ def _first_slot_penalty(assignments: list[ScheduleAssignment],
 
 def compute_soft_penalty(assignments: list[ScheduleAssignment],
                          interviewers: list[InterviewerInfo],
-                         applicants: list[ApplicantInfo]) -> int:
+                         applicants: list[ApplicantInfo],
+                         timing: dict | None = None) -> int:
+    """`timing` 은 그 시간표를 만들 때 쓴 면접 진행 조건이다. 규칙4가 지키는
+    '첫 타임' 이 몇 번째 칸인지가 이 값으로 갈리므로, 안 넘기면 재편성이 원래
+    시간표와 다른 칸을 지키려 든다."""
     iv_map = {iv.interviewer_id: iv for iv in interviewers}
     ap_map = {ap.applicant_id: ap for ap in applicants}
     return (_grad_balance_penalty(assignments, ap_map)
             + _vertical_group_penalty(assignments, iv_map)
-            + _first_slot_penalty(assignments, iv_map))
+            + _first_slot_penalty(assignments, iv_map, timing))
 
 
 def soft_penalty_breakdown(assignments: list[ScheduleAssignment],
                            interviewers: list[InterviewerInfo],
-                           applicants: list[ApplicantInfo]) -> dict[str, int]:
+                           applicants: list[ApplicantInfo],
+                           timing: dict | None = None) -> dict[str, int]:
     iv_map = {iv.interviewer_id: iv for iv in interviewers}
     ap_map = {ap.applicant_id: ap for ap in applicants}
     return {
         "RULE1_GRAD_BALANCE": _grad_balance_penalty(assignments, ap_map),
         "RULE3_VERTICAL_GROUP": _vertical_group_penalty(assignments, iv_map),
-        "RULE4_FIRST_SLOT": _first_slot_penalty(assignments, iv_map),
+        "RULE4_FIRST_SLOT": _first_slot_penalty(assignments, iv_map, timing),
     }

@@ -164,6 +164,41 @@ def test_rule4_single_hour_block_not_evaluated():
     assert detail["evaluated"] == 0
 
 
+def test_rule4_afternoon_first_slot_follows_the_interview_timing():
+    """오후 첫 타임이 몇 번째 칸인지는 면접 진행 조건이 정한다.
+
+    1시간 면접 · 10분 휴식이면 4타임이 12:30 — 점심 뒤 처음 오는 자리라 지각
+    위험을 따로 봐야 한다. 거기에 큰 조가 앉으면 규칙4 위반이다. 그런데 기본
+    조건(30분 · 5분)에서 4타임은 10:45 로 오전 한복판이라, 똑같은 배정이 위반이
+    아니다. 칸 번호로 굳혀 두면 둘 중 한쪽을 반드시 틀리게 잰다.
+    """
+    rows = [
+        A(team="A팀", hour=H[2]),
+        A(team="B팀", hour=H[3]),
+        A(team="C팀", hour=H[3]),
+        A(team="A팀", hour=H[4]),
+    ]
+
+    score, detail = rule4_first_slot(rows, {"start": "09:00", "minutes": 60, "rest": 10})
+    assert detail["first_slots"] == [H[0], H[3]]
+    assert score == 0.0
+    assert [v["hour"] for v in detail["violations"]] == [H[3]]
+
+    score, detail = rule4_first_slot(rows)          # 기본 조건 — 30분 · 5분
+    assert detail["first_slots"] == [H[0], H[6]]
+    assert score == 100.0
+    assert detail["violations"] == []
+
+
+def test_rule_compliance_passes_the_timing_down_to_rule4():
+    """시간표를 만들 때와 나중에 다시 잴 때 같은 조건을 넘겨야 점수가 같다."""
+    rows = [A(team="A팀", hour=H[3]), A(team="B팀", hour=H[3]), A(team="A팀", hour=H[4])]
+    long_day = {"start": "09:00", "minutes": 60, "rest": 10}
+
+    assert rule_compliance(rows, timing=long_day).scores["rule4_first_slot"] == 0.0
+    assert rule_compliance(rows).scores["rule4_first_slot"] == 100.0
+
+
 # --------------------------------------------------------------------------
 # 통합
 # --------------------------------------------------------------------------

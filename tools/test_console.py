@@ -4648,6 +4648,13 @@ def render_scheduling() -> None:
             # 지키고, 짝이 없는 사람은 넣지 않는다 — ②의 명단과 ③의 시간표가
             # 같은 근거를 보게 하려는 것이다. 자리까지 넘기므로 부서가 보고 보낸
             # 시간표가 최종 시간표의 출발점이 된다.
+            #
+            # 면접 진행 조건도 함께 넘긴다. 칸(1타임 … 8타임)이 실제로 몇 시인지는
+            # 2단계 팀별 명단 나누기에서 정한 이 값으로만 알 수 있고, '오전 첫 타임 ·
+            # 오후 첫 타임' 이 몇 번째 칸인지도 그에 따라 움직인다 — 30분 면접이면
+            # 오후가 7타임(12:30)부터지만 1시간 면접이면 4타임(12:30)부터다.
+            # 안 넘기면 시간표는 기본 조건(09:00 · 30분 · 5분)으로 자리를 잡아,
+            # 이 화면이 보여 주는 시각과 다른 곳을 첫 타임으로 지키게 된다.
             data, err = post_json(
                 f"{SCHEDULER}/api/v1/schedules/generate",
                 {
@@ -4657,7 +4664,10 @@ def render_scheduling() -> None:
                     "pairs_by_team": sent_by_team,
                     "seats_by_team": sent_seats,
                     "days_by_team": sent_days,
-                    "constraints": {"ignore_availability": bool(ignore_avail)},
+                    "constraints": {
+                        "ignore_availability": bool(ignore_avail),
+                        "timing": dict(timing),
+                    },
                 },
                 timeout=180.0,
             )

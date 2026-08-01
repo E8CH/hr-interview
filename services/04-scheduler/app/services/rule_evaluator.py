@@ -19,12 +19,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-from app.infrastructure.contracts import DAYS, HOURS
-
-# 점심 시간을 따로 두지 않으므로 하루는 끊기지 않은 한 덩어리다.
-# 첫 타임도 그날의 첫 칸 하나뿐이다.
-BLOCKS = [list(HOURS)]
-FIRST_SLOTS = [HOURS[0]]
+from app.infrastructure.contracts import DAYS, HOURS, day_blocks, first_slots
 
 RULE_KEYS = (
     "rule1_grad_balance",
@@ -143,22 +138,32 @@ def rule3_vertical_group(assignments: Iterable[Any]) -> tuple[float, dict]:
     return _round(score), {"groups": len(groups), "contiguous": contiguous, "broken": broken}
 
 
-def rule4_first_slot(assignments: Iterable[Any]) -> tuple[float, dict]:
+def rule4_first_slot(assignments: Iterable[Any], timing=None) -> tuple[float, dict]:
+    """오전 첫 타임 · 오후 첫 타임을 각각 본다.
+
+    어느 칸이 덩어리의 첫 칸인지는 면접 진행 조건이 정한다 — 30분 면접이면
+    오후는 7타임(12:30)부터, 1시간 면접이면 4타임(12:30)부터다. 조건이 바뀌면
+    판정 대상 칸도 함께 바뀌므로 `timing` 을 그대로 받아 계산한다.
+    """
+    blocks = day_blocks(timing)
+    firsts = first_slots(timing)
     counts: Counter = Counter()
     team_at_first: dict[str, set[str]] = defaultdict(set)
     team_totals: Counter = Counter()
+    team_day_size: Counter = Counter()
     for a in assignments:
         day, hour, team = _get(a, "day"), _get(a, "hour"), _get(a, "team")
         counts[(day, hour)] += 1
         team_totals[team] += 1
-        if hour in FIRST_SLOTS:
+        team_day_size[(team, day)] += 1
+        if hour in firsts:
             team_at_first[f"{day}|{hour}"].add(team)
 
     evaluated = 0
     passed = 0
     violations = []
     for day in DAYS:
-        for block in BLOCKS:
+        for block in blocks:
             occupied = [h for h in block if counts[(day, h)] > 0]
             if len(occupied) < 2:
                 continue  # 판정 불가 블록은 제외
@@ -172,15 +177,25 @@ def rule4_first_slot(assignments: Iterable[Any]) -> tuple[float, dict]:
                     {"day": day, "hour": block[0], "first_count": first, "rest_max": rest}
                 )
 
+    # 그 칸에 앉은 조가 그날 몇 명짜리 조였는지 — '수요 적은 조부터' 를 사람이
+    # 눈으로 확인할 수 있게 함께 적어 둔다.
+    seated = {
+        key: {team: team_day_size[(team, key.split("|")[0])] for team in sorted(teams)}
+        for key, teams in sorted(team_at_first.items())
+    }
     if evaluated == 0:
-        return 100.0, {"evaluated": 0, "violations": [], "first_slot_teams": {}}
+        return 100.0, {"evaluated": 0, "violations": [], "first_slot_teams": {},
+                       "blocks": blocks, "first_slots": firsts}
 
     score = 100.0 * passed / evaluated
     detail = {
         "evaluated": evaluated,
         "passed": passed,
         "violations": violations,
+        "blocks": blocks,
+        "first_slots": firsts,
         "first_slot_teams": {k: sorted(v) for k, v in sorted(team_at_first.items())},
+        "first_slot_team_sizes": seated,
         "team_totals": dict(sorted(team_totals.items())),
     }
     return _round(score), detail
@@ -193,14 +208,20 @@ def rule_compliance(
     *,
     grad_ratio_target: float = 0.30,
     grad_ratio_tolerance: float = 0.20,
+    timing=None,
 ) -> RuleReport:
-    """명세의 `rule_compliance(assignments, interviewers, applicants)` 구현"""
+    """명세의 `rule_compliance(assignments, interviewers, applicants)` 구현
+
+    `timing` 은 그 회차의 면접 진행 조건이다. 규칙4가 보는 '첫 타임' 이 몇 번째
+    칸인지는 이 값으로 정해지므로, 시간표를 만들 때와 나중에 다시 검증할 때 같은
+    값을 넘겨야 같은 점수가 나온다.
+    """
     items = list(assignments)
 
     s1, d1 = rule1_grad_balance(items, grad_ratio_target, grad_ratio_tolerance)
     s2, d2 = rule2_team_conflict(items)
     s3, d3 = rule3_vertical_group(items)
-    s4, d4 = rule4_first_slot(items)
+    s4, d4 = rule4_first_slot(items, timing)
 
     overall = _round((s1 + s2 + s3 + s4) / 4)
     return RuleReport(

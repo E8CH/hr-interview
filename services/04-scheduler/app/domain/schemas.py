@@ -80,6 +80,14 @@ class DeptSeat(BaseModel):
 
 
 class GenerateConstraints(BaseModel):
+    # 인사팀이 **팀별 명단 나누기**에서 정한 면접 진행 조건
+    # {"start": "09:00", "minutes": 30, "rest": 5}. 그 회차의 시각은 오직 거기서만
+    # 정해지고, 뒤의 시간표는 모두 이 값으로 셈해야 한다.
+    # 칸(1타임 … 8타임)이 실제로 몇 시인지가 여기서 정해진다. 오전 · 오후를 가르는
+    # 자리도 이 값을 따라 움직이므로 — 30분 면접이면 오후가 7타임부터, 1시간
+    # 면접이면 4타임부터다 — 규칙4는 이 값 없이는 옳게 잴 수 없다. 안 주면
+    # 계약의 기본값(09:00 · 30분 · 5분)으로 본다.
+    timing: dict[str, Any] = Field(default_factory=dict)
     grad_ratio_target: float = 0.30
     grad_ratio_tolerance: float = 0.20
     max_daily_default: int = len(HOURS)
@@ -213,7 +221,7 @@ class InterviewerBandsIn(BaseModel):
     """
 
     bands: dict[str, str] = Field(default_factory=dict)
-    #: 3단계에서 정한 면접 진행 조건. 안 주면 기본값으로 계산한다.
+    #: 팀별 명단 나누기에서 정한 면접 진행 조건. 안 주면 기본값으로 계산한다.
     timing: dict[str, Any] | None = None
     actor: str = "console"
 
