@@ -69,6 +69,16 @@ class PlanResult:
 # --------------------------------------------------------------------------
 # REST 스키마
 # --------------------------------------------------------------------------
+class DeptSeat(BaseModel):
+    """부서 시간표에서의 자리 — 며칠째(1부터) 몇 번째 칸(0부터).
+
+    부서 화면은 요일 이름을 모르고 하루 몇 칸씩 끊어 세기만 한다. 요일은
+    인사팀이 정하므로 여기서는 일차로만 주고받는다.
+    """
+    day: int = Field(ge=1)
+    slot: int = Field(ge=0)
+
+
 class GenerateConstraints(BaseModel):
     grad_ratio_target: float = 0.30
     grad_ratio_tolerance: float = 0.20
@@ -83,6 +93,16 @@ class GenerateConstraints(BaseModel):
     # 담당자가 다르므로 지원자 사번 하나로는 담을 수 없다 — 그 팀 자리에는
     # 여기 적힌 담당자를 쓰고, 팀이 여기 없으면 위 pairs 로 되돌아간다.
     pairs_by_team: dict[str, dict[str, str]] = Field(default_factory=dict)
+    # 부서가 자기 시간표에서 잡아 둔 자리 {팀: {지원자: 자리}}. 최종 시간표는
+    # 이 자리를 먼저 지키고, 못 지킬 때만 옮기면서 그 까닭을 사유로 남긴다.
+    seats_by_team: dict[str, dict[str, DeptSeat]] = Field(default_factory=dict)
+
+    def seat_map(self) -> dict[str, dict[str, tuple[int, int]]]:
+        """Board 가 쓰는 모양 {팀: {지원자: (일차, 칸 번호)}} 로 바꾼다."""
+        return {
+            team: {a: (seat.day, seat.slot) for a, seat in (wish or {}).items()}
+            for team, wish in self.seats_by_team.items()
+        }
 
 
 class GenerateRequest(BaseModel):
@@ -97,6 +117,9 @@ class GenerateRequest(BaseModel):
     # 팀별 짝 {팀: {지원자: 담당자}} — 두 팀이 같이 보는 사람 때문에 필요하다.
     # 주면 그 팀 자리는 여기를 따르고, 여기 없는 팀만 pairs 를 본다.
     pairs_by_team: dict[str, dict[str, str]] | None = None
+    # 부서가 자기 시간표에서 잡아 둔 자리 {팀: {지원자: {"day": n, "slot": i}}}.
+    # 안 주면 예전처럼 시간표가 요일 · 시각을 처음부터 새로 짠다.
+    seats_by_team: dict[str, dict[str, DeptSeat]] | None = None
 
     @field_validator("algorithm")
     @classmethod

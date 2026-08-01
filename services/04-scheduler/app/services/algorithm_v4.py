@@ -33,6 +33,7 @@ def run(
         pinned=constraints.pairs,
         pinned_by_team=constraints.pairs_by_team,
         ignore_availability=constraints.ignore_availability,
+        seats=constraints.seat_map(),
     )
 
     by_team = hierarchical.group_by_team(applicants)
@@ -42,8 +43,14 @@ def run(
     team_days = hierarchical.assign_team_days(sizes, days_per_team)
 
     unassigned: list[ApplicantIn] = []
+    honoured = 0
     for team, members in sorted(by_team.items()):
         days = team_days.get(team, [])
+        # Stage 0 — 부서가 잡아 둔 자리를 먼저 지킨다. 부서 시간표가 최종
+        # 시간표의 입력이 되도록, 나머지 단계는 남은 사람만 다시 짠다.
+        before = len(board.assignments)
+        members = hierarchical.place_dept_seats(board, team, days, members)
+        honoured += len(board.assignments) - before
         # Stage 1b
         groups, leftover = hierarchical.split_team_by_day(members, days, target)
         unassigned.extend(leftover)
@@ -55,6 +62,10 @@ def run(
         "days_per_team": days_per_team,
         "team_days": team_days,
         "stage3_fallback": fallback,
+        # 부서가 보낸 자리 중 그대로 지켜진 수 · 옮긴 사람과 그 까닭
+        "dept_seats": sum(len(wish) for wish in board.seats.values()),
+        "dept_seats_kept": honoured,
+        "dept_seats_moved": dict(board.seat_miss),
     }
 
     # Stage 3 (v5에서만 활성)

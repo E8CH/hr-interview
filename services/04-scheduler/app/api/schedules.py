@@ -37,6 +37,10 @@ def generate_schedule(req: GenerateRequest, db: Session = Depends(get_db)):
     # 담당자 일정을 무시하고 만들었을 때만 채워진다 — 다시 이야기할 명단
     payload["off_band_count"] = len(off_band)
     payload["off_band"] = off_band
+    # 부서가 자리까지 보냈을 때, 그중 몇 자리를 지켰고 못 지킨 자리는 왜 옮겼는지
+    payload["dept_seats"] = plan.notes.get("dept_seats", 0)
+    payload["dept_seats_kept"] = plan.notes.get("dept_seats_kept", 0)
+    payload["dept_seats_moved"] = plan.notes.get("dept_seats_moved", {})
     return ok(payload)
 
 

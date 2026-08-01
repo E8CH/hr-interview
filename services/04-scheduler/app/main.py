@@ -47,8 +47,11 @@ async def lifespan(_: FastAPI):
         filled = schedule_service.backfill_titles(db)
         if settings.use_mock:
             seeded = schedule_service.seed_interviewers(db)
+        # 오전 · 오후로 반씩 자르던 시절에 저장된 가능 시간은 정오 언저리 칸이
+        # 비어 있다. 지금은 앞타임 · 뒤타임이 겹치므로 여기서 한 번 넓혀 준다.
+        rederived = schedule_service.rederive_bands(db)
     log.info("scheduler.startup", port=settings.service_port, mock=settings.use_mock,
-             seeded=seeded, titles_filled=filled)
+             seeded=seeded, titles_filled=filled, bands_rederived=rederived)
     try:
         yield
     finally:

@@ -31,6 +31,7 @@ class Board:
         pinned: dict[str, str] | None = None,
         pinned_by_team: dict[str, dict[str, str]] | None = None,
         ignore_availability: bool = False,
+        seats: dict[str, dict[str, tuple[int, int]]] | None = None,
     ) -> None:
         self.max_daily_default = max_daily_default
         # 담당자가 적어 낸 가능 시간을 무시하고 자리부터 채운다. 앞타임만 되는
@@ -46,6 +47,15 @@ class Board:
         self.pinned_by_team: dict[str, dict[str, str]] = {
             team: dict(pairs) for team, pairs in (pinned_by_team or {}).items()
         }
+        # 부서가 자기 시간표에서 잡아 둔 자리 {팀: {지원자: (몇 일차, 몇 번째 칸)}}.
+        # 부서 화면은 요일 이름을 모르고 '1일차 · 2일차' 로만 세므로 일차로 온다 —
+        # 어느 요일인지는 팀별 면접 요일을 정한 뒤에 옮겨 읽는다.
+        self.seats: dict[str, dict[str, tuple[int, int]]] = {
+            team: {a: (int(d), int(s)) for a, (d, s) in (wish or {}).items()}
+            for team, wish in (seats or {}).items()
+        }
+        # 그 자리에 못 앉힌 사람과 그 까닭 — 다른 자리에 앉을 때 사유로 따라간다
+        self.seat_miss: dict[str, str] = {}
         self.by_team: dict[str, list[InterviewerIn]] = defaultdict(list)
         self.by_id: dict[str, InterviewerIn] = {}
         for iv in interviewers:
@@ -150,6 +160,34 @@ class Board:
             ),
         )
 
+    def seat_for(self, team: str, applicant_id: str | None) -> tuple[int, int] | None:
+        """부서가 이 사람에게 잡아 준 자리 (몇 일차, 몇 번째 칸) — 없으면 None."""
+        if not applicant_id:
+            return None
+        return self.seats.get(team, {}).get(applicant_id)
+
+    def seat_miss_reason(self, team: str, applicant_id: str | None,
+                         day: str, hour: str) -> str:
+        """부서가 잡아 준 자리에 왜 못 앉혔는지 한 가지로 답한다.
+
+        옮긴 것 자체보다 왜 옮겼는지가 부서에게는 중요하다 — '담당자가 그 시간에
+        안 되신다' 와 '그 자리를 다른 분이 먼저 쓰셨다' 는 대응이 다르다.
+        """
+        if not self.team_slot_free(team, day, hour):
+            return "SEAT_MOVED_TAKEN"
+        if not self.applicant_slot_free(applicant_id, day, hour):
+            return "SEAT_MOVED_TAKEN"
+        iv = self.by_id.get(self.pinned_for(team, applicant_id) or "")
+        if iv is None or iv.team != team:
+            return "SEAT_MOVED_OWNER"
+        if not (self.ignore_availability or iv.is_available(day, hour)):
+            return "SEAT_MOVED_BAND"
+        if (iv.interviewer_id, day, hour) in self.iv_slot:
+            return "SEAT_MOVED_BUSY"
+        if self.iv_day[(iv.interviewer_id, day)] >= self._daily_cap(iv):
+            return "SEAT_MOVED_CAP"
+        return "SEAT_MOVED_OWNER"
+
     def can_place(self, team: str, day: str, hour: str, applicant_id: str | None = None) -> bool:
         return (
             self.team_slot_free(team, day, hour)
@@ -171,6 +209,11 @@ class Board:
         if iv is None:
             return None
 
+        reasons = list(tags or applicant.tags or ["PRIMARY_JOB"])
+        # 부서 자리에 못 앉아 여기로 온 사람은 그 까닭을 자리에 함께 적어 둔다
+        moved = self.seat_miss.get(applicant.applicant_id)
+        if moved and moved not in reasons:
+            reasons.append(moved)
         assignment = PlannedAssignment(
             applicant_id=applicant.applicant_id,
             applicant_name=applicant.name,
@@ -179,7 +222,7 @@ class Board:
             degree=applicant.degree,
             day=day,
             hour=hour,
-            reason_tags=list(tags or applicant.tags or ["PRIMARY_JOB"]),
+            reason_tags=reasons,
         )
         self.team_slot[(applicant.team, day, hour)] = applicant.applicant_id
         self.iv_slot[(iv.interviewer_id, day, hour)] = applicant.applicant_id

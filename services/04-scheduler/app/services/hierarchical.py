@@ -139,6 +139,51 @@ def split_team_by_day(
 
 
 # --------------------------------------------------------------------------
+# Stage 0 — 부서가 잡아 둔 자리
+# --------------------------------------------------------------------------
+def place_dept_seats(
+    board: Board, team: str, days: list[str], members: list[ApplicantIn]
+) -> list[ApplicantIn]:
+    """부서가 자기 시간표에서 잡아 둔 자리에 먼저 앉힌다. 남은 사람을 돌려준다.
+
+    부서 화면은 어느 요일에 볼지를 모른다 — 하루 몇 칸씩 끊어 '1일차 · 2일차'
+    로만 센다. 어느 요일이 될지는 인사팀이 Stage 1 에서 정하므로, 부서가 말한
+    n일차를 그 팀에 잡힌 요일 중 n 번째로 옮겨 읽는다. 부서가 본 순서와 시각은
+    그대로 남고 요일 이름만 인사팀 것이 된다.
+
+    앉히지 못한 사람은 왜 못 앉혔는지를 보드에 적어 두고 다음 단계로 넘긴다 —
+    부서 결정을 억지로 밀어 넣지 않는다는 원칙은 그대로 두되, 결과가 부서가 본
+    것과 다르면 그 까닭이 배정 사유에 남게 하려는 것이다.
+    """
+    if not days:
+        return list(members)
+    left: list[ApplicantIn] = []
+    for applicant in members:
+        wish = board.seat_for(team, applicant.applicant_id)
+        if wish is None:
+            left.append(applicant)
+            continue
+        day_no, slot_no = wish
+        if not 1 <= day_no <= len(days):
+            # 부서가 인사팀이 잡은 면접 요일 수보다 긴 시간표를 짰다
+            board.seat_miss[applicant.applicant_id] = "SEAT_MOVED_DAY"
+            left.append(applicant)
+            continue
+        if not 0 <= slot_no < SLOTS_PER_DAY:
+            board.seat_miss[applicant.applicant_id] = "SEAT_MOVED_DAY"
+            left.append(applicant)
+            continue
+        day, hour = days[day_no - 1], HOURS[slot_no]
+        tags = list(applicant.tags or ["PRIMARY_JOB"]) + ["DEPT_SEAT"]
+        if board.place(applicant, day, hour, tags) is None:
+            board.seat_miss[applicant.applicant_id] = board.seat_miss_reason(
+                team, applicant.applicant_id, day, hour
+            )
+            left.append(applicant)
+    return left
+
+
+# --------------------------------------------------------------------------
 # Stage 2 — 시간대 세부 최적화
 # --------------------------------------------------------------------------
 def place_group(

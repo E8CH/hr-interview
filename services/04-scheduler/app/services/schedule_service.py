@@ -19,7 +19,13 @@ from app.domain.schemas import (
     PlanResult,
 )
 from app.errors import NotFoundError, ValidationFailed
-from app.infrastructure.contracts import DAYS, HOURS, normalize_availability
+from app.infrastructure.contracts import (
+    DAYS,
+    HOURS,
+    band_hours,
+    band_of,
+    normalize_availability,
+)
 from app.infrastructure.response_client import applicant_source, availability_source
 from app.services import lock_manager, registry
 from app.services.constraint_checker import check_hard_constraints, off_band, soft_penalty
@@ -146,6 +152,38 @@ def backfill_titles(db: Session) -> int:
     return len(rows)
 
 
+def rederive_bands(db: Session) -> int:
+    """옛 규칙으로 저장해 둔 가능 시간을 지금 덩어리 규칙으로 다시 계산한다.
+
+    앞타임 · 뒤타임을 겹치게 바꾸기 전에는 정오에 걸치는 칸이 어느 쪽에도
+    들어가지 않았다. '오전만' 을 고른 사람에게는 1~5타임, '오후만' 을 고른
+    사람에게는 7~8타임만 저장되고 6타임은 팀에서 아무도 맡을 수 없는 칸으로
+    남았다 — 점심 언저리가 통째로 비는 시간표는 여기서 나온다.
+
+    덩어리 이름은 저장하지 않고 그때그때 되읽는 값이라, 규칙을 바꿔도 이미
+    저장된 칸 목록은 옛날 그대로다. 그래서 부팅할 때 한 번 되읽어 지금 규칙의
+    칸으로 넓혀 준다. 이 칸에 값을 쓰는 곳은 명단 업로드와 가능 시간 저장뿐이고
+    둘 다 덩어리에서 펼친 값이므로, 사람이 칸 하나하나 골라 둔 값을 덮어쓸
+    일은 없다 (03 회신은 여기 저장하지 않고 배치할 때 교집합으로 합친다).
+
+    일일최대는 건드리지 않는다. 그 숫자는 명단에 직접 적어 냈거나 화면에서
+    줄여 둔 값일 수 있어, 칸이 넓어졌다고 임의로 올리면 그 뜻을 지운다.
+    """
+    changed = 0
+    for row in db.scalars(select(InterviewerRow)).all():
+        current = normalize_availability(row.availability or {})
+        if not current:
+            continue
+        hours = band_hours(band_of(current))
+        widened = {day: list(hours) for day in current}
+        if widened != current:
+            row.availability = widened
+            changed += 1
+    if changed:
+        db.commit()
+    return changed
+
+
 def seed_interviewers(db: Session) -> int:
     """PoC 부팅 시 면접관 테이블이 비어 있으면 목 데이터로 채운다"""
     existing = db.scalar(select(InterviewerRow).limit(1))
@@ -212,6 +250,13 @@ def generate(db: Session, req: GenerateRequest) -> tuple[Schedule, RuleReport, l
             )
         constraints = req.constraints.model_copy(
             update={"pairs": pairs, "pairs_by_team": by_team}
+        )
+
+    # 부서가 자기 시간표에서 잡아 둔 자리도 함께 넘긴다 — 짝만 물려받고 시각은
+    # 새로 짜면, 부서가 보고 보낸 시간표와 최종 시간표가 서로 다른 물건이 된다.
+    if req.seats_by_team is not None:
+        constraints = constraints.model_copy(
+            update={"seats_by_team": req.seats_by_team}
         )
 
     started = time.perf_counter()
