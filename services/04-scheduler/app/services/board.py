@@ -33,8 +33,8 @@ class Board:
         ignore_availability: bool = False,
     ) -> None:
         self.max_daily_default = max_daily_default
-        # 담당자가 적어 낸 가능 시간을 무시하고 자리부터 채운다. 오전만 되는
-        # 사람뿐이라 오후 자리가 빌 때, 인사가 "일단 채우고 나중에 조율" 을
+        # 담당자가 적어 낸 가능 시간을 무시하고 자리부터 채운다. 앞타임만 되는
+        # 사람뿐이라 늦은 자리가 빌 때, 인사가 "일단 채우고 나중에 조율" 을
         # 고르면 켜진다 — 자리는 다 차지만 담당자 사정과는 어긋날 수 있다.
         self.ignore_availability = bool(ignore_availability)
         # 부서가 확정해 보낸 짝 (지원자 → 면접 담당자). 이 사람들은 담당자를

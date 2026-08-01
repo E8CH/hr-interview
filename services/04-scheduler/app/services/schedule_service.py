@@ -58,8 +58,8 @@ def _merge_availability(
     가용으로 본다 — 선별해 놓고 회신을 안 했다고 명단에서 빼버리면 시간표가
     통째로 비어버려서, PoC에서는 제약 없음으로 두고 회신 여부는 03에서 본다.
 
-    둘 다 있으면 교집합이다. 부서 화면에서 '오전만' 을 골라 뒀는데 회신에 오후가
-    섞여 있다고 오후에 넣어 버리면, 골라 둔 의미가 없어진다.
+    둘 다 있으면 교집합이다. 부서 화면에서 '앞타임' 을 골라 뒀는데 회신에 늦은
+    칸이 섞여 있다고 거기 넣어 버리면, 골라 둔 의미가 없어진다.
     """
     hit = responded.get(row.interviewer_id)
     row_availability = normalize_availability(row.availability)

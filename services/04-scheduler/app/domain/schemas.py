@@ -73,8 +73,8 @@ class GenerateConstraints(BaseModel):
     grad_ratio_target: float = 0.30
     grad_ratio_tolerance: float = 0.20
     max_daily_default: int = len(HOURS)
-    # 담당자가 적어 낸 가능 시간을 무시하고 자리부터 채운다. 오전만 되는 사람만
-    # 남아 오후 자리가 비는 것을 인사가 감수하기로 했을 때만 켠다.
+    # 담당자가 적어 낸 가능 시간을 무시하고 자리부터 채운다. 앞타임만 되는
+    # 사람만 남아 늦은 자리가 비는 것을 인사가 감수하기로 했을 때만 켠다.
     ignore_availability: bool = False
     # 부서가 확정한 짝 (지원자 사번 → 담당자 사번). 여기 있는 지원자는
     # 이 담당자에게만 붙는다. 시간표는 시간만 정한다.
@@ -161,10 +161,12 @@ class RoundSelectionIn(BaseModel):
 
 
 class InterviewerBandsIn(BaseModel):
-    """사번 → 가능 시간(오전·오후 / 오전만 / 오후만 / 어려움) 일괄 저장.
+    """사번 → 가능 시간(둘 다 / 앞타임 / 뒤타임 / 어려움) 일괄 저장.
 
-    어느 칸이 오전이고 어느 칸이 오후인지는 면접 진행 조건(시작 시각 · 면접 분 ·
-    쉬는 분)에 따라 달라진다. 그래서 그 조건을 함께 받아 칸으로 펼친다.
+    어느 칸이 앞타임이고 어느 칸이 뒤타임인지는 면접 진행 조건(시작 시각 ·
+    면접 분 · 쉬는 분)에 따라 달라진다. 그래서 그 조건을 함께 받아 칸으로
+    펼친다. 두 덩어리는 12시 ~ 14시에서 겹치므로 그 사이의 칸은 양쪽 다 맡을
+    수 있다. 예전 표기('오전만' 등)로 보내도 지금 이름으로 옮겨 받는다.
     """
 
     bands: dict[str, str] = Field(default_factory=dict)

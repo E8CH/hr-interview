@@ -53,12 +53,29 @@ HOURS = [f"{n}타임" for n in range(1, 9)]
 #: 면접 진행 조건을 안 정했을 때 쓰는 기본값 (3단계 입력칸의 초기값과 같다)
 DEFAULT_TIMING = {"start": "09:00", "minutes": 30, "rest": 5}
 
-#: 오전과 오후를 가르는 기준 시각 (분 단위)
-NOON_MINUTES = 12 * 60
+# 담당자가 하루 중 언제 있어 줄 수 있는지 — 칸을 하나씩 고르기는 번거로워서
+# 두 덩어리로만 받는다. 고른 덩어리가 그대로 배치 제약이 된다.
+#
+# 예전에는 오전 · 오후로 **갈라서** 받았다. 그러면 정오에 걸치는 칸(기본 조건에서
+# 11시 55분 ~ 12시 25분)을 어느 쪽도 맡을 수 없어 점심때가 통째로 빈다.
+# 그래서 두 덩어리가 **겹치게** 둔다 — 앞타임은 14시까지, 뒤타임은 12시부터.
+# 12시 ~ 14시 사이의 칸은 양쪽 다 맡을 수 있으므로 빈 칸이 생기지 않는다.
+FRONT_END_MINUTES = 14 * 60    # 앞타임 — 아침부터 이 시각까지 있어 준다
+BACK_START_MINUTES = 12 * 60   # 뒤타임 — 이 시각부터 와서 끝까지 있어 준다
 
-# 면접관이 하루 중 언제 가능한지 — 현업이 칸을 하나씩 고르기는 번거로워서
-# 오전 · 오후 두 덩어리로만 받는다. 고른 덩어리가 그대로 배치 제약이 된다.
-BAND_ALL, BAND_AM, BAND_PM, BAND_NONE = "오전·오후", "오전만", "오후만", "어려움"
+BAND_ALL, BAND_FRONT, BAND_BACK, BAND_NONE = "둘 다", "앞타임", "뒤타임", "어려움"
+
+#: 예전 표기 → 지금 표기. 저장해 둔 자료와 현업이 적어 낸 엑셀에 남아 있다.
+LEGACY_BANDS = {
+    "오전·오후": BAND_ALL, "오전 · 오후": BAND_ALL, "오전오후": BAND_ALL,
+    "오전만": BAND_FRONT, "오후만": BAND_BACK,
+}
+
+
+def band_name(band) -> str:
+    """예전 표기(오전만 · 오후만 · 오전·오후)를 지금 이름으로 맞춘다."""
+    text = str(band or "").strip()
+    return LEGACY_BANDS.get(text, text)
 
 
 def _minutes_of(clock, fallback: int = 9 * 60) -> int:
@@ -70,8 +87,12 @@ def _minutes_of(clock, fallback: int = 9 * 60) -> int:
         return fallback
 
 
-def slot_spans(timing=None) -> list[tuple[int, int]]:
-    """칸마다 (시작 분, 끝 분) — 쉬는 시간만 끼고 죽 이어진다."""
+def slot_spans(timing=None, count: int | None = None) -> list[tuple[int, int]]:
+    """칸마다 (시작 분, 끝 분) — 쉬는 시간만 끼고 죽 이어진다.
+
+    칸 수는 기본이 계약의 `HOURS` 길이지만, 부서 화면처럼 하루 칸 수를 직접
+    바꿔 보는 자리도 있어서 `count` 로 따로 줄 수 있다.
+    """
     timing = {**DEFAULT_TIMING, **(timing or {})}
     start = _minutes_of(timing.get("start"), _minutes_of(DEFAULT_TIMING["start"]))
     try:
@@ -84,7 +105,9 @@ def slot_spans(timing=None) -> list[tuple[int, int]]:
     except (TypeError, ValueError):
         rest = DEFAULT_TIMING["rest"]
     step = length + rest
-    return [(start + i * step, start + i * step + length) for i in range(len(HOURS))]
+    if count is None:
+        count = len(HOURS)
+    return [(start + i * step, start + i * step + length) for i in range(max(0, count))]
 
 
 def hour_spans(timing=None) -> dict[str, tuple[int, int]]:
@@ -92,32 +115,47 @@ def hour_spans(timing=None) -> dict[str, tuple[int, int]]:
     return dict(zip(HOURS, slot_spans(timing)))
 
 
-def hour_band(hour: str, timing=None) -> str:
-    """이 칸이 오전인지 오후인지 — 정오에 걸치면 '오전·오후' 인 사람만 볼 수 있다."""
+def band_slots(band, timing=None, count: int | None = None) -> set[int]:
+    """그 덩어리가 맡을 수 있는 자리 번호(0부터) — 칸 수를 직접 줄 수 있다."""
+    band = band_name(band)
+    if band == BAND_NONE:
+        return set()
+    spans = slot_spans(timing, count)
+    if band not in (BAND_FRONT, BAND_BACK):
+        return set(range(len(spans)))
+    if band == BAND_FRONT:
+        return {i for i, (_s, end) in enumerate(spans) if end <= FRONT_END_MINUTES}
+    return {i for i, (start, _e) in enumerate(spans) if start >= BACK_START_MINUTES}
+
+
+def hour_bands(hour: str, timing=None) -> list[str]:
+    """이 칸을 맡을 수 있는 덩어리들 — 겹치는 시간대의 칸은 둘 다 나온다.
+
+    둘 다 안 나오는 칸(앞타임이 끝난 뒤에 시작해서 뒤타임이 오기 전에 끝나는
+    칸)은 '둘 다' 라고 답한 사람만 맡을 수 있다. 앞뒤가 겹쳐 있으므로 보통
+    조건에서는 생기지 않는다.
+    """
     spans = hour_spans(timing)
     if hour not in spans:
-        return BAND_ALL
+        return [BAND_FRONT, BAND_BACK]
     start, end = spans[hour]
-    if end <= NOON_MINUTES:
-        return BAND_AM
-    if start >= NOON_MINUTES:
-        return BAND_PM
-    return BAND_ALL
+    out = []
+    if end <= FRONT_END_MINUTES:
+        out.append(BAND_FRONT)
+    if start >= BACK_START_MINUTES:
+        out.append(BAND_BACK)
+    return out
 
 
 def band_hours(band: str, timing=None) -> list[str]:
-    """오전·오후 표기를 실제 칸 목록으로 — 모르는 표기는 하루 종일로 본다.
-
-    정오에 걸치는 칸은 '오전만'·'오후만' 어느 쪽에도 안 들어간다. 11시 55분에
-    시작해 12시 25분에 끝나는 칸은 오전만 되는 사람에게도, 오후만 되는 사람에게도
-    온전히 맞지 않기 때문이다. 그래서 그 칸은 하루 종일 되는 사람 몫이 된다.
-    """
-    band = str(band or "").strip()
+    """앞타임 · 뒤타임 표기를 실제 칸 목록으로 — 모르는 표기는 하루 종일로 본다."""
+    band = band_name(band)
     if band == BAND_NONE:
         return []
-    if band not in (BAND_AM, BAND_PM):
+    if band not in (BAND_FRONT, BAND_BACK):
         return list(HOURS)
-    return [h for h in HOURS if hour_band(h, timing) == band]
+    picked = band_slots(band, timing)
+    return [hour for index, hour in enumerate(HOURS) if index in picked]
 
 
 def band_availability(band: str, days=DAYS, timing=None) -> dict[str, list[str]]:
@@ -127,7 +165,11 @@ def band_availability(band: str, days=DAYS, timing=None) -> dict[str, list[str]]
 
 
 def band_of(availability, timing=None) -> str:
-    """저장된 가용성이 어느 덩어리인지 되읽는다 — 화면 표시용."""
+    """저장된 가용성이 어느 덩어리인지 되읽는다 — 화면 표시용.
+
+    앞타임과 뒤타임이 겹치므로 한 칸만 보고는 못 가른다. 고른 칸 전체가 어느
+    덩어리 안에 들어가는지로 판단하고, 어느 쪽에도 안 들어가면 '둘 다' 다.
+    """
     hours = {h for day_hours in (availability or {}).values() for h in day_hours}
     if not hours:
         return BAND_NONE
@@ -136,11 +178,17 @@ def band_of(availability, timing=None) -> str:
         return BAND_ALL          # 옛 이름('09시' 등)만 남은 자료 — 하루 종일로 본다
     if known >= set(HOURS):
         return BAND_ALL
-    has_am = bool(known & set(band_hours(BAND_AM, timing)))
-    has_pm = bool(known & set(band_hours(BAND_PM, timing)))
-    if has_am and has_pm:
-        return BAND_ALL
-    return BAND_AM if has_am else BAND_PM
+    front = set(band_hours(BAND_FRONT, timing))
+    back = set(band_hours(BAND_BACK, timing))
+    if known == front:
+        return BAND_FRONT
+    if known == back:
+        return BAND_BACK
+    if known <= front:
+        return BAND_FRONT
+    if known <= back:
+        return BAND_BACK
+    return BAND_ALL
 
 
 def _legacy_hour_of(name) -> int | None:
@@ -179,22 +227,22 @@ def normalize_availability(availability, timing=None) -> dict[str, list[str]]:
             if has_am and has_pm:
                 kept |= set(HOURS)
             elif has_am:
-                kept |= set(band_hours(BAND_AM, timing))
+                kept |= set(band_hours(BAND_FRONT, timing))
             elif has_pm:
-                kept |= set(band_hours(BAND_PM, timing))
+                kept |= set(band_hours(BAND_BACK, timing))
         if kept:
             result[day] = [h for h in HOURS if h in kept]
     return result
 
 
-#: 기본 진행 조건에서의 오전 · 오후 칸 (화면 문구 등 어림잡을 때만 쓴다).
-#: 정오에 걸치는 칸이 있으므로 AM_HOURS + PM_HOURS 가 HOURS 와 같지 않을 수 있다.
-AM_HOURS = band_hours(BAND_AM)
-PM_HOURS = band_hours(BAND_PM)
+#: 기본 진행 조건에서의 앞타임 · 뒤타임 칸 (화면 문구 등 어림잡을 때만 쓴다).
+#: 두 덩어리는 겹치므로 FRONT_HOURS 와 BACK_HOURS 에 같은 칸이 함께 들어간다.
+FRONT_HOURS = band_hours(BAND_FRONT)
+BACK_HOURS = band_hours(BAND_BACK)
 TIME_BANDS = {
     BAND_ALL: list(HOURS),
-    BAND_AM: list(AM_HOURS),
-    BAND_PM: list(PM_HOURS),
+    BAND_FRONT: list(FRONT_HOURS),
+    BAND_BACK: list(BACK_HOURS),
     BAND_NONE: [],
 }
 

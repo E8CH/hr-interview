@@ -33,20 +33,22 @@ st.set_page_config(page_title="LG 면접 진행 도우미", page_icon="🔴", la
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# 요일 · 칸 · 오전/오후는 서비스와 같은 정의를 써야 한다. 여기서 따로 적어 두면
+# 요일 · 칸 · 앞타임/뒤타임은 서비스와 같은 정의를 써야 한다. 여기서 따로 적어 두면
 # 스케줄러가 여덟 칸을 쓰는데 화면만 여섯 칸으로 그리는 어긋남이 다시 생긴다.
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 from shared.contracts.constants import (  # noqa: E402
     BAND_ALL,
-    BAND_AM,
+    BAND_BACK,
+    BAND_FRONT,
     BAND_NONE,
-    BAND_PM,
     DEFAULT_TIMING,
     HOURS as SCHED_HOURS,
     band_hours,
+    band_name,
     band_of as contract_band_of,
-    hour_band,
+    band_slots,
+    hour_bands,
 )
 DEFAULT_MASTER = PROJECT_ROOT / "docs" / "취합파일.xlsx"
 INTERVIEWER_SAMPLE = PROJECT_ROOT / "tools" / "fixtures" / "면접관명단_sample.xlsx"
@@ -878,16 +880,20 @@ def iv_names(rows) -> dict:
 
 
 # 담당자가 하루 중 언제 들어갈 수 있는지 — 칸을 하나씩 고르기는 번거로우니
-# 오전 · 오후 두 덩어리로만 받는다. 어느 칸이 오전이고 어느 칸이 오후인지는
-# 3단계에서 정하는 면접 진행 조건이 정하므로, 시각을 여기 박아 두지 않는다.
+# 앞타임 · 뒤타임 두 덩어리로만 받는다. 어느 칸이 어느 덩어리인지는 3단계에서
+# 정하는 면접 진행 조건이 정하므로, 시각을 여기 박아 두지 않는다.
+#
+# 두 덩어리는 일부러 겹쳐 둔다 — 앞타임은 14시까지, 뒤타임은 12시부터. 예전처럼
+# 오전 · 오후로 갈라 받으면 점심에 걸치는 칸을 어느 쪽도 못 맡아 그 시간이
+# 통째로 비었다.
 BAND_UNSET = "아직 안 정함"
-BAND_CHOICES = [BAND_ALL, BAND_AM, BAND_PM, BAND_NONE]
+BAND_CHOICES = [BAND_ALL, BAND_FRONT, BAND_BACK, BAND_NONE]
 
 
 def band_of(row: dict, timing: dict | None = None) -> str:
-    """저장된 가용성을 오전 · 오후 덩어리로 되읽는다."""
-    band = str(row.get("time_band") or "").strip()
-    if band in (BAND_ALL, BAND_AM, BAND_PM, BAND_NONE):
+    """저장된 가용성을 앞타임 · 뒤타임 덩어리로 되읽는다."""
+    band = band_name(str(row.get("time_band") or "").strip())
+    if band in BAND_CHOICES:
         return band
     hours = {h for hs in (row.get("availability") or {}).values() for h in hs}
     if not hours:
@@ -1844,8 +1850,8 @@ def hour_clock(timing: dict) -> dict[str, str]:
 def band_supply(rows: list[dict], timing: dict | None = None) -> dict[str, int]:
     """칸마다 그 칸에 들어갈 수 있는 담당자가 몇 명인지.
 
-    '오전만' 이라고 답한 사람은 정오에 걸치는 칸에 못 들어간다. 그래서 담당자
-    수가 넉넉해도 특정 칸만 아무도 못 맡는 일이 생긴다 — 그 칸을 찾아낸다.
+    '뒤타임' 이라고 답한 사람은 이른 칸에 못 들어간다. 그래서 담당자 수가
+    넉넉해도 특정 칸만 아무도 못 맡는 일이 생긴다 — 그 칸을 찾아낸다.
     """
     supply = {hour: 0 for hour in SCHED_HOURS}
     for row in rows or []:
@@ -1860,7 +1866,7 @@ def team_seat_gap(rows: list[dict], timing: dict | None = None) -> list[str]:
     """팀마다 아무도 못 맡는 칸이 있는지 — 그 사유를 팀별 한 줄로 돌려준다.
 
     자리는 팀별로 잡히므로(같은 팀은 같은 시각에 두 명을 못 본다) 담당자가
-    전체로는 넉넉해도 어느 팀에 오전만 되는 사람뿐이면 그 팀의 오후 자리는
+    전체로는 넉넉해도 어느 팀에 뒤타임만 되는 사람뿐이면 그 팀의 이른 자리는
     끝내 빈다. 그래서 팀을 갈라 본다.
     """
     by_team: dict[str, list[dict]] = {}
@@ -1876,8 +1882,12 @@ def team_seat_gap(rows: list[dict], timing: dict | None = None) -> list[str]:
         if not empty:
             continue
         times = " · ".join(clock.get(h, h) for h in empty)
-        need = sorted({hour_band(h, timing) for h in empty})
-        want = " · ".join("하루 종일" if b == BAND_ALL else b for b in need)
+        # 앞뒤가 겹치는 칸은 어느 쪽이든 맡을 수 있고, 둘 다 아닌 칸은
+        # '둘 다' 라고 답한 사람만 맡을 수 있다.
+        need: set[str] = set()
+        for hour in empty:
+            need |= set(hour_bands(hour, timing)) or {BAND_ALL}
+        want = " 또는 ".join(sorted(need))
         out.append(
             f"**{team}** — {times} 칸은 담당자 {len(mine)}명 중 아무도 맡을 수 "
             f"없습니다. 적어 내신 가능 시간이 그 칸을 덮지 못해서입니다. "
@@ -2256,14 +2266,21 @@ def render_roster_organizer(history: list[dict], plan_id: str,
         timing_now = {"start": start.strip(), "minutes": int(minutes),
                       "rest": int(rest)}
         clock_now = hour_clock(timing_now)
-        straddle = [clock_now.get(h, h) for h in SCHED_HOURS
-                    if hour_band(h, timing_now) == BAND_ALL]
+        # 앞뒤가 겹치므로 보통은 모든 칸이 어느 한쪽에는 들어간다. 진행 시간을
+        # 아주 길게 잡아 14시 뒤에 시작해서 12시 전에 끝나는 칸이 생기면
+        # (있을 수 없지만) 그 칸은 '둘 다' 담당자만 맡을 수 있다.
+        orphan = [clock_now.get(h, h) for h in SCHED_HOURS
+                  if not hour_bands(h, timing_now)]
+        both = [clock_now.get(h, h) for h in SCHED_HOURS
+                if len(hour_bands(h, timing_now)) == 2]
         st.caption(
-            f"이 조건에서 오전은 {band_hours_text(BAND_AM, timing_now)}, "
-            f"오후는 {band_hours_text(BAND_PM, timing_now)} 입니다. "
-            + (f"정오에 걸치는 칸({' · '.join(straddle)})은 '오전만' · '오후만' "
-               "담당자에게는 못 맡깁니다 — 하루 종일 되는 담당자 몫입니다."
-               if straddle else "정오에 걸치는 칸은 없습니다.")
+            f"이 조건에서 앞타임은 {band_hours_text(BAND_FRONT, timing_now)}, "
+            f"뒤타임은 {band_hours_text(BAND_BACK, timing_now)} 입니다. "
+            + (f"{' · '.join(both)} 칸은 앞뒤가 겹쳐 양쪽 담당자 모두 맡을 수 "
+               "있습니다 — 그래서 점심때가 비지 않습니다."
+               if both else "")
+            + (f" {' · '.join(orphan)} 칸은 어느 쪽에도 안 들어가 '둘 다' 담당자 "
+               "몫입니다." if orphan else "")
         )
     team_cols = [c for c in table.columns if c != "구분"]
     degree_by_name = {
@@ -2902,12 +2919,15 @@ def render_interviewers() -> None:
 
     band_timing = round_timing(load_handoff(round_id))
     st.caption(
-        "‘가능 시간’ 은 오전 · 오후 두 덩어리로 고릅니다. 3단계에서 정한 면접 진행 "
-        f"조건 기준으로 오전은 {band_hours_text(BAND_AM, band_timing)}"
-        f"({band_cap(BAND_AM, band_timing)}칸), "
-        f"오후는 {band_hours_text(BAND_PM, band_timing)}"
-        f"({band_cap(BAND_PM, band_timing)}칸) 입니다. 여기서 고른 대로만 시간표에 "
-        "들어가고, 하루 최대 인원도 그 칸 수로 맞춰집니다."
+        "‘가능 시간’ 은 앞타임 · 뒤타임 두 덩어리로 고릅니다. 3단계에서 정한 면접 "
+        f"진행 조건 기준으로 앞타임은 {band_hours_text(BAND_FRONT, band_timing)}"
+        f"({band_cap(BAND_FRONT, band_timing)}칸), "
+        f"뒤타임은 {band_hours_text(BAND_BACK, band_timing)}"
+        f"({band_cap(BAND_BACK, band_timing)}칸) 입니다. 두 덩어리는 점심때가 비지 "
+        "않도록 겹쳐 두었습니다. 여기서 고른 대로만 시간표에 들어가고, 하루 최대 "
+        "인원도 그 칸 수로 맞춰집니다."
+        + (" 지금 조건에서는 앞타임이 하루 전체를 덮어 ‘둘 다’ 와 같습니다."
+           if band_cap(BAND_FRONT, band_timing) >= len(SCHED_HOURS) else "")
     )
     edited = st.data_editor(
         pd.DataFrame(rows),
@@ -2915,7 +2935,8 @@ def render_interviewers() -> None:
         column_config={
             "가능 시간": st.column_config.SelectboxColumn(
                 "가능 시간", options=BAND_CHOICES + [BAND_UNSET], required=True,
-                help="오전만 · 오후만을 고르면 그 시간대에만 면접이 잡힙니다",
+                help="앞타임(~14시) · 뒤타임(12시~) 을 고르면 그 시간대에만 "
+                     "면접이 잡힙니다",
             ),
         },
         disabled=["성명", "직급", "소속팀", "역할", "하루 최대", "이메일", "사번"],
@@ -3275,11 +3296,18 @@ def render_collection() -> None:
 def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
                  start: str = "09:00", minutes: int = SLOT_MINUTES,
                  rest: int = BREAK_MINUTES, per_day: int = SLOTS_PER_DAY,
-                 balance: bool = True) -> list[dict]:
+                 balance: bool = True,
+                 bands: dict[str, str] | None = None) -> list[dict]:
     """매칭(면접자→담당자)만으로 일자별 시간표를 만든다.
 
     5번 스케줄러가 아직 돌지 않아도 부서가 제출한 즉시 시간표를 볼 수 있어야 한다.
     가나다순을 기본으로 학력을 섞고, 하루 per_day 칸씩 끊어 일차를 매긴다.
+
+    `bands` (사번 → 앞타임 · 뒤타임)를 주면 그 담당자가 맡을 수 있는 칸에만
+    놓는다. 예전에는 여기서 칸을 그냥 순서대로 채우고 인사팀 최종 시간표에서만
+    가능 시간을 지켰다. 그래서 부서가 본 시간표와 최종 시간표가 서로 달랐다 —
+    부서에서는 첫 칸이던 사람이 최종본에서는 뒤로 밀리는 식이다. 같은 잣대를
+    여기서도 쓴다.
     """
     rows = [
         {
@@ -3294,15 +3322,70 @@ def pair_schedule(applicants: list[dict], pairs: dict, iv_name: dict, *,
         for row in applicants if row["applicant_id"] in pairs
     ]
     labels = slot_labels(start, per_day, minutes, rest)
-    out = []
-    for index, row in enumerate(order_for_interview(rows, balance, per_day)):
-        out.append({
+    timing = {"start": start, "minutes": minutes, "rest": rest}
+    every = set(range(per_day))
+    # 덩어리를 안 적었거나 '둘 다' 면 아무 칸이나 된다.
+    allowed = {
+        iid: band_slots(band, timing, per_day)
+        for iid, band in (bands or {}).items()
+        if band in (BAND_FRONT, BAND_BACK, BAND_NONE)
+    }
+
+    taken: set[tuple[int, int]] = set()
+    placed = []
+    for row in order_for_interview(rows, balance, per_day):
+        ok = allowed.get(row["interviewer_id"], every)
+        # '어려움' 이라 맡을 칸이 하나도 없는 사람은 뺄 수가 없다 — 자리는 주되
+        # 어긋났다고 표시해서 아래에서 따로 알린다.
+        off = not ok
+        ok = ok or every
+        for day in range(len(rows) + 1):
+            cell = next(((day, s) for s in sorted(ok) if (day, s) not in taken), None)
+            if cell:
+                break
+        taken.add(cell)
+        placed.append((cell, {
             **row,
-            "day": index // per_day + 1,
-            "slot": labels[index % per_day],
-            "interviewer": iv_name.get(row["interviewer_id"], row["interviewer_id"] or ""),
-        })
-    return out
+            "day": cell[0] + 1,
+            "slot": labels[cell[1]],
+            "off_band": off,
+            "interviewer": iv_name.get(row["interviewer_id"],
+                                       row["interviewer_id"] or ""),
+        }))
+    # 가능 시간 때문에 순서가 바뀌었을 수 있으니 시각 순으로 다시 세운다
+    return [row for _cell, row in sorted(placed, key=lambda p: p[0])]
+
+
+def assign_by_band(queue: list[str], order: list[str], caps: dict[str, int],
+                   can: dict[str, set[int]], per_day: int,
+                   lead: str) -> tuple[dict[str, str], int]:
+    """면접 차례대로 담당자를 정한다 — 그 사람이 맡을 수 있는 자리만.
+
+    `queue` 의 몇 번째냐가 곧 몇 번째 자리(= 몇 시)냐다. 그래서 자리 번호를
+    맡을 수 있는 담당자 중에서만 고른다. 예전에는 자리를 보지 않고 하루 한도까지
+    죽 채워서, 뒤타임만 되는 분이 첫 칸에 앉는 시간표가 나왔다.
+
+    맡을 사람이 아무도 없는 자리는 팀장이 떠안고 그 수를 함께 돌려준다 —
+    담당자를 더 부르거나 '일정 무시' 를 켜야 한다는 뜻이다.
+    """
+    rank = {iid: index for index, iid in enumerate(order)}
+    load = {iid: 0 for iid in order}
+    picks: dict[str, str] = {}
+    over = 0
+    for index, aid in enumerate(queue):
+        slot = index % max(1, per_day)
+        free = [iid for iid in order
+                if load[iid] < caps.get(iid, 0) and slot in can.get(iid, ())]
+        if free:
+            # 앞사람부터 몰아 줘 연달아 보게 하되, 맡을 수 있는 자리가 좁은
+            # 분을 먼저 쓴다 — 뒤타임만 되는 분을 남겨 두면 그 칸을 아무도
+            # 못 맡아 결국 팀장에게 몰린다.
+            who = min(free, key=lambda iid: (len(can[iid]), rank[iid]))
+        else:
+            who, over = lead, over + 1
+        load[who] = load.get(who, 0) + 1
+        picks[aid] = who
+    return picks, over
 
 
 def schedule_cards(rows: list[dict], *, by_person: bool = False, team: str = "") -> None:
@@ -3360,15 +3443,16 @@ def render_timetable(assignments: list[dict]) -> None:
             f"한 사람당 {timing['minutes']}분 면접에 {timing['rest']}분 휴식으로 "
             f"하루 {len(SCHED_HOURS)}칸이 죽 이어집니다 (점심 시간은 따로 두지 "
             "않습니다) · 왼쪽이 시간, 위가 팀입니다. "
-            f"오전은 {band_hours_text(BAND_AM, timing)}, "
-            f"오후는 {band_hours_text(BAND_PM, timing)} 로 봅니다."
+            f"앞타임은 {band_hours_text(BAND_FRONT, timing)}, "
+            f"뒤타임은 {band_hours_text(BAND_BACK, timing)} 로 봅니다."
             + (f" 하루 {timing['per_day']}명으로 잡으셨지만 시간표는 한 팀당 하루 "
                f"{len(SCHED_HOURS)}칸까지만 씁니다."
                if timing["per_day"] > len(SCHED_HOURS) else "")
         )
         with st.expander("빈 칸이 왜 생기나요 · 왜 중간 시간에만 잡힌 팀이 있나요"):
-            straddle = [clock.get(h, h) for h in SCHED_HOURS
-                        if hour_band(h, timing) == BAND_ALL]
+            # 앞뒤가 겹치므로 보통은 없다 — 어느 덩어리에도 안 들어가는 칸만.
+            orphan = [clock.get(h, h) for h in SCHED_HOURS
+                      if not hour_bands(h, timing)]
             st.markdown(
                 f"- 한 팀은 되도록 **{SCHED_DAYS_PER_TEAM}일 안에** 몰아서 봅니다 "
                 f"(한 팀 {SCHED_DAYS_PER_TEAM}일 × 하루 {len(SCHED_HOURS)}칸 = "
@@ -3377,9 +3461,9 @@ def render_timetable(assignments: list[dict]) -> None:
                 f"- {SCHED_DAYS_PER_TEAM * len(SCHED_HOURS)}명을 넘긴 인원은 다른 "
                 "요일에 한두 명씩 끼워 넣습니다. 이때 **그날 첫 칸은 되도록 새로 "
                 "열지 않으므로** 중간 시간에만 한 명 놓인 요일이 생깁니다.\n"
-                + (f"- {' · '.join(straddle)} 칸은 정오에 걸쳐 있어 '오전만' · "
-                   "'오후만' 이라고 답한 담당자에게는 맡기지 않습니다. 그래서 그 "
-                   "칸만 유독 비어 보일 수 있습니다.\n" if straddle else "")
+                + (f"- {' · '.join(orphan)} 칸은 앞타임(~14시) 에도 뒤타임(12시~) "
+                   "에도 안 들어가 '둘 다' 라고 답한 담당자만 맡을 수 있습니다. "
+                   "그래서 그 칸만 유독 비어 보일 수 있습니다.\n" if orphan else "")
                 + "- 특정 담당자가 그 시간에만 된다는 뜻은 아닙니다. 가능 시간을 "
                 "적지 않은 담당자는 모두 되는 것으로 보고 배정합니다.\n"
                 "- 빈 칸을 줄이시려면 3단계에서 팀당 인원을 고르게 맞추시거나, "
@@ -3920,7 +4004,7 @@ def render_scheduling() -> None:
     timing = round_timing(load_handoff(round_id))
     ignore_avail = st.checkbox(
         "담당자 일정 무시하고 배치하기", value=False, key="s_ignore_avail",
-        help="담당자가 적어 낸 오전 · 오후를 지키지 않고 빈 자리를 먼저 채웁니다. "
+        help="담당자가 적어 낸 앞타임 · 뒤타임을 지키지 않고 빈 자리를 먼저 채웁니다. "
              "자리는 다 차지만 담당자 사정과 어긋날 수 있어, 만든 뒤 개별로 "
              "조율해야 합니다.",
     )
@@ -4242,15 +4326,17 @@ def render_team_view() -> None:
         )
     ignore_band = st.checkbox(
         "담당자 일정 무시하고 배치하기", value=False, key=f"tv_ignore_{team}",
-        help="적어 내신 오전 · 오후를 따지지 않고 하루 최대 인원까지 나눕니다.",
+        help="적어 내신 앞타임 · 뒤타임을 따지지 않고 하루 최대 인원까지 나눕니다. "
+             "아래 ③ 시간표도 함께 무시하고 그립니다.",
     )
     auto = st.session_state.get("tv_auto")
     if auto and auto[0] == team:
         st.success(
-            f"{auto[1]}명을 담당자별로 연달아 볼 수 있게 묶어 나눴습니다."
-            + (f" 담당자들이 맡을 수 있는 인원을 {auto[2]}명 넘겨 팀장에게 몰아 "
-               "두었으니 확인해 주세요 — 담당자가 더 필요하거나, '담당자 일정 "
-               "무시하고 배치하기'를 켜셔야 합니다." if auto[2] else "")
+            f"{auto[1]}명을 담당자별로 연달아 볼 수 있게 묶어 나눴습니다 — "
+            "각자 적어 내신 가능 시간 안에서만 잡았습니다."
+            + (f" 그 시간에 맡을 수 있는 담당자가 없는 자리가 {auto[2]}개라 "
+               "팀장에게 몰아 두었으니 확인해 주세요 — 담당자가 더 필요하거나, "
+               "'담당자 일정 무시하고 배치하기'를 켜셔야 합니다." if auto[2] else "")
         )
         st.session_state.pop("tv_auto", None)
     b1, b2, b3, b4 = st.columns([1, 1, 1.4, 2.6])
@@ -4277,6 +4363,11 @@ def render_team_view() -> None:
         # 한 팀은 스케줄러가 며칠에 걸쳐 나눠 보므로 담당자 한 명이 맡을 수 있는
         # 총원은 '하루 한도 × 그 날 수' 다. 하루 한도만 쓰면 자리가 남는데도
         # 팀장에게 몰아 두고 사람이 모자라다고 잘못 알리게 된다.
+        tv_per_day = max(1, min(20, int(
+            st.session_state.get("tv_perday") or tv_timing.get("per_day")
+            or SLOTS_PER_DAY
+        )))
+
         def _cap(row: dict) -> int:
             daily = int(row.get("max_daily") or len(SCHED_HOURS))
             if not ignore_band:
@@ -4284,7 +4375,19 @@ def render_team_view() -> None:
                 daily = min(daily, band_cap(band_of(row, tv_timing), tv_timing))
             return max(0, min(daily, len(SCHED_HOURS))) * SCHED_DAYS_PER_TEAM
 
+        def _slots(row: dict) -> set[int]:
+            """이 담당자가 맡을 수 있는 자리 번호(0부터).
+
+            몇 번째 자리인지가 곧 몇 시인지다. 뒤타임만 되는 분에게 첫 칸을
+            맡기면 아래 ③ 시간표와 인사팀 최종 시간표가 서로 달라진다.
+            """
+            band = BAND_ALL if ignore_band else band_of(row, tv_timing)
+            if band in (BAND_ALL, BAND_UNSET):
+                return set(range(tv_per_day))
+            return band_slots(band, tv_timing, tv_per_day)
+
         caps = {row["interviewer_id"]: _cap(row) for row in interviewers}
+        can = {row["interviewer_id"]: _slots(row) for row in interviewers}
         order = [row["interviewer_id"] for row in sorted(
             interviewers, key=lambda r: (r.get("priority") != 1,
                                          r.get("interviewer_id") or ""))]
@@ -4303,24 +4406,17 @@ def render_team_view() -> None:
                 }
                 for aid in targets
             ],
-            True, SLOTS_PER_DAY,
+            True, tv_per_day,
         )]
 
-        load = {iid: 0 for iid in caps}
-        over, cursor = 0, 0
-        for aid in queue:
-            while cursor < len(order) and load[order[cursor]] >= caps[order[cursor]]:
-                cursor += 1                 # 이 사람은 다 찼으니 다음 담당자로
-            if cursor < len(order):
-                who = order[cursor]
-            else:
-                who, over = lead, over + 1  # 모두 찼으면 팀장이 떠안고 알려 준다
-            load[who] += 1
+        picks, over = assign_by_band(queue, order, caps, can, tv_per_day, lead)
+        for aid, who in picks.items():
             st.session_state[f"tv_iv_{team}_{aid}"] = who
         st.session_state["tv_auto"] = (team, len(targets), over)
         st.rerun()
     b4.caption("체크한 사람만 보내집니다. 자동배치는 한 담당자가 연달아 보도록 "
-               "묶어서 나눕니다 — 담당자를 따로 고르지 않으면 팀장이 맡습니다.")
+               "묶되, 그분이 가능한 시간대의 자리만 맡깁니다 — 담당자를 따로 "
+               "고르지 않으면 팀장이 맡습니다.")
 
     default_iv = next((row["interviewer_id"] for row in interviewers
                        if row.get("priority") == 1), interviewers[0]["interviewer_id"])
@@ -4426,14 +4522,26 @@ def render_team_view() -> None:
                               key="tv_min")
     rest = c3.number_input("사이 쉬는 시간(분)", 0, 60, timing["rest"], 5, key="tv_rest")
     per_day = c4.number_input("하루에 볼 인원", 1, 20, timing["per_day"], key="tv_perday")
+    # 담당자가 적어 낸 가능 시간을 여기서도 지킨다 — 부서가 보는 시간표와 인사팀
+    # 최종 시간표가 서로 달라지지 않게. '일정 무시' 를 켜 두셨으면 함께 무시한다.
+    bands = (None if st.session_state.get(f"tv_ignore_{team}")
+             else {row["interviewer_id"]: band_of(row, timing)
+                   for row in interviewers})
     try:
         rows = pair_schedule(
             applicants, pairs, iv_name, start=start.strip(), minutes=int(minutes),
-            rest=int(rest), per_day=int(per_day),
+            rest=int(rest), per_day=int(per_day), bands=bands,
         )
     except ValueError:
         st.error("시작 시각은 HH:MM 형식으로 입력하세요. (예: 09:00)")
         return
+    off = [row for row in rows if row.get("off_band")]
+    if off:
+        st.warning(
+            f"{' · '.join(row['name'] for row in off)} 님의 담당자는 가능 시간을 "
+            "'어려움' 으로 적어 내셨습니다 — 자리는 잡아 두었지만 그대로 진행할 수 "
+            "없으니 담당자를 바꾸시거나 가능 시간을 다시 받아 주세요."
+        )
 
     schedule_cards(rows, team=team)
     st.caption(

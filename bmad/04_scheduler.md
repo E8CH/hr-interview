@@ -70,7 +70,7 @@ CREATE TABLE interviewers (
     interviewer_id  VARCHAR(32) PRIMARY KEY,
     name            VARCHAR(64),
     team            VARCHAR(64) NOT NULL,
-    max_daily       INTEGER DEFAULT 6,
+    max_daily       INTEGER DEFAULT 8,    -- 하루 칸 수(HOURS)와 같다
     priority        INTEGER DEFAULT 2,    -- 1=리더, 2=실무
     email           VARCHAR(255),
     availability    JSONB                 -- {"월":["1타임","2타임"],...}
@@ -162,7 +162,34 @@ body: {"lock_level": "CONFIRMED", "applicant_ids": ["3339449", ...]}
 GET  /api/v1/interviewers?team=AI솔루션팀
 POST /api/v1/interviewers          # 신규 등록
 PUT  /api/v1/interviewers/{id}     # 가용성 업데이트
+PUT  /api/v1/interviewers/bands    # 가능 시간(앞타임 · 뒤타임) 일괄 저장
+body: {"bands": {"IV101": "앞타임", "IV102": "뒤타임"}, "actor": "console"}
 ```
+
+### 가능 시간 — 앞타임 · 뒤타임 (겹친다)
+
+담당자에게 칸을 하나씩 고르게 하기는 번거로워 두 덩어리로만 받는다.
+
+| 표기 | 뜻 |
+|------|-----|
+| `앞타임` | 아침부터 **14시까지** 있어 준다 |
+| `뒤타임` | **12시부터** 와서 끝까지 있어 준다 |
+| `둘 다` | 하루 종일 |
+| `어려움` | 이번 회차는 못 들어간다 |
+
+두 덩어리는 **12시 ~ 14시에서 일부러 겹친다**. 예전처럼 오전 · 오후로 갈라
+받으면 정오에 걸치는 칸(기본 조건에서 11:55~12:25)을 어느 쪽도 맡을 수 없어
+점심때가 통째로 빈다. 겹쳐 두면 `앞타임 ∪ 뒤타임 = 전체 칸` 이라 그 구멍이
+생기지 않는다.
+
+- 어느 칸이 어느 덩어리인지는 **면접 진행 조건**(시작 시각 · 한 사람당 분 ·
+  쉬는 시간)이 정한다. 시각을 코드에 박아 두지 않는다.
+- DB 에는 덩어리 이름이 아니라 `availability` (칸 목록)만 남는다. 이름은
+  `band_of()` 로 되읽는다 — 그래서 표기가 바뀌어도 마이그레이션이 없다.
+- 기본 조건(09:00 · 30분 · 5분)에서는 마지막 칸이 13:35 에 끝나므로 `앞타임`
+  이 하루 전체를 덮는다. 이때 되읽으면 `둘 다` 로 나오는 것이 맞다.
+- 예전 표기(`오전만` · `오후만` · `오전·오후`)로 들어와도 받아 준다 — 현업
+  엑셀에 그대로 남아 있다.
 
 ---
 

@@ -11,12 +11,24 @@ from openpyxl import Workbook
 
 from app.domain.interviewer import Interviewer
 from app.domain.round_interviewer import RoundInterviewer
-from app.infrastructure.contracts import BAND_AM, BAND_PM, HOURS, band_hours
+from app.infrastructure.contracts import (
+    BAND_ALL,
+    BAND_BACK,
+    BAND_FRONT,
+    HOURS,
+    band_hours,
+    band_of,
+    normalize_availability,
+)
 from app.infrastructure.db import SessionLocal
 from app.services import interviewer_roster, schedule_service
 
-AM = band_hours(BAND_AM)
-PM = band_hours(BAND_PM)
+# 앞타임(~14시)과 뒤타임(12시~)은 겹친다 — 같은 칸이 양쪽에 들어갈 수 있다.
+# 기본 진행 조건(09시 시작 · 30분 · 쉬는 시간 5분)에서는 마지막 칸이 13시 35분에
+# 끝나므로 앞타임이 하루 전체를 덮는다. 그래서 자리를 실제로 좁히는 쪽은 뒤타임이고,
+# 제약이 걸리는지 보는 시험은 뒤타임으로 쓴다.
+FRONT = band_hours(BAND_FRONT)
+BACK = band_hours(BAND_BACK)
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 SAMPLE = (
@@ -143,38 +155,73 @@ def test_import_rejects_file_without_headers(client):
     assert r.json()["error"]["code"] == "VALIDATION_FAILED"
 
 
-# ------------------------------------------------------------- 가능 시간(오전·오후)
+# ------------------------------------------------------- 가능 시간(앞타임·뒤타임)
+
+def test_front_and_back_cover_every_slot():
+    """앞뒤가 겹치므로 아무도 못 맡는 칸이 남지 않는다.
+
+    오전 · 오후로 갈라 받던 시절에는 정오에 걸치는 칸을 어느 쪽도 못 맡아
+    점심때가 통째로 비었다. 앞타임을 14시까지, 뒤타임을 12시부터로 두면
+    12시 ~ 14시가 겹쳐 그 구멍이 사라진다.
+    """
+    for timing in ({}, {"start": "10:30", "minutes": 45, "rest": 10},
+                   {"start": "09:00", "minutes": 60, "rest": 0}):
+        front = set(band_hours(BAND_FRONT, timing))
+        back = set(band_hours(BAND_BACK, timing))
+        assert front | back == set(HOURS), timing
+        assert front & back, timing          # 겹치는 칸이 실제로 있다
+
 
 def test_import_reads_time_band_column(client, db):
-    """명단에 적어 낸 '오전만' 이 그대로 가용성이 된다."""
+    """명단에 적어 낸 가능시간이 그대로 가용성이 된다.
+
+    현업 엑셀에는 아직 '오전만' 같은 예전 표기가 그대로 온다 — 앞타임 ·
+    뒤타임으로 옮겨 받는다.
+    """
     data = _sheet_bytes([
         ["사번", "성명", "소속팀", "가능시간"],
-        ["A1", "홍길동", "AI솔루션팀", "오전만"],
-        ["A2", "김철수", "AI솔루션팀", "오후"],
+        ["A1", "홍길동", "AI솔루션팀", "앞타임"],
+        ["A2", "김철수", "AI솔루션팀", "오후"],       # 예전 표기 → 뒤타임
         ["A3", "이영희", "AI솔루션팀", ""],
     ])
     parsed = _upload(client, data).json()["data"]["interviewers"]
-    assert [p["time_band"] for p in parsed] == ["오전만", "오후만", ""]
+    assert [p["time_band"] for p in parsed] == ["앞타임", "뒤타임", ""]
 
     listed = {i["interviewer_id"]: i for i in client.get("/api/v1/interviewers").json()["data"]}
-    assert listed["A1"]["availability"]["월"] == AM
-    assert listed["A2"]["availability"]["금"] == PM
+    assert listed["A1"]["availability"]["월"] == FRONT
+    assert listed["A2"]["availability"]["금"] == BACK
     assert listed["A3"]["availability"] == {}   # 안 적었으면 건드리지 않는다
-    assert listed["A1"]["time_band"] == "오전만"
+    # 되읽은 표기는 저장된 칸에서 거꾸로 알아낸다. 기본 조건에서는 앞타임이 하루
+    # 전체라 '둘 다' 와 구별되지 않으므로 그렇게 나오는 게 맞다.
+    assert listed["A1"]["time_band"] == BAND_ALL
+    assert listed["A2"]["time_band"] == "뒤타임"
 
 
 def test_set_bands_updates_availability_and_cap(client, roster_bytes):
     _upload(client, roster_bytes)
     r = client.put("/api/v1/interviewers/bands",
-                   json={"bands": {"IV101": "오전만", "IV102": "오후만"}, "actor": "pytest"})
+                   json={"bands": {"IV101": "앞타임", "IV102": "뒤타임"}, "actor": "pytest"})
     assert r.status_code == 200, r.text
     assert r.json()["data"]["updated"] == 2
 
     listed = {i["interviewer_id"]: i for i in client.get("/api/v1/interviewers").json()["data"]}
-    assert listed["IV101"]["time_band"] == "오전만"
-    # 오전만 고르면 하루 최대도 그 칸 수만큼 줄어든다
-    assert listed["IV101"]["max_daily"] == len(AM)
-    assert listed["IV102"]["availability"]["수"] == PM
+    assert listed["IV101"]["availability"]["월"] == FRONT
+    assert listed["IV102"]["time_band"] == "뒤타임"
+    # 고른 덩어리가 곧 하루 최대 인원의 천장이다
+    assert listed["IV101"]["max_daily"] == len(FRONT)
+    assert listed["IV102"]["availability"]["수"] == BACK
+    assert listed["IV102"]["max_daily"] == len(BACK)
+
+
+def test_set_bands_accepts_legacy_names(client, roster_bytes):
+    """예전에 쓰던 '오전만 · 오후만' 으로 보내도 지금 이름으로 받아 준다."""
+    _upload(client, roster_bytes)
+    r = client.put("/api/v1/interviewers/bands",
+                   json={"bands": {"IV101": "오전만", "IV102": "오후만"}})
+    assert r.status_code == 200, r.text
+    listed = {i["interviewer_id"]: i for i in client.get("/api/v1/interviewers").json()["data"]}
+    assert listed["IV101"]["availability"]["월"] == FRONT     # 오전만 → 앞타임
+    assert listed["IV102"]["time_band"] == "뒤타임"           # 오후만 → 뒤타임
 
 
 def test_set_bands_rejects_unknown_band(client, roster_bytes):
@@ -187,7 +234,7 @@ def test_set_bands_rejects_unknown_band(client, roster_bytes):
 def test_ignore_availability_fills_seats_and_names_who_to_call(
     client, db, roster_bytes, sample_round_id
 ):
-    """오전만 되는 담당자뿐일 때 '일정 무시하고 배치하기'가 오후 자리도 쓴다.
+    """뒤타임만 되는 담당자뿐일 때 '일정 무시하고 배치하기'가 앞 자리도 쓴다.
 
     자리는 채워지되 그게 규칙 위반으로 세지면 안 되고, 대신 어긋난 사람이
     누구인지는 명단으로 나와야 한다 — 인사가 개별로 조율할 대상이다.
@@ -195,7 +242,7 @@ def test_ignore_availability_fills_seats_and_names_who_to_call(
     _upload(client, roster_bytes)
     everyone = [i["interviewer_id"] for i in client.get("/api/v1/interviewers").json()["data"]]
     client.put("/api/v1/interviewers/bands",
-               json={"bands": {iv: "오전만" for iv in everyone}, "actor": "pytest"})
+               json={"bands": {iv: "뒤타임" for iv in everyone}, "actor": "pytest"})
     client.put(f"/api/v1/interviewers/rounds/{sample_round_id}",
                json={"interviewer_ids": everyone, "actor": "pytest"})
 
@@ -211,9 +258,9 @@ def test_ignore_availability_fills_seats_and_names_who_to_call(
 
     kept, ignored = _generate(False), _generate(True)
 
-    # 지키면 오전 칸만 쓰고, 무시하면 그 밖의 칸까지 쓴다
-    assert _hours(kept["schedule_id"]) <= set(AM)
-    assert _hours(ignored["schedule_id"]) - set(AM)
+    # 지키면 뒤타임 칸만 쓰고, 무시하면 그 밖의 칸까지 쓴다
+    assert _hours(kept["schedule_id"]) <= set(BACK)
+    assert _hours(ignored["schedule_id"]) - set(BACK)
     assert kept["off_band_count"] == 0
     assert ignored["off_band_count"] > 0
     # 일부러 고른 어긋남이므로 규칙 위반으로 세지 않는다
@@ -229,15 +276,15 @@ def test_ignore_availability_fills_seats_and_names_who_to_call(
 
 
 def test_band_limits_schedule_hours(client, db, roster_bytes, sample_round_id):
-    """부서가 고른 오전 · 오후가 실제 배치를 묶는다."""
+    """부서가 고른 앞타임 · 뒤타임이 실제 배치를 묶는다."""
     _upload(client, roster_bytes)
-    interviewer_roster.set_bands(db, {"IV101": "오전만", "IV102": "오전만"})
+    interviewer_roster.set_bands(db, {"IV101": "뒤타임", "IV102": "뒤타임"})
     interviewer_roster.select_for_round(db, sample_round_id, ["IV101", "IV102"])
 
     loaded = {iv.interviewer_id: iv for iv in
               schedule_service.load_interviewers(db, sample_round_id)}
-    assert loaded["IV101"].availability["월"] == AM
-    assert not loaded["IV101"].is_available("월", PM[0])
+    assert loaded["IV101"].availability["월"] == BACK
+    assert not loaded["IV101"].is_available("월", HOURS[0])   # 첫 칸은 뒤타임이 아니다
 
 
 # ------------------------------------------------------------------ 회차 선별
@@ -307,7 +354,7 @@ def test_legacy_clock_hours_are_moved_into_current_slots(client, db, roster_byte
 
     칸 이름을 자리 번호로 바꾸기 전에 저장된 DB 를 그대로 열면, 저장된 시간이
     지금 쓰는 어느 칸에도 안 걸려 배정 인원이 0명이 된다. 그래서 읽을 때
-    그 이름이 뜻하던 오전/오후만 살려 지금 칸으로 옮긴다.
+    그 이름이 뜻하던 앞/뒤만 살려 지금 칸으로 옮긴다.
     """
     _upload(client, roster_bytes)
     db.get(Interviewer, "IV101").availability = {"월": ["09시", "10시", "11시"]}
@@ -316,9 +363,17 @@ def test_legacy_clock_hours_are_moved_into_current_slots(client, db, roster_byte
     db.commit()
     interviewer_roster.select_for_round(db, sample_round_id, ["IV101", "IV102", "IV103"])
 
+    # 옮기는 규칙 자체
+    assert normalize_availability({"월": ["09시", "10시", "11시"]}) == {"월": FRONT}
+    assert normalize_availability({"화": ["14시", "15시"]}) == {"화": BACK}
+    assert normalize_availability({"수": ["09시", "15시"]}) == {"수": list(HOURS)}
+
+    # 읽어 들인 뒤에도 옛 이름이 남지 않고, 그 사람이 통째로 빠지지도 않는다.
+    # (회신이 함께 오면 교집합을 잡으므로 칸이 더 줄어들 수는 있다.)
     loaded = {iv.interviewer_id: iv for iv in
               schedule_service.load_interviewers(db, sample_round_id)}
-    assert loaded["IV101"].availability == {"월": AM}      # 오전 → 오전 칸
-    assert loaded["IV102"].availability == {"화": PM}      # 오후 → 오후 칸
-    assert loaded["IV103"].availability == {"수": list(HOURS)}  # 둘 다 → 하루 종일
-    assert loaded["IV101"].is_available("월", AM[0])
+    for interviewer_id, day in (("IV101", "월"), ("IV102", "화"), ("IV103", "수")):
+        hours = loaded[interviewer_id].availability.get(day, [])
+        assert hours, interviewer_id
+        assert set(hours) <= set(HOURS), interviewer_id
+    assert set(loaded["IV102"].availability["화"]) <= set(BACK)

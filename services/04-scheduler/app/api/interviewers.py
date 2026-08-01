@@ -33,7 +33,7 @@ def _serialize(row: Interviewer) -> dict:
         "backup_email": row.backup_email,
         # 옛 시각 이름으로 저장된 자료도 지금 칸으로 맞춰 내보낸다
         "availability": availability,
-        # 화면에서 고른 오전 · 오후 덩어리 (아직 안 정했으면 빈칸)
+        # 화면에서 고른 앞타임 · 뒤타임 덩어리 (아직 안 정했으면 빈칸)
         "time_band": band_of(availability) if availability else "",
     }
 
@@ -75,9 +75,9 @@ def set_round_interviewers(
     ))
 
 
-@router.put("/bands", summary="가능 시간(오전 · 오후) 일괄 저장")
+@router.put("/bands", summary="가능 시간(앞타임 · 뒤타임) 일괄 저장")
 def set_time_bands(body: InterviewerBandsIn, db: Session = Depends(get_db)):
-    """현업이 화면에서 고른 오전 · 오후를 한 번에 저장한다.
+    """현업이 화면에서 고른 앞타임 · 뒤타임을 한 번에 저장한다.
 
     사번 하나씩 PUT 하면 30명이 곧 30번 호출이라, 화면에서 '정하기'를 누를 때는
     이 경로로 한 번에 보낸다.

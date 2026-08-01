@@ -6,7 +6,7 @@
   - 선별: 회차마다 그중 누구를 투입할지 골라 round_interviewers 에 저장
 
 시간 단위 가용성(어느 요일 몇 시)은 03(회신 수집)이 모은다. 다만 현업이 명단을
-낼 때 "오전만 / 오후만" 정도는 미리 적어 두므로, 가능시간 컬럼이 있으면 그
+낼 때 "앞타임 / 뒤타임" 정도는 미리 적어 두므로, 가능시간 컬럼이 있으면 그
 덩어리를 요일 전체에 펼쳐 마스터 가용성으로 저장한다 — 회신이 오면 04가
 둘을 교집합으로 합친다.
 """
@@ -22,10 +22,15 @@ from app.domain.interviewer import Interviewer
 from app.domain.round_interviewer import RoundInterviewer
 from app.errors import ValidationFailed
 from app.infrastructure.contracts import (
+    BAND_ALL,
+    BAND_BACK,
+    BAND_FRONT,
+    BAND_NONE,
     HOURS,
     TIME_BANDS,
     band_availability,
     band_hours,
+    band_name,
     band_of,
 )
 
@@ -38,7 +43,7 @@ COLUMN_ALIASES = {
     "email": ("이메일", "메일", "email"),
     "max_daily": ("일일최대", "하루최대", "max_daily"),
     "priority": ("우선순위", "priority"),
-    "time_band": ("가능시간", "가능 시간", "오전오후", "time_band"),
+    "time_band": ("가능시간", "가능 시간", "오전오후", "앞뒤타임", "time_band"),
 }
 REQUIRED = ("interviewer_id", "team")
 HEADER_SCAN_ROWS = 10
@@ -66,23 +71,29 @@ def _to_int(value, default: int) -> int:
 
 
 def _band(value) -> str:
-    """적어 낸 가능시간을 오전 · 오후 표기로 정리한다 (빈칸이면 빈 문자열)."""
+    """적어 낸 가능시간을 앞타임 · 뒤타임 표기로 정리한다 (빈칸이면 빈 문자열).
+
+    현업이 내는 엑셀에는 '오전만' 처럼 예전 표기가 그대로 적혀 오는 일이 많다.
+    오전 = 앞타임, 오후 = 뒤타임으로 받아 준다.
+    """
     text = _norm(value).replace(" ", "")
     if not text:
         return ""
-    if text in TIME_BANDS:
-        return text
-    has_am, has_pm = "오전" in text, "오후" in text
-    if has_am and has_pm:
-        return "오전·오후"
-    if has_am:
-        return "오전만"
-    if has_pm:
-        return "오후만"
-    if text in ("종일", "하루종일", "전일", "모두", "전체"):
-        return "오전·오후"
+    named = band_name(text)
+    if named in TIME_BANDS:
+        return named
+    has_front = "오전" in text or "앞" in text
+    has_back = "오후" in text or "뒤" in text
+    if has_front and has_back:
+        return BAND_ALL
+    if has_front:
+        return BAND_FRONT
+    if has_back:
+        return BAND_BACK
+    if text in ("종일", "하루종일", "전일", "모두", "전체", "둘다"):
+        return BAND_ALL
     if text in ("불가", "없음", "어렵다", "-"):
-        return "어려움"
+        return BAND_NONE
     return ""
 
 
@@ -185,14 +196,16 @@ def import_roster(db: Session, data: bytes) -> dict:
 
 def set_bands(db: Session, bands: dict[str, str], actor: str = "console",
               timing: dict | None = None) -> dict:
-    """사번별 가능 시간(오전 · 오후)을 마스터에 반영한다.
+    """사번별 가능 시간(앞타임 · 뒤타임)을 마스터에 반영한다.
 
-    고른 덩어리가 곧 하루에 볼 수 있는 최대 인원의 천장이 된다 — 오전만 되는
+    고른 덩어리가 곧 하루에 볼 수 있는 최대 인원의 천장이 된다 — 뒤타임만 되는
     사람에게 하루 여덟 명을 배정할 수는 없으므로 일일최대를 칸 수까지 줄인다.
 
-    어느 칸이 오전이고 어느 칸이 오후인지는 면접 진행 조건이 정한다. 정오에
-    걸치는 칸(예: 11시 55분 ~ 12시 25분)은 오전만 · 오후만 어느 쪽에도 안 준다.
+    어느 칸이 앞타임이고 어느 칸이 뒤타임인지는 면접 진행 조건이 정한다.
+    두 덩어리는 12시 ~ 14시에서 겹치므로 그 사이의 칸은 양쪽 다 맡을 수 있다.
+    예전 표기('오전만' 등)로 들어와도 지금 이름으로 옮겨 받는다.
     """
+    bands = {iid: band_name(band) for iid, band in (bands or {}).items()}
     bad = [b for b in bands.values() if b not in TIME_BANDS]
     if bad:
         raise ValidationFailed(
@@ -277,7 +290,7 @@ def list_for_round(db: Session, round_id: str) -> list[dict]:
             "max_daily": r.max_daily,
             "priority": r.priority,
             "availability": r.availability or {},
-            # 화면은 시간 한 칸씩이 아니라 오전 · 오후 덩어리로 읽는다.
+            # 화면은 시간 한 칸씩이 아니라 앞타임 · 뒤타임 덩어리로 읽는다.
             # 아직 아무것도 적지 않았으면 빈칸 — 배치할 때는 하루 종일로 본다.
             "time_band": band_of(r.availability) if r.availability else "",
         }

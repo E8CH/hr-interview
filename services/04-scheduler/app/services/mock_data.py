@@ -16,7 +16,7 @@ from __future__ import annotations
 import random
 
 from app.domain.schemas import ApplicantIn, InterviewerIn
-from app.infrastructure.contracts import DAYS, HOURS, PM_HOURS
+from app.infrastructure.contracts import BACK_HOURS, DAYS, HOURS
 
 TEAMS = ["AI솔루션팀", "로봇응용기술팀", "미래혁신팀", "배터리기술팀", "전극기술팀"]
 
@@ -97,7 +97,7 @@ def build_interviewers() -> list[InterviewerIn]:
     full = {day: list(HOURS) for day in DAYS}
 
     for t_idx, team in enumerate(TEAMS, start=1):
-        # 리더: 전 요일 가용하지만 오후만 (부하 집중 방지)
+        # 리더: 전 요일 가용하지만 뒤타임만 (부하 집중 방지)
         interviewers.append(
             InterviewerIn(
                 interviewer_id=f"IV{t_idx}01",
@@ -107,7 +107,7 @@ def build_interviewers() -> list[InterviewerIn]:
                 max_daily=4,
                 priority=1,
                 email=f"iv{t_idx}01@example.com",
-                availability={day: list(PM_HOURS) for day in DAYS},
+                availability={day: list(BACK_HOURS) for day in DAYS},
             )
         )
         # 실무 3인: 각자 하루씩 휴무 (월/화/수), 나머지 요일은 전 타임 가용
