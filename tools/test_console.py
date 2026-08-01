@@ -164,6 +164,10 @@ hr {{border-color:var(--lg-line);}}
 [data-testid="stSidebar"] {{background:#FAFAFA; border-right:1px solid var(--lg-line);}}
 [data-testid="stSidebar"] .stButton > button {{text-align:left; justify-content:flex-start;}}
 
+/* '?' 말풍선은 스트림릿이 300px 에서 끊고 나머지를 안쪽으로 밀어 넣는다 —
+   진행 순서는 네 단계를 한눈에 봐야 하므로 화면 높이에 맞춰 끝까지 편다. */
+[data-testid="stTooltipContent"] {{max-height:80vh;}}
+
 /* ---------- 입력·표 ---------- */
 [data-baseweb="input"], [data-baseweb="select"] > div, .stTextArea textarea {{
     border-radius:10px !important;}}
@@ -201,28 +205,6 @@ hr {{border-color:var(--lg-line);}}
 .lgnotice .row .go {{margin-left:auto; font-size:.7rem; font-weight:700; color:#fff;
                      background:var(--lg-ink); border-radius:999px; padding:3px 10px;
                      white-space:nowrap;}}
-
-/* ---------- 왼쪽 메뉴 '?' 도움말 (올려 두면 단계별로 할 일이 펼쳐진다) ---------- */
-.lghelpwrap {{display:flex; align-items:center; gap:6px; font-weight:700;
-              font-size:.9rem; letter-spacing:-.02em; margin:0 0 2px;}}
-.lghelp {{position:relative; display:inline-flex; align-items:center;
-          justify-content:center; width:17px; height:17px; border-radius:999px;
-          border:1px solid var(--lg-line); background:#FFF; color:var(--lg-sub);
-          font-size:.68rem; font-weight:700; cursor:help; user-select:none;}}
-.lghelp:hover {{border-color:var(--lg-red); color:var(--lg-red);}}
-.lghelp .bub {{visibility:hidden; opacity:0; transition:opacity .12s;
-               position:absolute; left:22px; top:-8px; z-index:9999; width:320px;
-               padding:12px 14px; border-radius:14px; background:#FFF;
-               border:1px solid var(--lg-line); box-shadow:0 8px 28px #0000001f;
-               color:var(--lg-ink); font-weight:400; font-size:.78rem;
-               line-height:1.55; text-align:left; letter-spacing:-.01em;}}
-.lghelp:hover .bub {{visibility:visible; opacity:1;}}
-.lghelp .bub b {{display:block; font-size:.8rem; margin:8px 0 1px;
-                 letter-spacing:-.02em;}}
-.lghelp .bub b:first-child {{margin-top:0;}}
-.lghelp .bub .tip {{display:block; margin-top:10px; padding-top:8px;
-                    border-top:1px solid var(--lg-line); color:var(--lg-sub);
-                    font-size:.74rem;}}
 
 /* ---------- 화면 안에서 '지금 누를 버튼' 안내 ---------- */
 .lgstep {{display:flex; align-items:flex-start; gap:10px; margin:0 0 14px;
@@ -1154,49 +1136,50 @@ FLOW_NOTE = (
 # 눌러야 하는지부터 막히므로, 단계 이름이 아니라 '누를 버튼' 으로 적는다.
 HR_HELP_STEPS = [
     ("1. 지원자 명단 받기",
-     "엑셀을 올리고 <b>명단 합치기</b> → 파일마다 값이 다른 사람을 골라 준 뒤 "
-     "<b>이 명단으로 확정</b> 까지 누릅니다."),
+     "엑셀을 올리고 **명단 합치기** → 파일마다 값이 다른 사람을 골라 준 뒤 "
+     "**이 명단으로 확정** 까지 누릅니다."),
     ("2. 팀별 명단 나누기",
-     "<b>팀별로 나누기</b> 를 누르면 팀이 정해집니다. 팀 인원이 넘치거나 모자라면 "
-     "그 자리에서 옮기고 <b>이 배정안으로 확정</b> 을 누릅니다."),
+     "**팀별로 나누기** 를 누르면 팀이 정해집니다. 팀 인원이 넘치거나 모자라면 "
+     "그 자리에서 옮기고 **이 배정안으로 확정** 을 누릅니다."),
     ("3. 부서에 명단 보내기",
-     "면접 날짜 · 시각 조건을 정하고 <b>부서에 명단 보내기</b> 를 누릅니다. "
-     "이때 팀마다 며칟날까지 볼지가 정해지고, 뒤 단계는 모두 이 날들을 따라갑니다. "
-     "어느 팀이나 1일차부터 봅니다."),
+     "면접 시각 조건을 정하고 **부서에 명단 보내기** 를 누릅니다. 이때 팀마다 "
+     "며칟날까지 볼지가 정해지고 — 어느 팀이나 1일차부터 — 뒤 단계는 이 날들을 "
+     "따라갑니다."),
     ("4. 면접 시간표 만들기",
-     "부서가 회신을 마친 뒤에 <b>시간표 만들기</b> 를 누릅니다. 부서가 잡아 둔 "
-     "자리를 그대로 쓰고 어긋난 자리만 옮깁니다. 두 팀 면접이 같은 시각에 잡힌 "
-     "사람이 있으면 <b>오류 수정하기</b> 로 그 사람만 다시 앉힙니다."),
+     "부서가 회신을 마친 뒤 **시간표 만들기** 를 누릅니다. 부서가 잡아 둔 자리는 "
+     "그대로 쓰고 어긋난 자리만 옮깁니다. 두 팀에 겹쳐 잡힌 사람은 "
+     "**오류 수정하기** 로 다시 앉힙니다."),
 ]
 DEPT_HELP_STEPS = [
     ("1. 우리 팀 면접 담당자 정하기",
-     "면접에 들어갈 사람을 등록하고, 각자 <b>가능한 시간</b>(앞타임 · 뒤타임 · "
+     "면접에 들어갈 사람을 등록하고, 각자 **가능한 시간**(앞타임 · 뒤타임 · "
      "모든타임)을 적은 뒤 이번 회차에 들어갈 사람만 골라 둡니다."),
     ("2. 면접자 담당자 매칭",
      "인사가 보낸 명단에서 면접 볼 사람을 고르고 담당자를 정합니다. "
-     "<b>자동 배정</b> 은 담당자가 가능하다고 한 시간 안에서만 자리를 "
-     "잡습니다. 우리 팀 시간표를 확인한 뒤 <b>인사 담당자에게 보내기</b> 를 "
+     "**자동 배정** 은 담당자가 가능하다고 한 시간 안에서만 자리를 "
+     "잡습니다. 우리 팀 시간표를 확인한 뒤 **인사 담당자에게 보내기** 를 "
      "누릅니다."),
 ]
-HELP_TAIL = (
-    "두 화면은 번갈아 진행됩니다 — 인사 1 · 2 → 부서 1 → 인사 3 → 부서 2 → 인사 4. "
-    "앞 단계를 다시 하면 뒤 단계는 비워집니다."
-)
+# 말풍선은 300px 까지만 펼쳐지고 그 뒤는 밀려 들어가므로, 꼬리말은 한 줄로 둔다.
+# 번갈아 진행되는 차례는 바로 아래 `FLOW_NOTE` 가 늘 보여 주고 있어 겹쳐 적지 않는다.
+HELP_TAIL = "앞 단계를 다시 하면 뒤 단계는 비워집니다."
 
 
-def help_mark(steps: list[tuple[str, str]], tail: str = HELP_TAIL) -> str:
-    """제목 옆에 붙는 '?' — 올려 두면 단계별로 할 일이 펼쳐진다."""
-    body = "".join(f"<b>{escape(name)}</b>{text}" for name, text in steps)
-    return (f'<span class="lghelp">?<span class="bub">{body}'
-            f'<span class="tip">{escape(tail)}</span></span></span>')
+def help_text(steps: list[tuple[str, str]], tail: str = HELP_TAIL) -> str:
+    """'?' 에 올려 두면 나오는 글 — 단계 이름을 굵게 하고 한 줄씩 띄운다."""
+    body = "\n\n".join(f"**{name}**  \n{text}" for name, text in steps)
+    return f"{body}\n\n{tail}"
 
 
 def side_title(text: str, steps: list[tuple[str, str]]) -> None:
-    """왼쪽 메뉴 제목 + 같은 줄의 '?' 도움말."""
-    st.markdown(
-        f'<div class="lghelpwrap">{escape(text)}{help_mark(steps)}</div>',
-        unsafe_allow_html=True,
-    )
+    """왼쪽 메뉴 제목 + 같은 줄의 '?' 도움말.
+
+    말풍선은 **스트림릿이 화면 맨 위에 따로 그려 준다.** 직접 그려 봤더니 왼쪽
+    메뉴 칸이 넘치는 것을 잘라 내서 글이 반쯤 잘린 채로 나왔다 — 옆으로 띄우면
+    좌우가 잘리고, 아래로 펴면 메뉴 폭에 눌려 700px 넘게 길어져 아래가 잘린다.
+    화면 맨 위에 그리면 자리가 모자랄 때 알아서 뒤집히고 잘리지 않는다.
+    """
+    st.markdown(f"**{text}**", help=help_text(steps))
 
 
 def render_step_guide(rows: list[tuple[bool, str, str]]) -> None:
